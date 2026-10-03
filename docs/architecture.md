@@ -184,7 +184,7 @@ android/app/src/main/jniLibs, not committed) and loaded through the same
 dart:ffi layer. The game files are never in the APK: the first screen asks
 for the player's StarCraft folder (storage access framework; MainActivity's
 "brood/files" channel copies the three archives and the melee maps into
-Android/data/com.maxbrito.brood/files/BROOD), or they can be copied there
+Android/data/dev.x1watt.brood/files/BROOD), or they can be copied there
 over USB. Settings, stats and saves live in the app's private files. The
 app runs in landscape, full screen, with the screen kept on.
 

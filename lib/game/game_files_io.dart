@@ -1,6 +1,6 @@
 // Game data on disk: on desktop a folder (BROOD_DATA, default
 // ~/box/media/games/BROOD); on Android the app's own storage
-// (Android/data/com.maxbrito.brood/files/BROOD), filled by importing the
+// (Android/data/dev.x1watt.brood/files/BROOD), filled by importing the
 // player's folder or by copying the files there over USB.
 
 import 'dart:io';

@@ -113,7 +113,7 @@ class _DataSetupScreenState extends State<DataSetupScreen> {
                 kIsWeb
                     ? 'The files are kept in this browser and never leave your computer. You only do this once.'
                     : 'The files are copied into the app (about 115 MB) and never leave your device. You only do this once. '
-                          'You can also copy the folder over USB to Android/data/com.maxbrito.brood/files/BROOD.',
+                          'You can also copy the folder over USB to Android/data/dev.x1watt.brood/files/BROOD.',
                 style: const TextStyle(fontSize: 13, color: _dim, height: 1.4),
               ),
               const SizedBox(height: 24),

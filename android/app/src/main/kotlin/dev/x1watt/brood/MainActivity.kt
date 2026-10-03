@@ -7,7 +7,7 @@
 //                      access framework) and copies StarDat.mpq, BrooDat.mpq,
 //                      Patch_rt.mpq and the melee maps under maps/ into
 //                      external/BROOD; progress comes back as "progress" calls.
-package com.maxbrito.brood
+package dev.x1watt.brood
 
 import android.app.Activity
 import android.content.Intent
