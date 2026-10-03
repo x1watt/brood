@@ -32,8 +32,8 @@ class MinimapPainter extends CustomPainter {
     final (scale, origin) = layout(c, size);
     final mapRect = Rect.fromLTWH(origin.dx, origin.dy, c.mapSize.width * scale, c.mapSize.height * scale);
     canvas.drawImageRect(
-      terrain.image,
-      Rect.fromLTWH(0, 0, terrain.widthPx.toDouble(), terrain.heightPx.toDouble()),
+      terrain.minimap,
+      Rect.fromLTWH(0, 0, terrain.minimap.width.toDouble(), terrain.minimap.height.toDouble()),
       mapRect,
       Paint()..filterQuality = FilterQuality.medium,
     );

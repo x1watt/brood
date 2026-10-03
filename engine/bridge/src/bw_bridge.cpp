@@ -91,6 +91,20 @@ struct bw_bridge {
 
 	bool unit_names_loaded = false;
 	a_vector<std::string> unit_names;
+	// stat_txt.tbl string by its 1-based index (as used by the .dat labels).
+	std::string stat_string(int index) {
+		ensure_unit_names();
+		if (index <= 0 || (size_t)index > unit_names.size()) return std::string();
+		return unit_names[(size_t)index - 1];
+	}
+
+	// Loaded UI graphics, decoded to plain palette-index pixels per frame.
+	struct ui_grp {
+		a_vector<int> widths;
+		a_vector<int> heights;
+		a_vector<a_vector<uint8_t>> pixels;
+	};
+	a_vector<ui_grp> grps;
 
 	action_state action_st;
 	sound_queue sounds;
@@ -605,6 +619,33 @@ static void fill_unit_info(state_functions& f, const unit_t* u, bw_unit_info& ou
 	out.queue_count = (int32_t)u->build_queue.size();
 	for (size_t i = 0; i != u->build_queue.size() && i != 5; ++i) out.queue[i] = (int32_t)u->build_queue[i]->id;
 
+	out.max_energy = f.ut_has_energy(u) ? (int32_t)(f.unit_max_energy(u).raw_value >> 8) : 0;
+	if (f.u_cloaked(u)) out.flags |= BW_UNIT_FLAG_CLOAKED;
+	if (f.u_burrowed(u)) out.flags |= BW_UNIT_FLAG_BURROWED;
+	if (u->stim_timer > 0) out.flags |= BW_UNIT_FLAG_STIMMED;
+
+	out.researching_tech = -1;
+	out.upgrading = -1;
+	out.research_progress_permille = -1;
+	if (f.ut_building(u)) {
+		if (u->building.researching_type) {
+			out.researching_tech = (int32_t)u->building.researching_type->id;
+			int total = u->building.researching_type->research_time;
+			out.research_progress_permille = permille(total - u->building.upgrade_research_time, total);
+		} else if (u->building.upgrading_type) {
+			out.upgrading = (int32_t)u->building.upgrading_type->id;
+			int total = f.upgrade_time_cost(u->owner, u->building.upgrading_type);
+			out.research_progress_permille = permille(total - u->building.upgrade_research_time, total);
+		}
+		const target_t& rally = u->building.rally;
+		if (rally.unit || rally.pos != xy()) {
+			out.has_rally = 1;
+			out.rally_x = rally.unit && rally.unit->sprite ? rally.unit->sprite->position.x : rally.pos.x;
+			out.rally_y = rally.unit && rally.unit->sprite ? rally.unit->sprite->position.y : rally.pos.y;
+			out.rally_unit_id = unit_handle(f, rally.unit);
+		}
+	}
+
 	out.progress_permille = -1;
 	auto progress_of = [](const unit_t* x) {
 		int total = x->unit_type->build_time;
@@ -1030,4 +1071,290 @@ int bw_bridge_poll_sounds(bw_bridge_t* bridge, bw_sound_event* out_events, int m
 	for (int i = 0; i != n; ++i) out_events[i] = events[(size_t)i];
 	events.erase(events.begin(), events.begin() + n);
 	return n;
+}
+
+// --- Research, upgrades and abilities ------------------------------------------
+
+bw_status bw_bridge_get_tech_info(bw_bridge_t* bridge, int owner, int tech_id, bw_tech_info* out_info) {
+	if (!bridge || !out_info || owner < 0 || owner > 11 || tech_id < 0 || tech_id >= (int)TechTypes::None) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	try {
+		auto f = b->actions();
+		const tech_type_t* t = f.get_tech_type((TechTypes)tech_id);
+		std::memset(out_info, 0, sizeof(*out_info));
+		out_info->mineral_cost = t->mineral_cost;
+		out_info->gas_cost = t->gas_cost;
+		out_info->research_time = t->research_time;
+		out_info->energy_cost = t->energy_cost;
+		out_info->icon = t->icon;
+		out_info->race = t->race;
+		out_info->researched = f.player_has_researched(owner, (TechTypes)tech_id) ? 1 : 0;
+		std::string name = b->stat_string(t->label);
+		std::strncpy(out_info->name, name.c_str(), sizeof(out_info->name) - 1);
+		return BW_OK;
+	} catch (...) {
+		return BW_ERR_UNKNOWN;
+	}
+}
+
+bw_status bw_bridge_get_upgrade_info(bw_bridge_t* bridge, int owner, int upgrade_id, bw_upgrade_info* out_info) {
+	if (!bridge || !out_info || owner < 0 || owner > 11 || upgrade_id < 0 || upgrade_id >= (int)UpgradeTypes::None) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	try {
+		auto f = b->actions();
+		const upgrade_type_t* t = f.get_upgrade_type((UpgradeTypes)upgrade_id);
+		std::memset(out_info, 0, sizeof(*out_info));
+		out_info->mineral_cost = f.upgrade_mineral_cost(owner, t);
+		out_info->gas_cost = f.upgrade_gas_cost(owner, t);
+		out_info->time = f.upgrade_time_cost(owner, t);
+		out_info->icon = t->icon;
+		out_info->race = t->race;
+		out_info->level = f.player_upgrade_level(owner, (UpgradeTypes)upgrade_id);
+		out_info->max_level = t->max_level;
+		std::string name = b->stat_string(t->label);
+		std::strncpy(out_info->name, name.c_str(), sizeof(out_info->name) - 1);
+		return BW_OK;
+	} catch (...) {
+		return BW_ERR_UNKNOWN;
+	}
+}
+
+int bw_bridge_get_researchable(bw_bridge_t* bridge, int owner, int32_t* out_tech_ids, int max_count) {
+	if (!bridge || !out_tech_ids || owner < 0 || owner > 7) return -1;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return -1;
+	try {
+		auto f = b->actions();
+		unit_t* u = f.get_single_selected_unit(owner);
+		if (!u || u->owner != owner) return 0;
+		int n = 0;
+		for (int id = 0; id < (int)TechTypes::None && n < max_count; ++id) {
+			if (f.unit_can_research(u, f.get_tech_type((TechTypes)id), owner)) out_tech_ids[n++] = id;
+		}
+		return n;
+	} catch (...) {
+		return -1;
+	}
+}
+
+int bw_bridge_get_upgradable(bw_bridge_t* bridge, int owner, int32_t* out_upgrade_ids, int max_count) {
+	if (!bridge || !out_upgrade_ids || owner < 0 || owner > 7) return -1;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return -1;
+	try {
+		auto f = b->actions();
+		unit_t* u = f.get_single_selected_unit(owner);
+		if (!u || u->owner != owner) return 0;
+		int n = 0;
+		for (int id = 0; id < (int)UpgradeTypes::None && n < max_count; ++id) {
+			if (f.unit_can_upgrade(u, f.get_upgrade_type((UpgradeTypes)id), owner)) out_upgrade_ids[n++] = id;
+		}
+		return n;
+	} catch (...) {
+		return -1;
+	}
+}
+
+bw_status bw_bridge_research(bw_bridge_t* bridge, int owner, int tech_id) {
+	if (!bridge || owner < 0 || owner > 7 || tech_id < 0 || tech_id >= (int)TechTypes::None) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	try {
+		auto f = b->actions();
+		return f.action_research(owner, f.get_tech_type((TechTypes)tech_id)) ? BW_OK : BW_ERR_REJECTED;
+	} catch (...) {
+		return BW_ERR_UNKNOWN;
+	}
+}
+
+bw_status bw_bridge_upgrade(bw_bridge_t* bridge, int owner, int upgrade_id) {
+	if (!bridge || owner < 0 || owner > 7 || upgrade_id < 0 || upgrade_id >= (int)UpgradeTypes::None) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	try {
+		auto f = b->actions();
+		return f.action_upgrade(owner, f.get_upgrade_type((UpgradeTypes)upgrade_id)) ? BW_OK : BW_ERR_REJECTED;
+	} catch (...) {
+		return BW_ERR_UNKNOWN;
+	}
+}
+
+int bw_bridge_can_use_tech(bw_bridge_t* bridge, int owner, int tech_id) {
+	if (!bridge || owner < 0 || owner > 7 || tech_id < 0 || tech_id >= (int)TechTypes::None) return 0;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return 0;
+	try {
+		auto f = b->actions();
+		auto& selection = b->action_st.selection.at(owner);
+		if (selection.empty()) return 0;
+		const tech_type_t* t = f.get_tech_type((TechTypes)tech_id);
+		for (unit_t* u : selection) {
+			if (f.unit_can_use_tech(u, t, owner)) return 1;
+		}
+		return 0;
+	} catch (...) {
+		return 0;
+	}
+}
+
+bw_status bw_bridge_cast(bw_bridge_t* bridge, int owner, int tech_id, int x, int y, int32_t target_unit_id, int queue) {
+	if (!bridge || owner < 0 || owner > 7 || tech_id < 0 || tech_id >= (int)TechTypes::None) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	try {
+		auto f = b->actions();
+		// The casting order is the one whose tech_type is this tech
+		// (orders.dat), e.g. CastPsionicStorm for Psionic_Storm.
+		const order_type_t* order = nullptr;
+		for (auto& o : b->player->st().global->order_types.vec) {
+			if (o.tech_type == (TechTypes)tech_id) {
+				order = &o;
+				break;
+			}
+		}
+		if (!order) return BW_ERR_INVALID_ARGUMENT;
+		unit_t* target = resolve_unit(f, target_unit_id);
+		bool ok = f.action_order(owner, order, xy(x, y), target, target ? target->unit_type : nullptr, queue != 0);
+		return ok ? BW_OK : BW_ERR_REJECTED;
+	} catch (...) {
+		return BW_ERR_UNKNOWN;
+	}
+}
+
+bw_status bw_bridge_action(bw_bridge_t* bridge, int owner, int action) {
+	if (!bridge || owner < 0 || owner > 7) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	try {
+		auto f = b->actions();
+		bool ok;
+		switch (action) {
+		case BW_ACT_STIM: ok = f.action_stim_pack(owner); break;
+		case BW_ACT_SIEGE: ok = f.action_siege(owner, false); break;
+		case BW_ACT_UNSIEGE: ok = f.action_unsiege(owner, false); break;
+		case BW_ACT_CLOAK: ok = f.action_cloak(owner); break;
+		case BW_ACT_DECLOAK: ok = f.action_decloak(owner); break;
+		case BW_ACT_BURROW: ok = f.action_burrow(owner, false); break;
+		case BW_ACT_UNBURROW: ok = f.action_unburrow(owner); break;
+		case BW_ACT_TRAIN_FIGHTER: ok = f.action_train_fighter(owner); break;
+		case BW_ACT_ARCHON_WARP: ok = f.action_morph_archon(owner); break;
+		case BW_ACT_DARK_ARCHON_MELD: ok = f.action_morph_dark_archon(owner); break;
+		case BW_ACT_UNLOAD_ALL: ok = f.action_unload_all(owner, false); break;
+		case BW_ACT_CANCEL_RESEARCH: ok = f.action_cancel_research(owner); break;
+		case BW_ACT_CANCEL_UPGRADE: ok = f.action_cancel_upgrade(owner); break;
+		default: return BW_ERR_INVALID_ARGUMENT;
+		}
+		return ok ? BW_OK : BW_ERR_REJECTED;
+	} catch (...) {
+		return BW_ERR_UNKNOWN;
+	}
+}
+
+bw_status bw_bridge_set_rally(bw_bridge_t* bridge, int owner, int x, int y, int32_t target_unit_id) {
+	if (!bridge || owner < 0 || owner > 7) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	try {
+		auto f = b->actions();
+		unit_t* target = resolve_unit(f, target_unit_id);
+		const order_type_t* order = f.get_order_type(target ? Orders::RallyPointUnit : Orders::RallyPointTile);
+		bool ok = f.action_order(owner, order, xy(x, y), target, target ? target->unit_type : nullptr, false);
+		return ok ? BW_OK : BW_ERR_REJECTED;
+	} catch (...) {
+		return BW_ERR_UNKNOWN;
+	}
+}
+
+// --- Arbitrary game graphics ---------------------------------------------------
+
+// Some UI GRPs (e.g. game\icons.grp) are stored uncompressed: each frame is
+// width*height raw bytes at its offset, which OpenBW's read_grp (compressed
+// line format) rejects. Both formats are decoded to plain pixels here.
+static bool read_raw_grp(const a_vector<uint8_t>& data, bw_bridge::ui_grp& out) {
+	if (data.size() < 6) return false;
+	size_t count = data[0] | (data[1] << 8);
+	if (data.size() < 6 + count * 8) return false;
+	for (size_t i = 0; i != count; ++i) {
+		const uint8_t* h = &data[6 + i * 8];
+		size_t w = h[2], hh = h[3];
+		size_t offset = h[4] | (h[5] << 8) | (h[6] << 16) | ((size_t)h[7] << 24);
+		if (offset + w * hh > data.size()) return false;
+		out.widths.push_back((int)w);
+		out.heights.push_back((int)hh);
+		out.pixels.emplace_back(data.begin() + offset, data.begin() + offset + w * hh);
+	}
+	return true;
+}
+
+int bw_bridge_grp_load(bw_bridge_t* bridge, const char* path) {
+	if (!bridge || !path) return -1;
+	bw_bridge* b = B(bridge);
+	if (!b->assets_loaded) return -1;
+	try {
+		a_vector<uint8_t> data;
+		b->asset_loader()(data, path);
+		bw_bridge::ui_grp out;
+		try {
+			grp_t grp = read_grp(data_loading::data_reader_le(data.data(), data.data() + data.size()));
+			for (auto& f : grp.frames) {
+				out.widths.push_back((int)f.size.x);
+				out.heights.push_back((int)f.size.y);
+				a_vector<uint8_t> px(f.size.x * f.size.y);
+				if (!px.empty()) bw_render_util::draw_frame(f, false, px.data());
+				out.pixels.push_back(std::move(px));
+			}
+		} catch (...) {
+			out = bw_bridge::ui_grp();
+			if (!read_raw_grp(data, out)) return -1;
+		}
+		b->grps.push_back(std::move(out));
+		return (int)b->grps.size() - 1;
+	} catch (...) {
+		return -1;
+	}
+}
+
+int bw_bridge_grp_frame_count(bw_bridge_t* bridge, int handle) {
+	if (!bridge || handle < 0 || (size_t)handle >= B(bridge)->grps.size()) return -1;
+	return (int)B(bridge)->grps[(size_t)handle].pixels.size();
+}
+
+bw_status bw_bridge_grp_frame_size(bw_bridge_t* bridge, int handle, int frame, int* out_width, int* out_height) {
+	if (!bridge || !out_width || !out_height || handle < 0 || (size_t)handle >= B(bridge)->grps.size()) return BW_ERR_INVALID_ARGUMENT;
+	auto& g = B(bridge)->grps[(size_t)handle];
+	if (frame < 0 || (size_t)frame >= g.pixels.size()) return BW_ERR_INVALID_ARGUMENT;
+	*out_width = g.widths[(size_t)frame];
+	*out_height = g.heights[(size_t)frame];
+	return BW_OK;
+}
+
+bw_status bw_bridge_grp_decode(bw_bridge_t* bridge, int handle, int frame, uint8_t* out_pixels, int out_cap) {
+	if (!bridge || !out_pixels || handle < 0 || (size_t)handle >= B(bridge)->grps.size()) return BW_ERR_INVALID_ARGUMENT;
+	auto& g = B(bridge)->grps[(size_t)handle];
+	if (frame < 0 || (size_t)frame >= g.pixels.size()) return BW_ERR_INVALID_ARGUMENT;
+	auto& px = g.pixels[(size_t)frame];
+	if ((size_t)out_cap < px.size()) return BW_ERR_INVALID_ARGUMENT;
+	if (!px.empty()) std::memcpy(out_pixels, px.data(), px.size());
+	return BW_OK;
+}
+
+bw_status bw_bridge_load_pcx(bw_bridge_t* bridge, const char* path, uint8_t* out_pixels, int out_cap, int* out_width, int* out_height) {
+	if (!bridge || !path || !out_width || !out_height) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->assets_loaded) return BW_ERR_NOT_LOADED;
+	try {
+		a_vector<uint8_t> data;
+		b->asset_loader()(data, path);
+		bw_render_util::pcx_image pcx = bw_render_util::load_pcx_data(data);
+		*out_width = (int)pcx.width;
+		*out_height = (int)pcx.height;
+		if (!out_pixels) return BW_OK;
+		if ((size_t)out_cap < pcx.data.size()) return BW_ERR_INVALID_ARGUMENT;
+		std::memcpy(out_pixels, pcx.data.data(), pcx.data.size());
+		return BW_OK;
+	} catch (...) {
+		return BW_ERR_ASSET_LOAD_FAILED;
+	}
 }

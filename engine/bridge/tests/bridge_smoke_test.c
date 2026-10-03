@@ -355,6 +355,93 @@ int main(int argc, char** argv) {
 	CHECK(gas_gained >= 40, "workers did not harvest gas (only %d)", gas_gained);
 	CHECK(marine_count == 1, "marine did not train");
 
+	/* Rally point: set on the barracks, read back through the unit info. */
+	{
+		bw_unit_info bk;
+		bw_bridge_get_unit(b, barracks[0], &bk);
+		CHECK(bw_bridge_select_units(b, me, barracks, 1) == BW_OK, "select barracks for rally");
+		CHECK(bw_bridge_set_rally(b, me, bk.x + 200, bk.y + 64, 0) == BW_OK, "set rally");
+		bw_bridge_get_unit(b, barracks[0], &bk);
+		CHECK(bk.has_rally && bk.rally_x == bk.x + 200 && bk.rally_y == bk.y + 64, "rally not stored (%d: %d,%d)", bk.has_rally, bk.rally_x, bk.rally_y);
+		printf("bridge_smoke_test: rally point set at %d,%d\n", bk.rally_x, bk.rally_y);
+	}
+
+	/* UI graphics: the original command icons and resource icons load. */
+	{
+		int h1 = bw_bridge_grp_load(b, "unit\\cmdbtns\\cmdicons.grp");
+		int h2 = bw_bridge_grp_load(b, "game\\icons.grp");
+		CHECK(h1 >= 0 && bw_bridge_grp_frame_count(b, h1) == 390, "cmdicons.grp");
+		CHECK(h2 >= 0 && bw_bridge_grp_frame_count(b, h2) == 12, "icons.grp (uncompressed GRP)");
+	}
+
+	/* Research and upgrades: Academy -> Stim Packs used by a Marine;
+	 * Engineering Bay -> Infantry Weapons level 1. */
+	{
+		enum { ACADEMY = 112, ENGINEERING_BAY = 122, STIM = 0, INFANTRY_WEAPONS = 7 };
+		for (int i = 0; i != 24 * 300 && bw_bridge_minerals(b, me) < 300; ++i) bw_bridge_step(b, 1);
+		CHECK(bw_bridge_minerals(b, me) >= 300, "could not bank 300 minerals");
+		int ax, ay, ex, ey;
+		CHECK(bw_bridge_select_units(b, me, &scvs[0], 1) == BW_OK, "select builder");
+		CHECK(nearest_place(b, me, ACADEMY, cc.x, cc.y, 5, &ax, &ay) && bw_bridge_build(b, me, ACADEMY, ax, ay) == BW_OK, "place academy");
+		bw_bridge_step(b, 24 * 3);
+		CHECK(bw_bridge_select_units(b, me, &scvs[3], 1) == BW_OK, "select builder 2 (a mineral miner, not one inside the refinery)");
+		int found_bay = nearest_place(b, me, ENGINEERING_BAY, cc.x, cc.y, 6, &ex, &ey);
+		bw_status bay_status = found_bay ? bw_bridge_build(b, me, ENGINEERING_BAY, ex, ey) : BW_ERR_UNKNOWN;
+		CHECK(found_bay && bay_status == BW_OK, "place engineering bay (found=%d at %d,%d status=%d minerals=%d)", found_bay, ex, ey, bay_status, bw_bridge_minerals(b, me));
+		int32_t academy, bay;
+		CHECK(wait_for_completed(b, me, ACADEMY, 24 * 120, &academy), "academy never completed");
+		CHECK(wait_for_completed(b, me, ENGINEERING_BAY, 24 * 120, &bay), "engineering bay never completed");
+		bw_bridge_step(b, 24 * 30);
+
+		bw_tech_info ti;
+		CHECK(bw_bridge_get_tech_info(b, me, STIM, &ti) == BW_OK && !ti.researched, "stim info");
+		printf("bridge_smoke_test: tech '%s' %d/%d icon %d\n", ti.name, ti.mineral_cost, ti.gas_cost, ti.icon);
+		send_workers_mining(b, me, TERRAN_SCV); /* builders idle after construction, as in the original */
+		for (int i = 0; i != 24 * 300 && bw_bridge_minerals(b, me) < 250; ++i) bw_bridge_step(b, 1);
+		CHECK(bw_bridge_select_units(b, me, &academy, 1) == BW_OK, "select academy");
+		int32_t ids[64];
+		int nr = bw_bridge_get_researchable(b, me, ids, 64), has_stim = 0;
+		for (int i = 0; i != nr; ++i) if (ids[i] == STIM) has_stim = 1;
+		CHECK(has_stim, "academy can't research stim (%d researchable)", nr);
+		CHECK(bw_bridge_research(b, me, STIM) == BW_OK, "research stim (minerals %d gas %d)", bw_bridge_minerals(b, me), bw_bridge_gas(b, me));
+
+		CHECK(bw_bridge_select_units(b, me, &bay, 1) == BW_OK, "select bay");
+		bw_upgrade_info ui0;
+		bw_bridge_get_upgrade_info(b, me, INFANTRY_WEAPONS, &ui0);
+		printf("bridge_smoke_test: upgrade '%s' level %d/%d cost %d/%d\n", ui0.name, ui0.level, ui0.max_level, ui0.mineral_cost, ui0.gas_cost);
+		CHECK(bw_bridge_upgrade(b, me, INFANTRY_WEAPONS) == BW_OK, "upgrade infantry weapons (minerals %d gas %d)", bw_bridge_minerals(b, me), bw_bridge_gas(b, me));
+
+		int researched = 0;
+		for (int i = 0; i != 24 * 120 && !researched; ++i) {
+			bw_bridge_step(b, 1);
+			bw_bridge_get_tech_info(b, me, STIM, &ti);
+			researched = ti.researched;
+		}
+		CHECK(researched, "stim never finished researching");
+
+		int32_t m[2];
+		CHECK(find_units(b, me, TERRAN_MARINE, m, 2) >= 1, "marine gone");
+		bw_unit_info before_stim, after_stim;
+		bw_bridge_get_unit(b, m[0], &before_stim);
+		CHECK(bw_bridge_select_units(b, me, m, 1) == BW_OK, "select marine");
+		CHECK(bw_bridge_can_use_tech(b, me, STIM), "marine can't use stim after research");
+		CHECK(bw_bridge_action(b, me, BW_ACT_STIM) == BW_OK, "stim");
+		bw_bridge_step(b, 2);
+		bw_bridge_get_unit(b, m[0], &after_stim);
+		printf("bridge_smoke_test: stim packs: marine hp %d -> %d, stimmed=%d\n", before_stim.hp, after_stim.hp, (after_stim.flags & BW_UNIT_FLAG_STIMMED) != 0);
+		CHECK(after_stim.hp == before_stim.hp - 10 && (after_stim.flags & BW_UNIT_FLAG_STIMMED), "stim had no effect");
+
+		int level = 0;
+		for (int i = 0; i != 24 * 300 && level == 0; ++i) {
+			bw_bridge_step(b, 1);
+			bw_upgrade_info u;
+			bw_bridge_get_upgrade_info(b, me, INFANTRY_WEAPONS, &u);
+			level = u.level;
+		}
+		CHECK(level == 1, "infantry weapons upgrade never finished");
+		printf("bridge_smoke_test: infantry weapons now level %d\n", level);
+	}
+
 	bw_bridge_destroy(b);
 	test_protoss(dd, mf);
 	test_zerg(dd, mf);

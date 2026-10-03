@@ -5,8 +5,11 @@
 
 import 'package:flutter/material.dart';
 
+import 'dart:ui' as ui;
+
 import '../engine/models.dart';
 import '../game/game_controller.dart';
+import '../rendering/icon_atlas.dart';
 
 const _panelColor = Color(0xFF14181C);
 const _borderColor = Color(0xFF2E3A44);
@@ -36,6 +39,11 @@ class TopBar extends StatelessWidget {
     String? hint;
     if (c.mode == CommandMode.build && c.buildTypeId != null) {
       hint = 'Place ${c.engine.unitType(c.buildTypeId!).shortName}: left click to build, right click or Esc to cancel';
+    } else if (c.mode == CommandMode.cast && c.castAbility != null) {
+      final t = c.castAbility!.tech >= 0 ? c.engine.techInfo(GameController.myPlayer, c.castAbility!.tech) : null;
+      hint = '${t?.name ?? 'Ability'}: left click a target, right click or Esc to cancel';
+    } else if (c.mode == CommandMode.rally) {
+      hint = 'Set rally point: left click a spot or unit, right click or Esc to cancel';
     } else if (c.mode != CommandMode.none) {
       hint = '${c.mode.name[0].toUpperCase()}${c.mode.name.substring(1)}: left click a target, right click or Esc to cancel';
     }
@@ -48,15 +56,17 @@ class TopBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          _resource(Icons.diamond, _mineralColor, '${c.minerals}', 'Minerals'),
+          // The original's own icons (game\icons.grp): minerals, then the
+          // race's gas and supply icons.
+          _resource(c.icons?.resource(0), _mineralColor, '${c.minerals}', 'Minerals'),
           const SizedBox(width: 20),
-          _resource(Icons.local_fire_department, _gasColor, '${c.gas}', 'Vespene gas'),
+          _resource(c.icons?.resource(1 + c.myRace), _gasColor, '${c.gas}', 'Vespene gas'),
           const SizedBox(width: 20),
           _resource(
-            Icons.house,
+            c.icons?.resource(4 + c.myRace),
             supplyFull ? const Color(0xFFFF6B5E) : _textColor,
             '${c.supplyUsed.toStringAsFixed(0)}/${c.supplyMax.toStringAsFixed(0)}',
-            'Supply used / available',
+            const ['Control (Overlords)', 'Supplies (Supply Depots)', 'Psi (Pylons)'][c.myRace.clamp(0, 2)],
           ),
           const SizedBox(width: 20),
           Text(time, style: const TextStyle(color: _dimText, fontFeatures: [FontFeature.tabularFigures()])),
@@ -89,11 +99,15 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  Widget _resource(IconData icon, Color color, String value, String tooltip) => Tooltip(
+  Widget _resource(ui.Image? icon, Color color, String value, String tooltip) => Tooltip(
     message: tooltip,
     child: Row(
       children: [
-        Icon(icon, size: 16, color: color),
+        SizedBox(
+          width: 18,
+          height: 18,
+          child: icon == null ? null : RawImage(image: icon, filterQuality: FilterQuality.none, fit: BoxFit.contain),
+        ),
         const SizedBox(width: 6),
         Text(
           value,
@@ -152,7 +166,14 @@ class SelectionPanel extends StatelessWidget {
     } else {
       lines.add(_statBar('HP', u.hp, u.maxHp, _hpColor(u.hp, u.maxHp)));
       if (u.maxShields > 0) lines.add(_statBar('Shields', u.shields, u.maxShields, const Color(0xFF4FA3FF)));
-      if (u.energy > 0) lines.add(_statBar('Energy', u.energy, 200, const Color(0xFFB57BFF)));
+      if (u.maxEnergy > 0) lines.add(_statBar('Energy', u.energy, u.maxEnergy, const Color(0xFFB57BFF)));
+    }
+    if (u.isBusyResearching && u.researchProgressPermille >= 0) {
+      final name = u.researchingTech >= 0
+          ? c.engine.techInfo(GameController.myPlayer, u.researchingTech)?.name
+          : c.engine.upgradeInfo(GameController.myPlayer, u.upgrading)?.name;
+      lines.add(const SizedBox(height: 6));
+      lines.add(_progress('${u.researchingTech >= 0 ? 'Researching' : 'Upgrading'} ${name ?? ''}', u.researchProgressPermille));
     }
     if (!u.isCompleted && u.progressPermille >= 0) {
       lines.add(const SizedBox(height: 6));
@@ -283,54 +304,82 @@ class CommandCard extends StatelessWidget {
       child: buttons.isEmpty
           ? const Center(child: Text('No commands', style: TextStyle(color: _dimText)))
           : GridView.count(
-              crossAxisCount: 3,
-              mainAxisSpacing: 6,
-              crossAxisSpacing: 6,
-              childAspectRatio: 1.9,
+              crossAxisCount: 4,
+              mainAxisSpacing: 5,
+              crossAxisSpacing: 5,
+              childAspectRatio: 1.25,
               children: [for (final b in buttons) _button(b)],
             ),
     );
   }
 
   Widget _button(CmdButton b) {
-    final t = b.kind == CmdKind.produce ? c.engine.unitType(b.typeId) : null;
-    // Like the original: missing requirements grey a button out; being short
-    // on resources doesn't (clicking it gets the advisor's complaint), only
-    // the cost turns red.
-    final color = !b.enabled ? const Color(0xFF55606A) : (b.kind == CmdKind.cancel ? const Color(0xFFFF6B5E) : _textColor);
+    final state = !b.enabled ? IconState.disabled : (b.active ? IconState.active : IconState.normal);
+    final icon = b.icon >= 0 ? c.icons?.command(b.icon, state) : null;
+    final hasCost = b.mineralCost > 0 || b.gasCost > 0;
     const short = Color(0xFFFF6B5E);
-    final tooltip = t == null
-        ? '${b.label}${b.hotkey.isEmpty ? '' : ' (${b.hotkey})'}'
-        : '${t.name}${b.hotkey.isEmpty ? '' : ' (${b.hotkey})'}\n${t.mineralCost} minerals'
-              '${t.gasCost > 0 ? ', ${t.gasCost} gas' : ''}${t.supply > 0 ? ', ${t.supply.toStringAsFixed(0)} supply' : ''}'
-              '${b.enabled ? '' : '\nRequirements not met'}';
+    const greyed = Color(0xFF55606A);
+    final costs = <String>[
+      if (b.mineralCost > 0) '${b.mineralCost} minerals',
+      if (b.gasCost > 0) '${b.gasCost} gas',
+      if (b.energyCost > 0) '${b.energyCost} energy',
+      if (b.kind == CmdKind.produce && c.engine.unitType(b.typeId).supply > 0)
+        '${c.engine.unitType(b.typeId).supply.toStringAsFixed(0)} supply',
+    ];
+    final tooltip = [
+      '${b.label}${b.hotkey.isEmpty ? '' : '  (${b.hotkey})'}',
+      if (costs.isNotEmpty) costs.join(', '),
+      if (!b.enabled) 'Requirements not met',
+    ].join('\n');
     return Tooltip(
       message: tooltip,
-      waitDuration: const Duration(milliseconds: 400),
+      waitDuration: const Duration(milliseconds: 300),
       child: _Tile(
         onTap: () => c.activate(b, fromClick: true),
         active: b.active,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+        child: Stack(
           children: [
-            _HotkeyLabel(label: b.label, hotkey: b.hotkey, color: color),
-            if (t != null)
-              Text.rich(
-                TextSpan(children: [
-                  TextSpan(
-                    text: '${t.mineralCost}',
-                    style: TextStyle(color: !b.enabled ? const Color(0xFF55606A) : c.minerals >= t.mineralCost ? _mineralColor : short),
+            Positioned.fill(
+              bottom: hasCost ? 12 : 0,
+              child: icon != null
+                  ? RawImage(image: icon, filterQuality: FilterQuality.none, fit: BoxFit.contain)
+                  : Center(child: _HotkeyLabel(label: b.label, hotkey: b.hotkey, color: b.enabled ? _textColor : greyed)),
+            ),
+            if (b.hotkey.length == 1)
+              Positioned(
+                left: 1,
+                top: 0,
+                child: Text(
+                  b.hotkey,
+                  style: TextStyle(
+                    color: b.enabled ? const Color(0xFFFFD54F) : greyed,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
                   ),
-                  if (t.gasCost > 0)
-                    TextSpan(
-                      text: ' ${t.gasCost}',
-                      style: TextStyle(color: !b.enabled ? const Color(0xFF55606A) : c.gas >= t.gasCost ? _gasColor : short),
-                    ),
-                ]),
-                style: const TextStyle(fontSize: 10),
-              )
-            else if (b.hotkey.length > 1)
-              Text(b.hotkey, style: const TextStyle(color: _dimText, fontSize: 10)),
+                ),
+              ),
+            if (hasCost)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: Text.rich(
+                  TextSpan(children: [
+                    if (b.mineralCost > 0)
+                      TextSpan(
+                        text: '${b.mineralCost}',
+                        style: TextStyle(color: !b.enabled ? greyed : c.minerals >= b.mineralCost ? _mineralColor : short),
+                      ),
+                    if (b.gasCost > 0)
+                      TextSpan(
+                        text: ' ${b.gasCost}',
+                        style: TextStyle(color: !b.enabled ? greyed : c.gas >= b.gasCost ? _gasColor : short),
+                      ),
+                  ]),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 9),
+                ),
+              ),
           ],
         ),
       ),

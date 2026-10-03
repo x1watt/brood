@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 8
+#define BW_BRIDGE_ABI_VERSION 9
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -149,6 +149,9 @@ bw_status bw_bridge_decode_megatile(bw_bridge_t* bridge, int megatile_index, uin
 #define BW_UNIT_FLAG_COMPLETED 8
 #define BW_UNIT_FLAG_FLYER     16
 #define BW_UNIT_FLAG_CAN_MOVE  32
+#define BW_UNIT_FLAG_CLOAKED   64
+#define BW_UNIT_FLAG_BURROWED  128
+#define BW_UNIT_FLAG_STIMMED   256
 
 typedef struct bw_unit_info {
 	int32_t unit_id;
@@ -168,6 +171,14 @@ typedef struct bw_unit_info {
 	int32_t queue_count;   // build/train queue length (0-5)
 	int32_t queue[5];      // unit type ids in the queue
 	int32_t progress_permille; // progress of the current build/train (or own construction), -1 if none
+	int32_t max_energy;
+	int32_t researching_tech;      // tech id being researched, -1 if none
+	int32_t upgrading;             // upgrade id being upgraded, -1 if none
+	int32_t research_progress_permille; // for researching_tech / upgrading, -1 if none
+	int32_t has_rally;             // production buildings: 1 if a rally point is set
+	int32_t rally_x;               // rally point, map pixels
+	int32_t rally_y;
+	int32_t rally_unit_id;         // unit the rally point follows, 0 if a position
 } bw_unit_info;
 
 // All live units of every player. Returns count written, -1 on error.
@@ -242,6 +253,81 @@ bw_status bw_bridge_cancel_last(bw_bridge_t* bridge, int owner);
 #define BW_GROUP_RECALL 1
 #define BW_GROUP_ADD    2
 bw_status bw_bridge_control_group(bw_bridge_t* bridge, int owner, int group, int action);
+
+// --- Research, upgrades and abilities ------------------------------------------
+
+typedef struct bw_tech_info {
+	int32_t mineral_cost;
+	int32_t gas_cost;
+	int32_t research_time; // frames
+	int32_t energy_cost;
+	int32_t icon;          // frame in unit\cmdbtns\cmdicons.grp
+	int32_t race;
+	int32_t researched;    // for the owner passed in (or available without research)
+	char name[64];
+} bw_tech_info;
+
+typedef struct bw_upgrade_info {
+	int32_t mineral_cost;  // for the next level
+	int32_t gas_cost;
+	int32_t time;          // frames, next level
+	int32_t icon;
+	int32_t race;
+	int32_t level;         // owner's current level
+	int32_t max_level;
+	char name[64];
+} bw_upgrade_info;
+
+bw_status bw_bridge_get_tech_info(bw_bridge_t* bridge, int owner, int tech_id, bw_tech_info* out_info);
+bw_status bw_bridge_get_upgrade_info(bw_bridge_t* bridge, int owner, int upgrade_id, bw_upgrade_info* out_info);
+
+// What the single selected building can research / upgrade right now
+// (OpenBW's unit_can_research / unit_can_upgrade).
+int bw_bridge_get_researchable(bw_bridge_t* bridge, int owner, int32_t* out_tech_ids, int max_count);
+int bw_bridge_get_upgradable(bw_bridge_t* bridge, int owner, int32_t* out_upgrade_ids, int max_count);
+bw_status bw_bridge_research(bw_bridge_t* bridge, int owner, int tech_id);
+bw_status bw_bridge_upgrade(bw_bridge_t* bridge, int owner, int upgrade_id);
+
+// Whether the first selected unit can use tech_id now (researched, completed,
+// not disabled; energy not checked).
+int bw_bridge_can_use_tech(bw_bridge_t* bridge, int owner, int tech_id);
+
+// Casts a targeted ability (storm, lockdown, scanner sweep, ...) with the
+// selection: issues the order whose tech is tech_id at (x, y) / target.
+bw_status bw_bridge_cast(bw_bridge_t* bridge, int owner, int tech_id, int x, int y, int32_t target_unit_id, int queue);
+
+// Instant abilities and toggles for the selection.
+#define BW_ACT_STIM 0
+#define BW_ACT_SIEGE 1
+#define BW_ACT_UNSIEGE 2
+#define BW_ACT_CLOAK 3
+#define BW_ACT_DECLOAK 4
+#define BW_ACT_BURROW 5
+#define BW_ACT_UNBURROW 6
+#define BW_ACT_TRAIN_FIGHTER 7 // interceptor / scarab
+#define BW_ACT_ARCHON_WARP 8
+#define BW_ACT_DARK_ARCHON_MELD 9
+#define BW_ACT_UNLOAD_ALL 10
+#define BW_ACT_CANCEL_RESEARCH 11
+#define BW_ACT_CANCEL_UPGRADE 12
+bw_status bw_bridge_action(bw_bridge_t* bridge, int owner, int action);
+
+// Sets the selected building's rally point to a position or a unit.
+bw_status bw_bridge_set_rally(bw_bridge_t* bridge, int owner, int x, int y, int32_t target_unit_id);
+
+// --- Arbitrary game graphics (command icons, resource icons) --------------------
+
+// Loads a GRP from the MPQs (e.g. "unit\cmdbtns\cmdicons.grp"); returns a
+// handle >= 0, or -1. Handles stay valid until the bridge is destroyed.
+int bw_bridge_grp_load(bw_bridge_t* bridge, const char* path);
+int bw_bridge_grp_frame_count(bw_bridge_t* bridge, int handle);
+bw_status bw_bridge_grp_frame_size(bw_bridge_t* bridge, int handle, int frame, int* out_width, int* out_height);
+// width*height palette indices, 0 = transparent.
+bw_status bw_bridge_grp_decode(bw_bridge_t* bridge, int handle, int frame, uint8_t* out_pixels, int out_cap);
+
+// An 8-bit PCX image's pixels (palette indices). Pass out_pixels NULL to get
+// the size only.
+bw_status bw_bridge_load_pcx(bw_bridge_t* bridge, const char* path, uint8_t* out_pixels, int out_cap, int* out_width, int* out_height);
 
 // --- Feedback visuals -------------------------------------------------------
 

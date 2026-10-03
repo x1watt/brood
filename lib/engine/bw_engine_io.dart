@@ -234,6 +234,14 @@ class BwEngine {
       height: u.height,
       queue: List<int>.generate(count, (i) => u.queue[i], growable: false),
       progressPermille: u.progress_permille,
+      maxEnergy: u.max_energy,
+      researchingTech: u.researching_tech,
+      upgrading: u.upgrading,
+      researchProgressPermille: u.research_progress_permille,
+      hasRally: u.has_rally != 0,
+      rallyX: u.rally_x,
+      rallyY: u.rally_y,
+      rallyUnitId: u.rally_unit_id,
     );
   }
 
@@ -325,6 +333,104 @@ class BwEngine {
       _ok(_b.bw_bridge_build(_h, owner, unitTypeId, tileX, tileY));
 
   bool cancelLast(int owner) => _ok(_b.bw_bridge_cancel_last(_h, owner));
+
+  // --- research, upgrades, abilities ---
+
+  static String _cString(ffi.Array<ffi.Char> a, int max) {
+    final chars = <int>[];
+    for (int i = 0; i < max; ++i) {
+      final c = a[i];
+      if (c == 0) break;
+      chars.add(c);
+    }
+    return String.fromCharCodes(chars);
+  }
+
+  TechInfo? techInfo(int owner, int techId) {
+    final p = calloc<bw_tech_info>();
+    try {
+      if (!_ok(_b.bw_bridge_get_tech_info(_h, owner, techId, p))) return null;
+      final t = p.ref;
+      return TechInfo(techId, t.mineral_cost, t.gas_cost, t.research_time, t.energy_cost, t.icon, t.race, t.researched != 0, _cString(t.name, 64));
+    } finally {
+      calloc.free(p);
+    }
+  }
+
+  UpgradeInfo? upgradeInfo(int owner, int upgradeId) {
+    final p = calloc<bw_upgrade_info>();
+    try {
+      if (!_ok(_b.bw_bridge_get_upgrade_info(_h, owner, upgradeId, p))) return null;
+      final t = p.ref;
+      return UpgradeInfo(upgradeId, t.mineral_cost, t.gas_cost, t.time, t.icon, t.race, t.level, t.max_level, _cString(t.name, 64));
+    } finally {
+      calloc.free(p);
+    }
+  }
+
+  List<int> getResearchable(int owner) {
+    final n = _b.bw_bridge_get_researchable(_h, owner, _idBuf, 256);
+    return n <= 0 ? const [] : List<int>.generate(n, (i) => _idBuf[i], growable: false);
+  }
+
+  List<int> getUpgradable(int owner) {
+    final n = _b.bw_bridge_get_upgradable(_h, owner, _idBuf, 256);
+    return n <= 0 ? const [] : List<int>.generate(n, (i) => _idBuf[i], growable: false);
+  }
+
+  bool research(int owner, int techId) => _ok(_b.bw_bridge_research(_h, owner, techId));
+  bool upgrade(int owner, int upgradeId) => _ok(_b.bw_bridge_upgrade(_h, owner, upgradeId));
+  bool canUseTech(int owner, int techId) => _b.bw_bridge_can_use_tech(_h, owner, techId) != 0;
+
+  bool cast(int owner, int techId, int x, int y, {int targetUnitId = 0, bool queue = false}) =>
+      _ok(_b.bw_bridge_cast(_h, owner, techId, x, y, targetUnitId, queue ? 1 : 0));
+
+  bool ability(int owner, Ability a) => _ok(_b.bw_bridge_action(_h, owner, a.index));
+
+  bool setRally(int owner, int x, int y, {int targetUnitId = 0}) => _ok(_b.bw_bridge_set_rally(_h, owner, x, y, targetUnitId));
+
+  // --- arbitrary UI graphics ---
+
+  int grpLoad(String path) {
+    final p = path.toNativeUtf8();
+    try {
+      return _b.bw_bridge_grp_load(_h, p.cast());
+    } finally {
+      calloc.free(p);
+    }
+  }
+
+  int grpFrameCount(int handle) => _b.bw_bridge_grp_frame_count(_h, handle);
+
+  (int, int, Uint8List)? grpFrame(int handle, int frame) {
+    if (!_ok(_b.bw_bridge_grp_frame_size(_h, handle, frame, _int1, _int2))) return null;
+    final w = _int1.value, h = _int2.value;
+    final size = w * h;
+    final buf = calloc<ffi.Uint8>(size == 0 ? 1 : size);
+    try {
+      if (!_ok(_b.bw_bridge_grp_decode(_h, handle, frame, buf, size))) return null;
+      return (w, h, Uint8List.fromList(buf.asTypedList(size)));
+    } finally {
+      calloc.free(buf);
+    }
+  }
+
+  (int, int, Uint8List)? loadPcx(String path) {
+    final p = path.toNativeUtf8();
+    try {
+      if (!_ok(_b.bw_bridge_load_pcx(_h, p.cast(), ffi.nullptr, 0, _int1, _int2))) return null;
+      final w = _int1.value, h = _int2.value;
+      final buf = calloc<ffi.Uint8>(w * h);
+      try {
+        if (!_ok(_b.bw_bridge_load_pcx(_h, p.cast(), buf, w * h, _int1, _int2))) return null;
+        return (w, h, Uint8List.fromList(buf.asTypedList(w * h)));
+      } finally {
+        calloc.free(buf);
+      }
+    } finally {
+      calloc.free(p);
+    }
+  }
 
   bool controlGroup(int owner, int group, GroupAction action) =>
       _ok(_b.bw_bridge_control_group(_h, owner, group, action.index));

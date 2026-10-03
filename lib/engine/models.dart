@@ -46,6 +46,9 @@ class UnitInfo {
   static const int flagCompleted = 8;
   static const int flagFlyer = 16;
   static const int flagCanMove = 32;
+  static const int flagCloaked = 64;
+  static const int flagBurrowed = 128;
+  static const int flagStimmed = 256;
 
   final int unitId;
   final int typeId;
@@ -63,6 +66,14 @@ class UnitInfo {
   final int height;
   final List<int> queue;
   final int progressPermille;
+  final int maxEnergy;
+  final int researchingTech; // -1 if none
+  final int upgrading; // -1 if none
+  final int researchProgressPermille;
+  final bool hasRally;
+  final int rallyX;
+  final int rallyY;
+  final int rallyUnitId;
 
   const UnitInfo({
     required this.unitId,
@@ -81,7 +92,19 @@ class UnitInfo {
     required this.height,
     required this.queue,
     required this.progressPermille,
+    required this.maxEnergy,
+    required this.researchingTech,
+    required this.upgrading,
+    required this.researchProgressPermille,
+    required this.hasRally,
+    required this.rallyX,
+    required this.rallyY,
+    required this.rallyUnitId,
   });
+
+  bool get isCloaked => flags & flagCloaked != 0;
+  bool get isBurrowed => flags & flagBurrowed != 0;
+  bool get isBusyResearching => researchingTech >= 0 || upgrading >= 0;
 
   bool get isBuilding => flags & flagBuilding != 0;
   bool get isResource => flags & flagResource != 0;
@@ -163,3 +186,32 @@ class SoundInfo {
   final String filename;
   const SoundInfo(this.priority, this.flags, this.minVolume, this.filename);
 }
+
+class TechInfo {
+  final int id;
+  final int mineralCost;
+  final int gasCost;
+  final int researchTime;
+  final int energyCost;
+  final int icon;
+  final int race;
+  final bool researched;
+  final String name;
+  const TechInfo(this.id, this.mineralCost, this.gasCost, this.researchTime, this.energyCost, this.icon, this.race, this.researched, this.name);
+}
+
+class UpgradeInfo {
+  final int id;
+  final int mineralCost; // next level
+  final int gasCost;
+  final int time;
+  final int icon;
+  final int race;
+  final int level;
+  final int maxLevel;
+  final String name;
+  const UpgradeInfo(this.id, this.mineralCost, this.gasCost, this.time, this.icon, this.race, this.level, this.maxLevel, this.name);
+}
+
+/// Instant abilities (BW_ACT_* in bw_bridge.h; index is the wire value).
+enum Ability { stim, siege, unsiege, cloak, decloak, burrow, unburrow, trainFighter, archonWarp, darkArchonMeld, unloadAll, cancelResearch, cancelUpgrade }

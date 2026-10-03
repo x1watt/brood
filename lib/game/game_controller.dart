@@ -17,24 +17,42 @@ import 'package:flutter/painting.dart';
 import '../audio/sound_system.dart';
 import '../engine/bw_engine_io.dart';
 import '../engine/models.dart';
+import '../rendering/icon_atlas.dart';
 import '../rendering/sprite_atlas.dart';
 import '../rendering/terrain_layer.dart';
 import 'command_cards.dart';
 
-enum CommandMode { none, move, attack, patrol, gather, repair, build }
+enum CommandMode { none, move, attack, patrol, gather, repair, build, cast, rally }
 
 enum CardMenu { main, basic, advanced }
 
-enum CmdKind { move, stop, attack, patrol, hold, gather, returnCargo, repair, basicMenu, advancedMenu, back, produce, selectLarva, cancel, cancelTarget }
+enum CmdKind { move, stop, attack, patrol, hold, gather, returnCargo, repair, basicMenu, advancedMenu, back, produce, selectLarva, cancel, cancelTarget, ability, research, upgrade, rally }
 
 class CmdButton {
   final CmdKind kind;
   final String hotkey; // single uppercase letter, '' for none, 'Esc' for back/cancel
   final String label;
-  final int typeId; // for CmdKind.produce
+  final int icon; // cmdicons.grp frame
+  final int typeId; // unit type (produce), tech (research/ability) or upgrade id
+  final AbilityEntry? ability;
+  final int mineralCost;
+  final int gasCost;
+  final int energyCost;
   final bool enabled;
   final bool active;
-  const CmdButton(this.kind, this.hotkey, this.label, {this.typeId = -1, this.enabled = true, this.active = false});
+  const CmdButton(
+    this.kind,
+    this.hotkey,
+    this.label, {
+    this.icon = -1,
+    this.typeId = -1,
+    this.ability,
+    this.mineralCost = 0,
+    this.gasCost = 0,
+    this.energyCost = 0,
+    this.enabled = true,
+    this.active = false,
+  });
 }
 
 /// A right-click confirmation, drawn like the original: a marker animating
@@ -63,6 +81,7 @@ class GameController {
 
   BwEngine? _engine;
   SpriteAtlas? atlas;
+  IconAtlas? icons;
   TerrainLayer? terrain;
   SoundSystem? sound;
   String? error;
@@ -98,6 +117,7 @@ class GameController {
   CommandMode mode = CommandMode.none;
   CardMenu cardMenu = CardMenu.main;
   int? buildTypeId;
+  AbilityEntry? castAbility;
   Rect? dragBox; // viewport space
 
   final List<CommandMarker> markers = [];
@@ -130,6 +150,7 @@ class GameController {
       e.step(1);
       _engine = e;
       atlas = SpriteAtlas(e);
+      icons = IconAtlas(e)..onLoaded = () => _notifyHud(force: true);
       final s = SoundSystem(e);
       await s.init();
       sound = s;
@@ -574,7 +595,7 @@ class GameController {
 
     // While choosing a target or a building spot the original shows only
     // Cancel, so no other hotkey fires by accident.
-    if (mode != CommandMode.none) return const [CmdButton(CmdKind.cancelTarget, 'Esc', 'Cancel')];
+    if (mode != CommandMode.none) return const [CmdButton(CmdKind.cancelTarget, 'Esc', 'Cancel', icon: CmdIcon.cancel)];
 
     CmdButton produceButton(String key, int typeId) {
       final t = engine.unitType(typeId);
@@ -582,7 +603,10 @@ class GameController {
         CmdKind.produce,
         key,
         t.shortName,
+        icon: typeId,
         typeId: typeId,
+        mineralCost: t.mineralCost,
+        gasCost: t.gasCost,
         enabled: _buildable.contains(typeId),
         active: mode == CommandMode.build && buildTypeId == typeId,
       );
@@ -592,7 +616,7 @@ class GameController {
       final entries = cardMenu == CardMenu.basic ? worker.basic : worker.advanced;
       return [
         for (final (key, typeId) in entries) produceButton(key, typeId),
-        const CmdButton(CmdKind.back, 'Esc', 'Back'),
+        const CmdButton(CmdKind.back, 'Esc', 'Back', icon: CmdIcon.cancel),
       ];
     }
 
@@ -600,26 +624,37 @@ class GameController {
     final mobile = sel.any((u) => u.canMove);
     if (mobile) {
       buttons.addAll([
-        CmdButton(CmdKind.move, 'M', 'Move', active: mode == CommandMode.move),
-        const CmdButton(CmdKind.stop, 'S', 'Stop'),
-        CmdButton(CmdKind.attack, 'A', 'Attack', active: mode == CommandMode.attack),
+        const CmdButton(CmdKind.move, 'M', 'Move', icon: CmdIcon.move),
+        const CmdButton(CmdKind.stop, 'S', 'Stop', icon: CmdIcon.stop),
+        const CmdButton(CmdKind.attack, 'A', 'Attack', icon: CmdIcon.attack),
       ]);
       if (worker != null) {
-        buttons.add(CmdButton(CmdKind.gather, 'G', 'Gather', active: mode == CommandMode.gather));
-        buttons.add(const CmdButton(CmdKind.returnCargo, 'C', 'Return Cargo'));
+        buttons.add(const CmdButton(CmdKind.gather, 'G', 'Gather', icon: CmdIcon.gather));
+        buttons.add(const CmdButton(CmdKind.returnCargo, 'C', 'Return Cargo', icon: CmdIcon.returnCargo));
         if (first.typeId == terranScv) {
-          buttons.add(CmdButton(CmdKind.repair, 'R', 'Repair', active: mode == CommandMode.repair));
+          buttons.add(const CmdButton(CmdKind.repair, 'R', 'Repair', icon: CmdIcon.repair));
         }
-        buttons.add(const CmdButton(CmdKind.basicMenu, 'B', 'Build'));
-        buttons.add(const CmdButton(CmdKind.advancedMenu, 'V', 'Adv. Build'));
+        final menuIcons = buildMenuIcons[first.typeId] ?? (CmdIcon.buildBasic, CmdIcon.buildAdvanced);
+        buttons.add(CmdButton(CmdKind.basicMenu, 'B', 'Build Structure', icon: menuIcons.$1));
+        buttons.add(CmdButton(CmdKind.advancedMenu, 'V', 'Build Advanced Structure', icon: menuIcons.$2));
       } else {
-        buttons.add(CmdButton(CmdKind.patrol, 'P', 'Patrol', active: mode == CommandMode.patrol));
-        buttons.add(const CmdButton(CmdKind.hold, 'H', 'Hold'));
+        buttons.add(const CmdButton(CmdKind.patrol, 'P', 'Patrol', icon: CmdIcon.patrol));
+        buttons.add(const CmdButton(CmdKind.hold, 'H', 'Hold Position', icon: CmdIcon.hold));
       }
     }
 
+    // Abilities of this unit type (greyed until researched).
     if (uniform) {
-      if (larvaProducers.contains(first.typeId)) buttons.add(const CmdButton(CmdKind.selectLarva, 'S', 'Select Larva'));
+      for (final a in unitAbilities[first.typeId] ?? const <AbilityEntry>[]) {
+        buttons.add(_abilityButton(a, first));
+      }
+    }
+
+    final busy = sel.length == 1 && first.isBusyResearching;
+    if (uniform && !busy) {
+      if (larvaProducers.contains(first.typeId)) {
+        buttons.add(const CmdButton(CmdKind.selectLarva, 'S', 'Select Larva', icon: zergLarva));
+      }
       final table = productionMenus[first.typeId];
       final listed = <int>{};
       if (table != null) {
@@ -637,10 +672,58 @@ class GameController {
       }
     }
 
-    if (sel.length == 1 && first.isBuilding && (first.queue.isNotEmpty || !first.isCompleted)) {
-      buttons.add(const CmdButton(CmdKind.cancel, 'Esc', 'Cancel'));
+    // Research and upgrades of a single completed building.
+    if (sel.length == 1 && first.isBuilding && first.isCompleted && !busy) {
+      final researchable = engine.getResearchable(myPlayer).toSet();
+      final upgradable = engine.getUpgradable(myPlayer).toSet();
+      for (final (key, id, isTech) in researchMenus[first.typeId] ?? const <ResearchEntry>[]) {
+        if (isTech) {
+          final t = engine.techInfo(myPlayer, id);
+          if (t == null || t.researched) continue;
+          buttons.add(CmdButton(CmdKind.research, key, 'Research ${t.name}', icon: t.icon, typeId: id,
+              mineralCost: t.mineralCost, gasCost: t.gasCost, enabled: researchable.contains(id)));
+        } else {
+          final u = engine.upgradeInfo(myPlayer, id);
+          if (u == null || u.level >= u.maxLevel) continue;
+          buttons.add(CmdButton(CmdKind.upgrade, key, 'Upgrade ${u.name}${u.maxLevel > 1 ? ' (level ${u.level + 1})' : ''}',
+              icon: u.icon, typeId: id, mineralCost: u.mineralCost, gasCost: u.gasCost, enabled: upgradable.contains(id)));
+        }
+      }
+    }
+
+    if (sel.length == 1 && first.isCompleted && hasRally(first.typeId)) {
+      buttons.add(const CmdButton(CmdKind.rally, 'R', 'Set Rally Point', icon: CmdIcon.rally));
+    }
+
+    if (sel.length == 1 && first.isBuilding && (first.queue.isNotEmpty || !first.isCompleted || busy)) {
+      buttons.add(const CmdButton(CmdKind.cancel, 'Esc', 'Cancel', icon: CmdIcon.cancel));
     }
     return buttons;
+  }
+
+  CmdButton _abilityButton(AbilityEntry a, UnitInfo first) {
+    var entry = a;
+    var label = a.label;
+    // Toggles show the opposite action once active, as in the original.
+    if (a.instant == 'cloak' && first.isCloaked) {
+      entry = AbilityEntry(a.hotkey, a.tech, a.targeting, instant: 'decloak', label: 'Decloak', icon: a.icon);
+      label = 'Decloak';
+    } else if (a.instant == 'burrow' && first.isBurrowed) {
+      entry = AbilityEntry(a.hotkey, a.tech, a.targeting, instant: 'unburrow', label: 'Unburrow', icon: a.icon);
+      label = 'Unburrow';
+    }
+    final tech = a.tech >= 0 ? engine.techInfo(myPlayer, a.tech) : null;
+    return CmdButton(
+      CmdKind.ability,
+      a.hotkey,
+      label.isNotEmpty ? label : (tech?.name ?? 'Ability'),
+      icon: a.icon >= 0 ? a.icon : (tech?.icon ?? -1),
+      typeId: a.tech,
+      ability: entry,
+      energyCost: tech?.energyCost ?? 0,
+      enabled: a.tech < 0 || engine.canUseTech(myPlayer, a.tech),
+      active: mode == CommandMode.cast && castAbility?.hotkey == a.hotkey,
+    );
   }
 
   void activate(CmdButton b, {bool fromClick = false}) {
@@ -680,6 +763,14 @@ class GameController {
         _cancelLast();
       case CmdKind.cancelTarget:
         cancelMode();
+      case CmdKind.ability:
+        _useAbility(b);
+      case CmdKind.research:
+        _research(b);
+      case CmdKind.upgrade:
+        _upgrade(b);
+      case CmdKind.rally:
+        _setMode(CommandMode.rally);
     }
   }
 
@@ -720,6 +811,7 @@ class GameController {
     if (!selectionIsMine) return;
     mode = m;
     buildTypeId = null;
+    if (m != CommandMode.cast) castAbility = null;
     _notifyHud(force: true);
     repaint.fire();
   }
@@ -727,6 +819,7 @@ class GameController {
   void cancelMode() {
     mode = CommandMode.none;
     buildTypeId = null;
+    castAbility = null;
     _notifyHud(force: true);
     repaint.fire();
   }
@@ -812,10 +905,104 @@ class GameController {
         } else {
           showMessage("Can't build there.");
         }
+      case CommandMode.cast:
+        final a = castAbility;
+        if (a == null) return;
+        final target = engine.pickUnitAt(x, y);
+        if (a.targeting == Targeting.unit && target == 0) {
+          showMessage('Invalid target.');
+          return;
+        }
+        if (engine.cast(myPlayer, a.tech, x, y, targetUnitId: a.targeting == Targeting.unit ? target : 0, queue: queue)) {
+          a.targeting == Targeting.unit ? _markUnit(target) : _markGround(mapPos);
+          _sayYes();
+          if (!queue) {
+            mode = CommandMode.none;
+            castAbility = null;
+          }
+        } else {
+          showMessage('Invalid target.');
+        }
+      case CommandMode.rally:
+        final target = engine.pickUnitAt(x, y);
+        if (engine.setRally(myPlayer, x, y, targetUnitId: target)) {
+          target != 0 ? _markUnit(target) : _markGround(mapPos);
+        }
+        mode = CommandMode.none;
       case CommandMode.none:
         break;
     }
     _changed();
+  }
+
+  void _useAbility(CmdButton b) {
+    final a = b.ability;
+    if (a == null) return;
+    if (b.energyCost > 0 && !selectedUnits.any((u) => u.energy >= b.energyCost)) {
+      showMessage('Not enough energy.', advisorSound: soundNotEnoughEnergy);
+      return;
+    }
+    if (a.targeting != Targeting.instant) {
+      mode = CommandMode.cast;
+      castAbility = a;
+      buildTypeId = null;
+      _notifyHud(force: true);
+      repaint.fire();
+      return;
+    }
+    final ability = switch (a.instant) {
+      'stim' => Ability.stim,
+      'siege' => Ability.siege,
+      'unsiege' => Ability.unsiege,
+      'cloak' => Ability.cloak,
+      'decloak' => Ability.decloak,
+      'burrow' => Ability.burrow,
+      'unburrow' => Ability.unburrow,
+      'fighter' => Ability.trainFighter,
+      'archon' => Ability.archonWarp,
+      'darkArchon' => Ability.darkArchonMeld,
+      'unload' => Ability.unloadAll,
+      _ => null,
+    };
+    if (ability == null) return;
+    if (ability == Ability.trainFighter) {
+      // Interceptors 25, scarabs 15 minerals.
+      final cost = selectedUnits.first.typeId == 72 ? 25 : 15;
+      if (minerals < cost) {
+        showMessage('Not enough minerals.', advisorSound: soundNotEnoughMinerals);
+        return;
+      }
+    }
+    if (engine.ability(myPlayer, ability)) {
+      _sayYes();
+    } else {
+      showMessage('Unable to use ${b.label} right now.');
+    }
+    _changed();
+  }
+
+  void _research(CmdButton b) {
+    if (!_canAffordCost(b.mineralCost, b.gasCost)) return;
+    if (!engine.research(myPlayer, b.typeId)) showMessage('Unable to research right now.');
+    _changed();
+  }
+
+  void _upgrade(CmdButton b) {
+    if (!_canAffordCost(b.mineralCost, b.gasCost)) return;
+    if (!engine.upgrade(myPlayer, b.typeId)) showMessage('Unable to upgrade right now.');
+    _changed();
+  }
+
+  bool _canAffordCost(int mineralCost, int gasCost) {
+    if (minerals < mineralCost) {
+      showMessage('Not enough minerals.', advisorSound: soundNotEnoughMinerals);
+      return false;
+    }
+    if (gas < gasCost) {
+      showMessage('Not enough Vespene gas.', advisorSound: soundNotEnoughGas);
+      return false;
+    }
+    return true;
   }
 
   void _produce(int typeId) {
@@ -857,7 +1044,14 @@ class GameController {
 
   void _cancelLast() {
     if (!selectionIsMine || selection.length != 1) return;
-    engine.cancelLast(myPlayer);
+    final u = selectedUnits.first;
+    if (u.researchingTech >= 0) {
+      engine.ability(myPlayer, Ability.cancelResearch);
+    } else if (u.upgrading >= 0) {
+      engine.ability(myPlayer, Ability.cancelUpgrade);
+    } else {
+      engine.cancelLast(myPlayer);
+    }
     _changed();
   }
 

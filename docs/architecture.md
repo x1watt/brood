@@ -38,9 +38,22 @@ the whole window border, fullscreen through a GTK method channel
 start screen. bridge_smoke_test also covers sound, control groups and
 Protoss/Zerg openings.
 
-Still missing: an AI opponent (OpenBW has none), fog-of-war, creep,
-research/upgrades and unit abilities on the command card, command button
-icons, and the web/Android targets.
+Research, upgrades and abilities use OpenBW's own checks and actions
+(unit_can_research/unit_can_upgrade/unit_can_use_tech, action_research,
+action_upgrade, stim/siege/cloak/burrow actions; targeted spells issue the
+order whose tech_type matches, from orders.dat). Command buttons show the
+original icons from unit\cmdbtns\cmdicons.grp colored through ticon.pcx
+(available/unavailable/active), the top bar the original game\icons.grp
+(an uncompressed GRP, decoded separately from OpenBW's compressed reader).
+Rally points are read from the building and drawn when it is selected.
+
+Terrain is kept as palette indices and colored by shaders/terrain.frag
+through a palette whose ranges 1-6 and 7-13 rotate every 8 game frames,
+which animates water like the original's palette cycling (ranges confirmed
+from the tileset data; the exact original timing isn't documented).
+
+Still missing: an AI opponent (OpenBW has none), fog-of-war, creep, lift
+off/land and nukes, and the web/Android targets.
 
 ## Layers
 

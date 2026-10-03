@@ -884,6 +884,404 @@ class BwBridgeBindings {
   late final _bw_bridge_control_group = _bw_bridge_control_groupPtr
       .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int, int)>();
 
+  bw_status bw_bridge_get_tech_info(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    int tech_id,
+    ffi.Pointer<bw_tech_info> out_info,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_get_tech_info(bridge, owner, tech_id, out_info),
+    );
+  }
+
+  late final _bw_bridge_get_tech_infoPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Int,
+            ffi.Pointer<bw_tech_info>,
+          )
+        >
+      >('bw_bridge_get_tech_info');
+  late final _bw_bridge_get_tech_info = _bw_bridge_get_tech_infoPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<bw_bridge_t>,
+          int,
+          int,
+          ffi.Pointer<bw_tech_info>,
+        )
+      >();
+
+  bw_status bw_bridge_get_upgrade_info(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    int upgrade_id,
+    ffi.Pointer<bw_upgrade_info> out_info,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_get_upgrade_info(bridge, owner, upgrade_id, out_info),
+    );
+  }
+
+  late final _bw_bridge_get_upgrade_infoPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Int,
+            ffi.Pointer<bw_upgrade_info>,
+          )
+        >
+      >('bw_bridge_get_upgrade_info');
+  late final _bw_bridge_get_upgrade_info = _bw_bridge_get_upgrade_infoPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<bw_bridge_t>,
+          int,
+          int,
+          ffi.Pointer<bw_upgrade_info>,
+        )
+      >();
+
+  /// What the single selected building can research / upgrade right now
+  /// (OpenBW's unit_can_research / unit_can_upgrade).
+  int bw_bridge_get_researchable(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    ffi.Pointer<ffi.Int32> out_tech_ids,
+    int max_count,
+  ) {
+    return _bw_bridge_get_researchable(bridge, owner, out_tech_ids, max_count);
+  }
+
+  late final _bw_bridge_get_researchablePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Pointer<ffi.Int32>,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_get_researchable');
+  late final _bw_bridge_get_researchable = _bw_bridge_get_researchablePtr
+      .asFunction<
+        int Function(ffi.Pointer<bw_bridge_t>, int, ffi.Pointer<ffi.Int32>, int)
+      >();
+
+  int bw_bridge_get_upgradable(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    ffi.Pointer<ffi.Int32> out_upgrade_ids,
+    int max_count,
+  ) {
+    return _bw_bridge_get_upgradable(bridge, owner, out_upgrade_ids, max_count);
+  }
+
+  late final _bw_bridge_get_upgradablePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Pointer<ffi.Int32>,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_get_upgradable');
+  late final _bw_bridge_get_upgradable = _bw_bridge_get_upgradablePtr
+      .asFunction<
+        int Function(ffi.Pointer<bw_bridge_t>, int, ffi.Pointer<ffi.Int32>, int)
+      >();
+
+  bw_status bw_bridge_research(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    int tech_id,
+  ) {
+    return bw_status.fromValue(_bw_bridge_research(bridge, owner, tech_id));
+  }
+
+  late final _bw_bridge_researchPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_research');
+  late final _bw_bridge_research = _bw_bridge_researchPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int)>();
+
+  bw_status bw_bridge_upgrade(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    int upgrade_id,
+  ) {
+    return bw_status.fromValue(_bw_bridge_upgrade(bridge, owner, upgrade_id));
+  }
+
+  late final _bw_bridge_upgradePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_upgrade');
+  late final _bw_bridge_upgrade = _bw_bridge_upgradePtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int)>();
+
+  /// Whether the first selected unit can use tech_id now (researched, completed,
+  /// not disabled; energy not checked).
+  int bw_bridge_can_use_tech(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    int tech_id,
+  ) {
+    return _bw_bridge_can_use_tech(bridge, owner, tech_id);
+  }
+
+  late final _bw_bridge_can_use_techPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_can_use_tech');
+  late final _bw_bridge_can_use_tech = _bw_bridge_can_use_techPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int)>();
+
+  /// Casts a targeted ability (storm, lockdown, scanner sweep, ...) with the
+  /// selection: issues the order whose tech is tech_id at (x, y) / target.
+  bw_status bw_bridge_cast(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    int tech_id,
+    int x,
+    int y,
+    int target_unit_id,
+    int queue,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_cast(bridge, owner, tech_id, x, y, target_unit_id, queue),
+    );
+  }
+
+  late final _bw_bridge_castPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Int,
+            ffi.Int,
+            ffi.Int,
+            ffi.Int32,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_cast');
+  late final _bw_bridge_cast = _bw_bridge_castPtr
+      .asFunction<
+        int Function(ffi.Pointer<bw_bridge_t>, int, int, int, int, int, int)
+      >();
+
+  bw_status bw_bridge_action(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    int action,
+  ) {
+    return bw_status.fromValue(_bw_bridge_action(bridge, owner, action));
+  }
+
+  late final _bw_bridge_actionPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_action');
+  late final _bw_bridge_action = _bw_bridge_actionPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int)>();
+
+  /// Sets the selected building's rally point to a position or a unit.
+  bw_status bw_bridge_set_rally(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    int x,
+    int y,
+    int target_unit_id,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_set_rally(bridge, owner, x, y, target_unit_id),
+    );
+  }
+
+  late final _bw_bridge_set_rallyPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Int,
+            ffi.Int,
+            ffi.Int32,
+          )
+        >
+      >('bw_bridge_set_rally');
+  late final _bw_bridge_set_rally = _bw_bridge_set_rallyPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int, int, int)>();
+
+  /// Loads a GRP from the MPQs (e.g. "unit\cmdbtns\cmdicons.grp"); returns a
+  /// handle >= 0, or -1. Handles stay valid until the bridge is destroyed.
+  int bw_bridge_grp_load(
+    ffi.Pointer<bw_bridge_t> bridge,
+    ffi.Pointer<ffi.Char> path,
+  ) {
+    return _bw_bridge_grp_load(bridge, path);
+  }
+
+  late final _bw_bridge_grp_loadPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Pointer<ffi.Char>)
+        >
+      >('bw_bridge_grp_load');
+  late final _bw_bridge_grp_load = _bw_bridge_grp_loadPtr
+      .asFunction<
+        int Function(ffi.Pointer<bw_bridge_t>, ffi.Pointer<ffi.Char>)
+      >();
+
+  int bw_bridge_grp_frame_count(ffi.Pointer<bw_bridge_t> bridge, int handle) {
+    return _bw_bridge_grp_frame_count(bridge, handle);
+  }
+
+  late final _bw_bridge_grp_frame_countPtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int)>
+      >('bw_bridge_grp_frame_count');
+  late final _bw_bridge_grp_frame_count = _bw_bridge_grp_frame_countPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int)>();
+
+  bw_status bw_bridge_grp_frame_size(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int handle,
+    int frame,
+    ffi.Pointer<ffi.Int> out_width,
+    ffi.Pointer<ffi.Int> out_height,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_grp_frame_size(bridge, handle, frame, out_width, out_height),
+    );
+  }
+
+  late final _bw_bridge_grp_frame_sizePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Int,
+            ffi.Pointer<ffi.Int>,
+            ffi.Pointer<ffi.Int>,
+          )
+        >
+      >('bw_bridge_grp_frame_size');
+  late final _bw_bridge_grp_frame_size = _bw_bridge_grp_frame_sizePtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<bw_bridge_t>,
+          int,
+          int,
+          ffi.Pointer<ffi.Int>,
+          ffi.Pointer<ffi.Int>,
+        )
+      >();
+
+  /// width*height palette indices, 0 = transparent.
+  bw_status bw_bridge_grp_decode(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int handle,
+    int frame,
+    ffi.Pointer<ffi.Uint8> out_pixels,
+    int out_cap,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_grp_decode(bridge, handle, frame, out_pixels, out_cap),
+    );
+  }
+
+  late final _bw_bridge_grp_decodePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Int,
+            ffi.Pointer<ffi.Uint8>,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_grp_decode');
+  late final _bw_bridge_grp_decode = _bw_bridge_grp_decodePtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<bw_bridge_t>,
+          int,
+          int,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+        )
+      >();
+
+  /// An 8-bit PCX image's pixels (palette indices). Pass out_pixels NULL to get
+  /// the size only.
+  bw_status bw_bridge_load_pcx(
+    ffi.Pointer<bw_bridge_t> bridge,
+    ffi.Pointer<ffi.Char> path,
+    ffi.Pointer<ffi.Uint8> out_pixels,
+    int out_cap,
+    ffi.Pointer<ffi.Int> out_width,
+    ffi.Pointer<ffi.Int> out_height,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_load_pcx(
+        bridge,
+        path,
+        out_pixels,
+        out_cap,
+        out_width,
+        out_height,
+      ),
+    );
+  }
+
+  late final _bw_bridge_load_pcxPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Uint8>,
+            ffi.Int,
+            ffi.Pointer<ffi.Int>,
+            ffi.Pointer<ffi.Int>,
+          )
+        >
+      >('bw_bridge_load_pcx');
+  late final _bw_bridge_load_pcx = _bw_bridge_load_pcxPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<bw_bridge_t>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Int>,
+          ffi.Pointer<ffi.Int>,
+        )
+      >();
+
   /// Image type of the original's right-click target marker.
   int bw_bridge_cursor_marker_image() {
     return _bw_bridge_cursor_marker_image();
@@ -1324,6 +1722,36 @@ final class bw_unit_info extends ffi.Struct {
   /// progress of the current build/train (or own construction), -1 if none
   @ffi.Int32()
   external int progress_permille;
+
+  @ffi.Int32()
+  external int max_energy;
+
+  /// tech id being researched, -1 if none
+  @ffi.Int32()
+  external int researching_tech;
+
+  /// upgrade id being upgraded, -1 if none
+  @ffi.Int32()
+  external int upgrading;
+
+  /// for researching_tech / upgrading, -1 if none
+  @ffi.Int32()
+  external int research_progress_permille;
+
+  /// production buildings: 1 if a rally point is set
+  @ffi.Int32()
+  external int has_rally;
+
+  /// rally point, map pixels
+  @ffi.Int32()
+  external int rally_x;
+
+  @ffi.Int32()
+  external int rally_y;
+
+  /// unit the rally point follows, 0 if a position
+  @ffi.Int32()
+  external int rally_unit_id;
 }
 
 final class bw_unit_type_info extends ffi.Struct {
@@ -1387,6 +1815,65 @@ final class bw_unit_type_info extends ffi.Struct {
   external int yes_last;
 }
 
+/// --- Research, upgrades and abilities ------------------------------------------
+final class bw_tech_info extends ffi.Struct {
+  @ffi.Int32()
+  external int mineral_cost;
+
+  @ffi.Int32()
+  external int gas_cost;
+
+  /// frames
+  @ffi.Int32()
+  external int research_time;
+
+  @ffi.Int32()
+  external int energy_cost;
+
+  /// frame in unit\cmdbtns\cmdicons.grp
+  @ffi.Int32()
+  external int icon;
+
+  @ffi.Int32()
+  external int race;
+
+  /// for the owner passed in (or available without research)
+  @ffi.Int32()
+  external int researched;
+
+  @ffi.Array.multi([64])
+  external ffi.Array<ffi.Char> name;
+}
+
+final class bw_upgrade_info extends ffi.Struct {
+  /// for the next level
+  @ffi.Int32()
+  external int mineral_cost;
+
+  @ffi.Int32()
+  external int gas_cost;
+
+  /// frames, next level
+  @ffi.Int32()
+  external int time;
+
+  @ffi.Int32()
+  external int icon;
+
+  @ffi.Int32()
+  external int race;
+
+  /// owner's current level
+  @ffi.Int32()
+  external int level;
+
+  @ffi.Int32()
+  external int max_level;
+
+  @ffi.Array.multi([64])
+  external ffi.Array<ffi.Char> name;
+}
+
 /// --- Sound -------------------------------------------------------------------
 ///
 /// The simulation reports sounds (weapons, deaths, construction...) through
@@ -1429,7 +1916,7 @@ final class bw_sound_info extends ffi.Struct {
   external ffi.Array<ffi.Char> filename;
 }
 
-const int BW_BRIDGE_ABI_VERSION = 8;
+const int BW_BRIDGE_ABI_VERSION = 9;
 
 const int BW_DRAW_IMAGE = 0;
 
@@ -1455,6 +1942,12 @@ const int BW_UNIT_FLAG_FLYER = 16;
 
 const int BW_UNIT_FLAG_CAN_MOVE = 32;
 
+const int BW_UNIT_FLAG_CLOAKED = 64;
+
+const int BW_UNIT_FLAG_BURROWED = 128;
+
+const int BW_UNIT_FLAG_STIMMED = 256;
+
 const int BW_ORDER_DEFAULT = 0;
 
 const int BW_ORDER_MOVE = 1;
@@ -1476,3 +1969,29 @@ const int BW_GROUP_ASSIGN = 0;
 const int BW_GROUP_RECALL = 1;
 
 const int BW_GROUP_ADD = 2;
+
+const int BW_ACT_STIM = 0;
+
+const int BW_ACT_SIEGE = 1;
+
+const int BW_ACT_UNSIEGE = 2;
+
+const int BW_ACT_CLOAK = 3;
+
+const int BW_ACT_DECLOAK = 4;
+
+const int BW_ACT_BURROW = 5;
+
+const int BW_ACT_UNBURROW = 6;
+
+const int BW_ACT_TRAIN_FIGHTER = 7;
+
+const int BW_ACT_ARCHON_WARP = 8;
+
+const int BW_ACT_DARK_ARCHON_MELD = 9;
+
+const int BW_ACT_UNLOAD_ALL = 10;
+
+const int BW_ACT_CANCEL_RESEARCH = 11;
+
+const int BW_ACT_CANCEL_UPGRADE = 12;

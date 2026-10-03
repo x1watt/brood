@@ -6,6 +6,8 @@
 // treated the way OpenBW's reference renderer (ui/ui.h draw_image) treats
 // them: shadows darken, glows add light, cloaked images are translucent.
 
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
 import '../engine/models.dart';
@@ -60,11 +62,24 @@ class BwPainter extends CustomPainter {
     final camX = c.camX.floorToDouble();
     final camY = c.camY.floorToDouble();
 
-    final src = Rect.fromLTWH(camX, camY, size.width, size.height).intersect(
-      Rect.fromLTWH(0, 0, terrain.widthPx.toDouble(), terrain.heightPx.toDouble()),
-    );
-    if (!src.isEmpty) {
-      canvas.drawImageRect(terrain.image, src, src.shift(Offset(-camX, -camY)), _plain);
+    final program = terrain.program;
+    if (program != null) {
+      // Palette-indexed terrain colored by the shader, with the palette
+      // rotated by game time (animated water).
+      final shader = _terrainShader ??= program.fragmentShader();
+      shader
+        ..setFloat(0, camX)
+        ..setFloat(1, camY)
+        ..setFloat(2, terrain.widthPx.toDouble())
+        ..setFloat(3, terrain.heightPx.toDouble())
+        ..setImageSampler(0, terrain.indices)
+        ..setImageSampler(1, terrain.paletteForFrame(c.frame));
+      canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
+    } else {
+      final src = Rect.fromLTWH(camX, camY, size.width, size.height).intersect(
+        Rect.fromLTWH(0, 0, terrain.widthPx.toDouble(), terrain.heightPx.toDouble()),
+      );
+      if (!src.isEmpty) canvas.drawImageRect(terrain.colors!, src, src.shift(Offset(-camX, -camY)), _plain);
     }
 
     for (final item in c.drawItems) {
@@ -102,6 +117,7 @@ class BwPainter extends CustomPainter {
       }
     }
 
+    _drawRally(canvas, atlas, camX, camY);
     _drawMarkers(canvas, atlas, camX, camY);
     _drawPlacementGhost(canvas, camX, camY);
 
@@ -179,6 +195,35 @@ class BwPainter extends CustomPainter {
   }
 
   static int? _markerFrames;
+  ui.FragmentShader? _terrainShader;
+
+  // Where a selected production building sends new units: a line from the
+  // building to the rally point and the original's marker at the end.
+  void _drawRally(Canvas canvas, SpriteAtlas atlas, double camX, double camY) {
+    final sel = c.selectedUnits;
+    if (sel.length != 1) return;
+    final b = sel.first;
+    if (b.owner != GameController.myPlayer || !b.hasRally) return;
+    final from = Offset(b.x - camX, b.y - camY);
+    final to = Offset(b.rallyX - camX, b.rallyY - camY);
+    final line = Paint()
+      ..color = const Color(0xCC3CFF3C)
+      ..strokeWidth = 1.5;
+    final d = to - from;
+    final len = d.distance;
+    if (len > 1) {
+      final step = d / len;
+      for (double t = 0; t < len; t += 10) {
+        canvas.drawLine(from + step * t, from + step * (t + 6 < len ? t + 6 : len), line);
+      }
+    }
+    final img = atlas.resolveColor(c.engine.cursorMarkerImage, 0, false, 0);
+    if (img != null) {
+      canvas.drawImage(img, Offset(to.dx - img.width / 2, to.dy - img.height / 2), _plain);
+    } else {
+      canvas.drawCircle(to, 6, line..style = PaintingStyle.stroke);
+    }
+  }
 
   void _drawPlacementGhost(Canvas canvas, double camX, double camY) {
     final type = c.buildTypeId;
