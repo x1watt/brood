@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 9
+#define BW_BRIDGE_ABI_VERSION 10
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -245,6 +245,10 @@ bw_status bw_bridge_build(bw_bridge_t* bridge, int owner, int unit_type_id, int 
 
 // Cancels the last item of the selected building's queue (refunds it).
 bw_status bw_bridge_cancel_last(bw_bridge_t* bridge, int owner);
+
+// Cancels queue slot `slot` (0 = the one in production) of the selected
+// building, as clicking a queued unit does in the original.
+bw_status bw_bridge_cancel_queue_slot(bw_bridge_t* bridge, int owner, int slot);
 
 // Control groups 0-9 (OpenBW's action_control_group): BW_GROUP_ASSIGN
 // stores the current selection (Ctrl+N), BW_GROUP_RECALL selects the group's

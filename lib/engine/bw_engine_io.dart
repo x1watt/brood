@@ -334,6 +334,8 @@ class BwEngine {
 
   bool cancelLast(int owner) => _ok(_b.bw_bridge_cancel_last(_h, owner));
 
+  bool cancelQueueSlot(int owner, int slot) => _ok(_b.bw_bridge_cancel_queue_slot(_h, owner, slot));
+
   // --- research, upgrades, abilities ---
 
   static String _cString(ffi.Array<ffi.Char> a, int max) {

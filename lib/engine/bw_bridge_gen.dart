@@ -864,6 +864,27 @@ class BwBridgeBindings {
   late final _bw_bridge_cancel_last = _bw_bridge_cancel_lastPtr
       .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int)>();
 
+  /// Cancels queue slot `slot` (0 = the one in production) of the selected
+  /// building, as clicking a queued unit does in the original.
+  bw_status bw_bridge_cancel_queue_slot(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    int slot,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_cancel_queue_slot(bridge, owner, slot),
+    );
+  }
+
+  late final _bw_bridge_cancel_queue_slotPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_cancel_queue_slot');
+  late final _bw_bridge_cancel_queue_slot = _bw_bridge_cancel_queue_slotPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int)>();
+
   bw_status bw_bridge_control_group(
     ffi.Pointer<bw_bridge_t> bridge,
     int owner,
@@ -1916,7 +1937,7 @@ final class bw_sound_info extends ffi.Struct {
   external ffi.Array<ffi.Char> filename;
 }
 
-const int BW_BRIDGE_ABI_VERSION = 9;
+const int BW_BRIDGE_ABI_VERSION = 10;
 
 const int BW_DRAW_IMAGE = 0;
 

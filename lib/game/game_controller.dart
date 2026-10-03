@@ -729,7 +729,8 @@ class GameController {
   void activate(CmdButton b, {bool fromClick = false}) {
     if (fromClick) sound?.play(soundButton, ui: true);
     if (!b.enabled) {
-      showMessage('Requirements not met for ${b.label}.');
+      final needs = b.kind == CmdKind.produce ? requirementText[b.typeId] : null;
+      showMessage(needs != null ? '${b.label} requires $needs.' : 'Requirements not met for ${b.label}.');
       return;
     }
     switch (b.kind) {
@@ -1040,6 +1041,20 @@ class GameController {
       return false;
     }
     return true;
+  }
+
+  /// Clicking a queued item cancels it (slot 0 is the one in production).
+  void cancelQueueSlot(int slot) {
+    if (!selectionIsMine || selection.length != 1) return;
+    sound?.play(soundButton, ui: true);
+    engine.cancelQueueSlot(myPlayer, slot);
+    _changed();
+  }
+
+  void cancelResearch() {
+    if (!selectionIsMine || selection.length != 1) return;
+    sound?.play(soundButton, ui: true);
+    _cancelLast();
   }
 
   void _cancelLast() {

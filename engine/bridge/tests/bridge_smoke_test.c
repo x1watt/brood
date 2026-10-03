@@ -255,6 +255,19 @@ int main(int argc, char** argv) {
 	int before = bw_bridge_minerals(b, me);
 	CHECK(bw_bridge_train(b, me, TERRAN_SCV) == BW_OK, "train scv");
 	CHECK(bw_bridge_minerals(b, me) == before - 50, "train did not charge 50 minerals");
+	/* Queue a second SCV and cancel that slot: it's refunded and the queue shrinks. */
+	{
+		int m0 = bw_bridge_minerals(b, me);
+		if (m0 >= 50 && bw_bridge_train(b, me, TERRAN_SCV) == BW_OK) {
+			bw_unit_info q;
+			bw_bridge_get_unit(b, ccs[0], &q);
+			CHECK(q.queue_count == 2, "queue should hold 2, has %d", q.queue_count);
+			CHECK(bw_bridge_cancel_queue_slot(b, me, 1) == BW_OK, "cancel queue slot 1");
+			bw_bridge_get_unit(b, ccs[0], &q);
+			CHECK(q.queue_count == 1 && bw_bridge_minerals(b, me) == m0, "slot cancel: queue %d minerals %d (expected 1, %d)", q.queue_count, bw_bridge_minerals(b, me), m0);
+			printf("bridge_smoke_test: queued 2 SCVs, cancelled slot 1, refunded\n");
+		}
+	}
 
 	/* Supply Depot: SCV must offer it; find a placeable spot near the CC. */
 	CHECK(bw_bridge_select_units(b, me, &scvs[0], 1) == BW_OK, "select builder");

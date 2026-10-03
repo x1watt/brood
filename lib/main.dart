@@ -1,10 +1,13 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import 'game/game_controller.dart';
+import 'game/play_stats.dart';
 import 'ui/game_viewport.dart';
 import 'ui/hud.dart';
 import 'ui/minimap_view.dart';
@@ -58,6 +61,11 @@ class _StartScreenState extends State<StartScreen> {
   int _race = 1;
   List<File> _maps = const [];
   File? _map;
+  final PlayStats _stats = PlayStats.load();
+
+  static String mapKey(File f) => f.path.startsWith(_dataDir) ? f.path.substring(_dataDir.length + 1) : f.path;
+
+  int _seconds(File f) => _stats.maps[mapKey(f)]?.seconds ?? 0;
 
   @override
   void initState() {
@@ -71,9 +79,15 @@ class _StartScreenState extends State<StartScreen> {
               .where((f) => !f.path.contains('/save/') && !f.path.contains('/campaign/') && !f.path.contains('/scenario/'))
               .toList()
         : <File>[];
-    maps.sort((a, b) => _name(a).compareTo(_name(b)));
+    // Most played first (by total time), then the rest alphabetically.
+    maps.sort((a, b) {
+      final t = _seconds(b).compareTo(_seconds(a));
+      return t != 0 ? t : _name(a).compareTo(_name(b));
+    });
     _maps = maps;
-    _map = maps.where((m) => _name(m) == '(4)Lost Temple').firstOrNull ?? maps.firstOrNull;
+    _map = (_seconds(maps.firstOrNull ?? File('')) > 0 ? maps.first : null) ??
+        maps.where((m) => _name(m) == '(4)Lost Temple').firstOrNull ??
+        maps.firstOrNull;
   }
 
   static String _name(File f) => f.uri.pathSegments.last.replaceAll(RegExp(r'\.sc[mx]$', caseSensitive: false), '');
@@ -82,8 +96,50 @@ class _StartScreenState extends State<StartScreen> {
     final map = _map;
     if (map == null) return;
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => GameScreen(mapFile: map.path, race: _race)),
+      MaterialPageRoute(builder: (_) => GameScreen(mapFile: map.path, mapKey: mapKey(map), race: _race, stats: _stats)),
     );
+  }
+
+  Widget _sectionHeader(String text) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+    child: Text(text, style: const TextStyle(fontSize: 12, color: Colors.white54, fontWeight: FontWeight.w600)),
+  );
+
+  Widget _mapTile(File m) {
+    final st = _stats.maps[mapKey(m)];
+    final played = st != null && st.seconds > 0;
+    return ListTile(
+      dense: true,
+      selected: m == _map,
+      title: Text(_name(m)),
+      subtitle: Text(
+        m.parent.path.replaceFirst('$_dataDir/maps', 'maps'),
+        style: const TextStyle(fontSize: 11, color: Colors.white38),
+      ),
+      trailing: played
+          ? Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(PlayStats.formatDuration(st.seconds), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                Text(
+                  '${st.games} ${st.games == 1 ? 'game' : 'games'}${st.lastPlayed != null ? ' · ${_ago(st.lastPlayed!)}' : ''}',
+                  style: const TextStyle(fontSize: 11, color: Colors.white38),
+                ),
+              ],
+            )
+          : null,
+      onTap: () => setState(() => _map = m),
+      onLongPress: _start,
+    );
+  }
+
+  static String _ago(DateTime t) {
+    final d = DateTime.now().difference(t);
+    if (d.inMinutes < 1) return 'just now';
+    if (d.inHours < 1) return '${d.inMinutes}m ago';
+    if (d.inDays < 1) return '${d.inHours}h ago';
+    return '${d.inDays}d ago';
   }
 
   @override
@@ -119,18 +175,10 @@ class _StartScreenState extends State<StartScreen> {
                         decoration: BoxDecoration(border: Border.all(color: const Color(0xFF2E3A44))),
                         child: ListView(
                           children: [
-                            for (final m in _maps)
-                              ListTile(
-                                dense: true,
-                                selected: m == _map,
-                                title: Text(_name(m)),
-                                subtitle: Text(
-                                  m.parent.path.replaceFirst('$_dataDir/maps', 'maps'),
-                                  style: const TextStyle(fontSize: 11, color: Colors.white38),
-                                ),
-                                onTap: () => setState(() => _map = m),
-                                onLongPress: _start,
-                              ),
+                            if (_maps.any((m) => _seconds(m) > 0)) _sectionHeader('Most played'),
+                            for (final m in _maps.where((m) => _seconds(m) > 0)) _mapTile(m),
+                            if (_maps.any((m) => _seconds(m) > 0)) _sectionHeader('All maps'),
+                            for (final m in _maps.where((m) => _seconds(m) == 0)) _mapTile(m),
                           ],
                         ),
                       ),
@@ -150,8 +198,10 @@ class _StartScreenState extends State<StartScreen> {
 
 class GameScreen extends StatefulWidget {
   final String mapFile;
+  final String mapKey;
   final int race;
-  const GameScreen({super.key, required this.mapFile, required this.race});
+  final PlayStats stats;
+  const GameScreen({super.key, required this.mapFile, required this.mapKey, required this.race, required this.stats});
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -163,20 +213,46 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
   late final Ticker _ticker;
   late final AppLifecycleListener _lifecycle;
   bool _fullscreen = false;
+  Timer? _statsTimer;
+  int _countedFrames = 0;
+
+  // Play time is game time (frames at the original's 42 ms each), saved
+  // every 30 s, when leaving the game and when the window closes.
+  void _flushPlayTime() {
+    final frames = _c.frame - _countedFrames;
+    if (frames <= 0) return;
+    _countedFrames = _c.frame;
+    widget.stats.addPlayed(widget.mapKey, frames * GameController.frameMicros ~/ 1000000);
+  }
 
   @override
   void initState() {
     super.initState();
     // Simulation pacing follows the display's vsync, not a Timer.
     _ticker = createTicker(_c.tick)..start();
-    _lifecycle = AppLifecycleListener(onInactive: _c.stopAllScrolling, onHide: _c.stopAllScrolling);
+    _lifecycle = AppLifecycleListener(
+      onInactive: _c.stopAllScrolling,
+      onHide: _c.stopAllScrolling,
+      onExitRequested: () async {
+        _flushPlayTime();
+        return AppExitResponse.exit;
+      },
+    );
     _c.start(dataDir: _dataDir, mapFile: widget.mapFile, race: widget.race).then((_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      if (_c.ready) {
+        widget.stats.gameStarted(widget.mapKey);
+        _countedFrames = _c.frame;
+        _statsTimer = Timer.periodic(const Duration(seconds: 30), (_) => _flushPlayTime());
+      }
+      setState(() {});
     });
   }
 
   @override
   void dispose() {
+    _statsTimer?.cancel();
+    _flushPlayTime();
     _lifecycle.dispose();
     _ticker.dispose();
     _c.dispose();

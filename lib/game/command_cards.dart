@@ -192,6 +192,29 @@ const Map<int, List<ResearchEntry>> researchMenus = {
   140: [('A', 53, false), ('C', 52, false)], // Ultralisk Cavern
 };
 
+/// What a greyed-out unit or building is waiting for (the original's tech
+/// tree), shown on its button's tooltip.
+const Map<int, String> requirementText = {
+  // Terran
+  124: 'Engineering Bay', 112: 'Barracks', 125: 'Barracks', 113: 'Barracks', 114: 'Factory',
+  116: 'Starport', 123: 'Factory', 107: 'Academy', 108: 'Science Facility with Covert Ops',
+  32: 'Academy', 34: 'Academy', 1: 'Academy and Covert Ops', 5: 'Machine Shop', 3: 'Armory',
+  11: 'Control Tower', 9: 'Control Tower and Science Facility', 12: 'Control Tower and Physics Lab',
+  58: 'Control Tower and Armory',
+  // Protoss
+  162: 'Forge', 164: 'Gateway', 172: 'Gateway', 155: 'Cybernetics Core', 167: 'Cybernetics Core',
+  163: 'Cybernetics Core', 171: 'Robotics Facility', 169: 'Stargate', 165: 'Citadel of Adun',
+  159: 'Robotics Facility', 170: 'Templar Archives and Stargate', 66: 'Cybernetics Core',
+  67: 'Templar Archives', 61: 'Templar Archives', 83: 'Robotics Support Bay', 84: 'Observatory',
+  72: 'Fleet Beacon', 71: 'Arbiter Tribunal',
+  // Zerg
+  135: 'Spawning Pool', 141: 'Lair', 138: 'Lair', 134: 'Hive', 140: 'Hive', 136: 'Hive',
+  37: 'Spawning Pool', 38: 'Hydralisk Den', 43: 'Spire', 47: 'Spire', 45: "Queen's Nest",
+  39: 'Ultralisk Cavern', 46: 'Defiler Mound', 132: 'Spawning Pool', 133: "Queen's Nest",
+  146: 'Spawning Pool', 144: 'Evolution Chamber', 137: 'Hive', 44: 'Greater Spire', 62: 'Greater Spire',
+  103: 'Lurker Aspect',
+};
+
 /// Buildings that produce units get a "Set Rally Point" (R) button.
 bool hasRally(int typeId) => larvaProducers.contains(typeId) || const {106, 111, 113, 114, 154, 160, 155, 167}.contains(typeId);
 

@@ -52,6 +52,13 @@ through a palette whose ranges 1-6 and 7-13 rotate every 8 game frames,
 which animates water like the original's palette cycling (ranges confirmed
 from the tileset data; the exact original timing isn't documented).
 
+Icons are upscaled 4x with Scale2x on their palette indices and drawn
+with smooth filtering, so the small original art isn't stretched into
+uneven blocks. Production queues show the original five slots with unit
+icons (click to cancel, via action_cancel_build_queue). Greyed buttons name
+their missing requirement. Play time per map (game time) is kept in
+$XDG_DATA_HOME/brood/play_stats.json and orders the start screen.
+
 Still missing: an AI opponent (OpenBW has none), fog-of-war, creep, lift
 off/land and nukes, and the web/Android targets.
 

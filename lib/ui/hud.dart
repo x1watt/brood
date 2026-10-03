@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'dart:ui' as ui;
 
 import '../engine/models.dart';
+import '../game/command_cards.dart';
 import '../game/game_controller.dart';
 import '../rendering/icon_atlas.dart';
 
@@ -106,7 +107,7 @@ class TopBar extends StatelessWidget {
         SizedBox(
           width: 18,
           height: 18,
-          child: icon == null ? null : RawImage(image: icon, filterQuality: FilterQuality.none, fit: BoxFit.contain),
+          child: icon == null ? null : RawImage(image: icon, filterQuality: FilterQuality.medium, fit: BoxFit.contain),
         ),
         const SizedBox(width: 6),
         Text(
@@ -168,29 +169,59 @@ class SelectionPanel extends StatelessWidget {
       if (u.maxShields > 0) lines.add(_statBar('Shields', u.shields, u.maxShields, const Color(0xFF4FA3FF)));
       if (u.maxEnergy > 0) lines.add(_statBar('Energy', u.energy, u.maxEnergy, const Color(0xFFB57BFF)));
     }
-    if (u.isBusyResearching && u.researchProgressPermille >= 0) {
-      final name = u.researchingTech >= 0
-          ? c.engine.techInfo(GameController.myPlayer, u.researchingTech)?.name
-          : c.engine.upgradeInfo(GameController.myPlayer, u.upgrading)?.name;
-      lines.add(const SizedBox(height: 6));
-      lines.add(_progress('${u.researchingTech >= 0 ? 'Researching' : 'Upgrading'} ${name ?? ''}', u.researchProgressPermille));
+    if (u.isBusyResearching && u.researchProgressPermille >= 0 && u.owner == GameController.myPlayer) {
+      final tech = u.researchingTech >= 0 ? c.engine.techInfo(GameController.myPlayer, u.researchingTech) : null;
+      final upgrade = u.upgrading >= 0 ? c.engine.upgradeInfo(GameController.myPlayer, u.upgrading) : null;
+      final name = tech?.name ?? upgrade?.name ?? '';
+      final icon = tech?.icon ?? upgrade?.icon ?? -1;
+      lines.add(const SizedBox(height: 8));
+      lines.add(Row(
+        children: [
+          _QueueSlot(
+            c: c,
+            icon: icon,
+            progressPermille: u.researchProgressPermille,
+            tooltip: '${tech != null ? 'Researching' : 'Upgrading'} $name (click to cancel)',
+            onTap: c.cancelResearch,
+          ),
+          const SizedBox(width: 10),
+          Text(
+            '${tech != null ? 'Researching' : 'Upgrading'} $name  ${(u.researchProgressPermille / 10).round()}%',
+            style: const TextStyle(color: _textColor, fontSize: 12),
+          ),
+        ],
+      ));
     }
     if (!u.isCompleted && u.progressPermille >= 0) {
       lines.add(const SizedBox(height: 6));
       lines.add(_progress('Under construction', u.progressPermille));
-    } else if (u.queue.isNotEmpty) {
-      lines.add(const SizedBox(height: 6));
+    } else if (u.queue.isNotEmpty && u.owner == GameController.myPlayer && (u.isBuilding || u.typeId == 72 || u.typeId == 83 || u.typeId == 36)) {
+      // The original's five production slots: what's being made (with its
+      // progress) and what's waiting, each a unit icon; click one to cancel it.
       final first = c.engine.unitType(u.queue.first).shortName;
-      lines.add(_progress('Training $first', u.progressPermille < 0 ? 0 : u.progressPermille));
-      if (u.queue.length > 1) {
-        lines.add(Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text(
-            'Queued: ${u.queue.skip(1).map((id) => c.engine.unitType(id).shortName).join(', ')}',
-            style: const TextStyle(color: _dimText, fontSize: 12),
+      lines.add(const SizedBox(height: 8));
+      lines.add(Row(
+        children: [
+          for (int i = 0; i < 5; ++i)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: i < u.queue.length
+                  ? _QueueSlot(
+                      c: c,
+                      icon: u.queue[i],
+                      progressPermille: i == 0 ? (u.progressPermille < 0 ? 0 : u.progressPermille) : -1,
+                      tooltip: '${c.engine.unitType(u.queue[i]).name}${i == 0 ? ' (in production)' : ' (queued)'}, click to cancel',
+                      onTap: () => c.cancelQueueSlot(i),
+                    )
+                  : const _QueueSlot.empty(),
+            ),
+          const SizedBox(width: 4),
+          Text(
+            '$first  ${((u.progressPermille < 0 ? 0 : u.progressPermille) / 10).round()}%',
+            style: const TextStyle(color: _textColor, fontSize: 12),
           ),
-        ));
-      }
+        ],
+      ));
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: lines);
   }
@@ -273,6 +304,60 @@ class SelectionPanel extends StatelessWidget {
   );
 }
 
+/// One production slot: an icon, a progress bar for the item in
+/// production, or an empty frame.
+class _QueueSlot extends StatelessWidget {
+  final GameController? c;
+  final int icon;
+  final int progressPermille; // -1 = no bar
+  final String tooltip;
+  final VoidCallback? onTap;
+  const _QueueSlot({required GameController this.c, required this.icon, required this.progressPermille, required this.tooltip, required this.onTap});
+  const _QueueSlot.empty() : c = null, icon = -1, progressPermille = -1, tooltip = '', onTap = null;
+
+  @override
+  Widget build(BuildContext context) {
+    final image = icon >= 0 ? c?.icons?.command(icon, IconState.normal) : null;
+    final box = Container(
+      width: 46,
+      height: 46,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E252B),
+        border: Border.all(color: onTap == null ? const Color(0xFF232B31) : _borderColor),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Stack(
+        children: [
+          if (image != null)
+            Positioned.fill(
+              child: Padding(
+                padding: const EdgeInsets.all(3),
+                child: RawImage(image: image, filterQuality: FilterQuality.medium, fit: BoxFit.contain),
+              ),
+            ),
+          if (progressPermille >= 0)
+            Positioned(
+              left: 2,
+              right: 2,
+              bottom: 2,
+              child: LinearProgressIndicator(
+                value: progressPermille / 1000,
+                minHeight: 4,
+                color: const Color(0xFF3CFF3C),
+                backgroundColor: const Color(0xFF101010),
+              ),
+            ),
+        ],
+      ),
+    );
+    if (onTap == null) return box;
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(onTap: onTap, child: box),
+    );
+  }
+}
+
 class _Help extends StatelessWidget {
   const _Help();
 
@@ -329,7 +414,10 @@ class CommandCard extends StatelessWidget {
     final tooltip = [
       '${b.label}${b.hotkey.isEmpty ? '' : '  (${b.hotkey})'}',
       if (costs.isNotEmpty) costs.join(', '),
-      if (!b.enabled) 'Requirements not met',
+      if (!b.enabled)
+        b.kind == CmdKind.produce && requirementText.containsKey(b.typeId)
+            ? 'Requires ${requirementText[b.typeId]}'
+            : 'Requirements not met',
     ].join('\n');
     return Tooltip(
       message: tooltip,
@@ -342,7 +430,7 @@ class CommandCard extends StatelessWidget {
             Positioned.fill(
               bottom: hasCost ? 12 : 0,
               child: icon != null
-                  ? RawImage(image: icon, filterQuality: FilterQuality.none, fit: BoxFit.contain)
+                  ? RawImage(image: icon, filterQuality: FilterQuality.medium, fit: BoxFit.contain)
                   : Center(child: _HotkeyLabel(label: b.label, hotkey: b.hotkey, color: b.enabled ? _textColor : greyed)),
             ),
             if (b.hotkey.length == 1)

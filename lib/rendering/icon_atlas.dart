@@ -9,6 +9,11 @@
 //     unavailable (grey), row 2 active (bright), as in the original.
 //   - game\icons.grp: the top bar's mineral, gas and supply icons (per race),
 //     drawn with the normal palette.
+//
+// The icons are small (about 36x34) pixel art. Stretching them to a button
+// with nearest-neighbor scaling at an uneven factor made them look blocky,
+// so each is upscaled 4x with Scale2x (twice) on its palette indices, which
+// keeps edges clean, and the UI then scales that down smoothly.
 
 import 'dart:async';
 import 'dart:typed_data';
@@ -89,7 +94,8 @@ class IconAtlas {
     if (_cmdIcons < 0) return null;
     final f = _engine.grpFrame(_cmdIcons, frame);
     if (f == null) return null;
-    final (w, h, px) = f;
+    final (w0, h0, px0) = f;
+    final (w, h, px) = _scale2x(_scale2x((w0, h0, px0)));
     final row = state < _rows.length ? _rows[state] : null;
     final rgba = Uint8List(w * h * 4);
     for (int i = 0; i < px.length; ++i) {
@@ -105,13 +111,34 @@ class IconAtlas {
     if (_resourceIcons < 0) return null;
     final f = _engine.grpFrame(_resourceIcons, frame);
     if (f == null) return null;
-    final (w, h, px) = f;
+    final (w, h, px) = _scale2x(_scale2x(f));
     final rgba = Uint8List(w * h * 4);
     for (int i = 0; i < px.length; ++i) {
       if (px[i] == 0) continue;
       _put(rgba, i, px[i]);
     }
     return _image(rgba, w, h);
+  }
+
+  /// Scale2x (EPX) on palette indices: doubles the size and rounds off
+  /// diagonal edges instead of turning each pixel into a square block.
+  static (int, int, Uint8List) _scale2x((int, int, Uint8List) src) {
+    final (w, h, p) = src;
+    final out = Uint8List(w * h * 4);
+    final ow = w * 2;
+    int at(int x, int y) => p[y.clamp(0, h - 1) * w + x.clamp(0, w - 1)];
+    for (int y = 0; y < h; ++y) {
+      for (int x = 0; x < w; ++x) {
+        final e = at(x, y);
+        final a = at(x, y - 1), b = at(x + 1, y), c = at(x - 1, y), d = at(x, y + 1);
+        final o = (y * 2) * ow + x * 2;
+        out[o] = (c == a && c != d && a != b) ? a : e;
+        out[o + 1] = (a == b && a != c && b != d) ? b : e;
+        out[o + ow] = (d == c && d != b && c != a) ? c : e;
+        out[o + ow + 1] = (b == d && b != a && d != c) ? d : e;
+      }
+    }
+    return (w * 2, h * 2, out);
   }
 
   void _put(Uint8List rgba, int i, int idx) {

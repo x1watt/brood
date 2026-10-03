@@ -1358,3 +1358,17 @@ bw_status bw_bridge_load_pcx(bw_bridge_t* bridge, const char* path, uint8_t* out
 		return BW_ERR_ASSET_LOAD_FAILED;
 	}
 }
+
+bw_status bw_bridge_cancel_queue_slot(bw_bridge_t* bridge, int owner, int slot) {
+	if (!bridge || owner < 0 || owner > 7 || slot < 0 || slot > 4) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	try {
+		auto f = b->actions();
+		unit_t* u = f.get_single_selected_unit(owner);
+		if (!u || (size_t)slot >= u->build_queue.size()) return BW_ERR_REJECTED;
+		return f.action_cancel_build_queue(owner, (size_t)slot) ? BW_OK : BW_ERR_REJECTED;
+	} catch (...) {
+		return BW_ERR_UNKNOWN;
+	}
+}
