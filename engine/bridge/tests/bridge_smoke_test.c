@@ -30,6 +30,126 @@ static int find_units(bw_bridge_t* b, int owner, int type, int32_t* out, int max
 	return k;
 }
 
+static int nearest_place(bw_bridge_t* b, int me, int type, int cx, int cy, int min_r, int* tx, int* ty) {
+	for (int r = min_r; r < 18; ++r)
+		for (int dy = -r; dy <= r; ++dy)
+			for (int dx = -r; dx <= r; ++dx)
+				if (bw_bridge_can_place(b, me, type, cx / 32 + dx, cy / 32 + dy)) {
+					*tx = cx / 32 + dx;
+					*ty = cy / 32 + dy;
+					return 1;
+				}
+	return 0;
+}
+
+static int wait_for_completed(bw_bridge_t* b, int me, int type, int max_frames, int32_t* out_id) {
+	for (int i = 0; i != max_frames; ++i) {
+		bw_bridge_step(b, 1);
+		int n = bw_bridge_get_units(b, units, 4096);
+		for (int k = 0; k != n; ++k) {
+			if (units[k].owner == me && units[k].unit_type_id == type && (units[k].flags & BW_UNIT_FLAG_COMPLETED)) {
+				if (out_id) *out_id = units[k].unit_id;
+				return 1;
+			}
+		}
+	}
+	return 0;
+}
+
+static void send_workers_mining(bw_bridge_t* b, int me, int worker_type) {
+	int32_t workers[8];
+	int nw = find_units(b, me, worker_type, workers, 8);
+	int n = bw_bridge_get_units(b, units, 4096);
+	for (int w = 0; w != nw; ++w) {
+		bw_unit_info wi;
+		bw_bridge_get_unit(b, workers[w], &wi);
+		int best = -1;
+		long best_d = 0;
+		for (int i = 0; i != n; ++i) {
+			if (units[i].unit_type_id < 176 || units[i].unit_type_id > 178) continue;
+			long dx = units[i].x - wi.x, dy = units[i].y - wi.y, d = dx * dx + dy * dy;
+			if (best < 0 || d < best_d) { best = i; best_d = d; }
+		}
+		if (best < 0) continue;
+		bw_bridge_select_units(b, me, &workers[w], 1);
+		bw_bridge_order(b, me, BW_ORDER_DEFAULT, units[best].x, units[best].y, units[best].unit_id, 0);
+	}
+}
+
+/* Protoss: Pylon, then a powered Gateway, then a Zealot. */
+static void test_protoss(const char* dd, const char* mf) {
+	enum { PROBE = 64, NEXUS = 154, PYLON = 156, GATEWAY = 160, ZEALOT = 65 };
+	const int me = 0;
+	bw_bridge_t* b = bw_bridge_create();
+	CHECK(bw_bridge_load_assets(b, dd) == BW_OK && bw_bridge_new_melee_game(b, mf, me, 2) == BW_OK, "protoss game");
+	bw_bridge_step(b, 1);
+	send_workers_mining(b, me, PROBE);
+	bw_bridge_step(b, 24 * 40);
+	int32_t probes[4], nexus[1];
+	CHECK(find_units(b, me, PROBE, probes, 4) == 4 && find_units(b, me, NEXUS, nexus, 1) == 1, "protoss start units");
+	bw_unit_info nx;
+	bw_bridge_get_unit(b, nexus[0], &nx);
+	int tx, ty;
+	bw_bridge_select_units(b, me, &probes[0], 1);
+	CHECK(nearest_place(b, me, PYLON, nx.x, nx.y, 4, &tx, &ty) && bw_bridge_build(b, me, PYLON, tx, ty) == BW_OK, "place pylon");
+	int32_t pylon;
+	printf("bridge_smoke_test: protoss minerals=%d pylon tile %d,%d\n", bw_bridge_minerals(b, me), tx, ty);
+	if (!wait_for_completed(b, me, PYLON, 24 * 60, &pylon)) {
+		int32_t any[2];
+		bw_unit_info pr;
+		bw_bridge_get_unit(b, probes[0], &pr);
+		printf("bridge_smoke_test: pylons=%d minerals=%d probe at %d,%d\n", find_units(b, me, PYLON, any, 2), bw_bridge_minerals(b, me), pr.x, pr.y);
+		CHECK(0, "pylon never completed");
+	}
+	bw_unit_info py;
+	bw_bridge_get_unit(b, pylon, &py);
+	bw_bridge_step(b, 24 * 20);
+	bw_bridge_select_units(b, me, &probes[1], 1);
+	CHECK(nearest_place(b, me, GATEWAY, py.x, py.y, 2, &tx, &ty) && bw_bridge_build(b, me, GATEWAY, tx, ty) == BW_OK, "place gateway (needs pylon power)");
+	int32_t gate;
+	CHECK(wait_for_completed(b, me, GATEWAY, 24 * 90, &gate), "gateway never completed");
+	bw_bridge_step(b, 24 * 10);
+	CHECK(bw_bridge_select_units(b, me, &gate, 1) == BW_OK && bw_bridge_train(b, me, ZEALOT) == BW_OK, "train zealot");
+	CHECK(wait_for_completed(b, me, ZEALOT, 24 * 40, NULL), "zealot never appeared");
+	printf("bridge_smoke_test: protoss pylon -> gateway -> zealot OK\n");
+	bw_bridge_destroy(b);
+}
+
+/* Zerg: larvae morph into a Drone; a Drone becomes a Spawning Pool on creep. */
+static void test_zerg(const char* dd, const char* mf) {
+	enum { DRONE = 41, LARVA = 35, HATCHERY = 131, POOL = 142 };
+	const int me = 0;
+	bw_bridge_t* b = bw_bridge_create();
+	CHECK(bw_bridge_load_assets(b, dd) == BW_OK && bw_bridge_new_melee_game(b, mf, me, 0) == BW_OK, "zerg game");
+	bw_bridge_step(b, 1);
+	send_workers_mining(b, me, DRONE);
+	bw_bridge_step(b, 24 * 20);
+	int32_t larvae[4], drones[8], hatch[1];
+	int nl = find_units(b, me, LARVA, larvae, 4);
+	CHECK(nl > 0, "no larvae");
+	CHECK(find_units(b, me, HATCHERY, hatch, 1) == 1, "no hatchery");
+	int drones_before = find_units(b, me, DRONE, drones, 8);
+	CHECK(bw_bridge_select_units(b, me, larvae, 1) == BW_OK && bw_bridge_train(b, me, DRONE) == BW_OK, "larva morph to drone");
+	bw_bridge_step(b, 24 * 25);
+	int drones_after = find_units(b, me, DRONE, drones, 8);
+	CHECK(drones_after == drones_before + 1, "drone count %d -> %d", drones_before, drones_after);
+	bw_bridge_step(b, 24 * 40);
+	bw_unit_info h;
+	bw_bridge_get_unit(b, hatch[0], &h);
+	int tx, ty;
+	bw_bridge_select_units(b, me, &drones[0], 1);
+	CHECK(nearest_place(b, me, POOL, h.x, h.y, 3, &tx, &ty) && bw_bridge_build(b, me, POOL, tx, ty) == BW_OK, "place spawning pool on creep");
+	int32_t pools[1];
+	int started = 0;
+	for (int i = 0; i != 24 * 20 && !started; ++i) {
+		bw_bridge_step(b, 1);
+		started = find_units(b, me, POOL, pools, 1);
+	}
+	CHECK(started, "spawning pool never started");
+	printf("bridge_smoke_test: zerg larva -> drone, drone -> spawning pool OK\n");
+	bw_bridge_destroy(b);
+}
+
 int main(int argc, char** argv) {
 	char data_dir[1024], map_file[1100];
 	const char* home = getenv("HOME");
@@ -99,6 +219,32 @@ int main(int argc, char** argv) {
 	int mined = bw_bridge_minerals(b, me) - start_minerals;
 	printf("bridge_smoke_test: mined %d minerals in 30s with %d SCVs\n", mined, scv_count);
 	CHECK(mined >= 100, "workers did not mine (only %d)", mined);
+
+	/* Sound: the simulation reported sounds while mining; they load as WAVs. */
+	{
+		bw_sound_event ev[256];
+		int ns = bw_bridge_poll_sounds(b, ev, 256);
+		CHECK(ns > 0, "no sound events while mining");
+		int len = 0;
+		CHECK(bw_bridge_load_sound(b, ev[0].sound_id, NULL, 0, &len) == BW_OK && len > 44, "sound %d not loadable", ev[0].sound_id);
+		uint8_t* wav = (uint8_t*)malloc((size_t)len);
+		CHECK(bw_bridge_load_sound(b, ev[0].sound_id, wav, len, &len) == BW_OK && memcmp(wav, "RIFF", 4) == 0, "sound is not a WAV");
+		free(wav);
+		bw_unit_type_info scv_info;
+		bw_bridge_get_unit_type_info(b, TERRAN_SCV, &scv_info);
+		CHECK(scv_info.yes_first > 0 && scv_info.yes_last >= scv_info.yes_first, "SCV has no yes sounds");
+		printf("bridge_smoke_test: %d sound events, first id %d (%d byte WAV); SCV yes sounds %d-%d\n", ns, ev[0].sound_id, len, scv_info.yes_first, scv_info.yes_last);
+	}
+
+	/* Control groups: assign two SCVs to group 1, clear, recall. */
+	CHECK(bw_bridge_select_units(b, me, scvs, 2) == BW_OK, "select two");
+	CHECK(bw_bridge_control_group(b, me, 1, BW_GROUP_ASSIGN) == BW_OK, "assign group");
+	bw_bridge_select_units(b, me, NULL, 0);
+	CHECK(bw_bridge_control_group(b, me, 1, BW_GROUP_RECALL) == BW_OK, "recall group");
+	{
+		int32_t sel[12];
+		CHECK(bw_bridge_get_selected_units(b, me, sel, 12) == 2, "group recall did not select 2 units");
+	}
 
 	/* Train an SCV from the CC; buildable list must offer it. */
 	CHECK(bw_bridge_select_units(b, me, ccs, 1) == BW_OK, "select cc");
@@ -210,6 +356,8 @@ int main(int argc, char** argv) {
 	CHECK(marine_count == 1, "marine did not train");
 
 	bw_bridge_destroy(b);
+	test_protoss(dd, mf);
+	test_zerg(dd, mf);
 	printf("bridge_smoke_test: OK\n");
 	return 0;
 }

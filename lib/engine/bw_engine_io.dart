@@ -33,6 +33,8 @@ class BwEngine {
   final ffi.Pointer<ffi.Int32> _idBuf = calloc<ffi.Int32>(256);
   final ffi.Pointer<ffi.Int> _int1 = calloc<ffi.Int>();
   final ffi.Pointer<ffi.Int> _int2 = calloc<ffi.Int>();
+  final ffi.Pointer<ffi.Int> _int3 = calloc<ffi.Int>();
+  final ffi.Pointer<bw_sound_event> _soundBuf = calloc<bw_sound_event>(256);
   final Map<int, UnitTypeInfo> _typeInfoCache = {};
   bool _disposed = false;
 
@@ -272,6 +274,13 @@ class BwEngine {
           isAddon: t.is_addon != 0,
           race: t.race,
           name: String.fromCharCodes(chars),
+          readySound: t.ready_sound,
+          whatFirst: t.what_first,
+          whatLast: t.what_last,
+          pissedFirst: t.pissed_first,
+          pissedLast: t.pissed_last,
+          yesFirst: t.yes_first,
+          yesLast: t.yes_last,
         );
       } finally {
         calloc.free(p);
@@ -317,6 +326,62 @@ class BwEngine {
 
   bool cancelLast(int owner) => _ok(_b.bw_bridge_cancel_last(_h, owner));
 
+  bool controlGroup(int owner, int group, GroupAction action) =>
+      _ok(_b.bw_bridge_control_group(_h, owner, group, action.index));
+
+  // --- feedback visuals ---
+
+  int get cursorMarkerImage => _b.bw_bridge_cursor_marker_image();
+
+  /// (image type, top-left x, top-left y) of [unitId]'s selection circle.
+  (int, int, int)? selectionCircle(int unitId) {
+    if (!_ok(_b.bw_bridge_get_selection_circle(_h, unitId, _int1, _int2, _int3))) return null;
+    return (_int1.value, _int2.value, _int3.value);
+  }
+
+  // --- sound ---
+
+  int get soundCount => _b.bw_bridge_sound_count(_h);
+
+  SoundInfo? soundInfo(int soundId) {
+    final p = calloc<bw_sound_info>();
+    try {
+      if (!_ok(_b.bw_bridge_get_sound_info(_h, soundId, p))) return null;
+      final chars = <int>[];
+      for (int i = 0; i < 80; ++i) {
+        final c = p.ref.filename[i];
+        if (c == 0) break;
+        chars.add(c);
+      }
+      return SoundInfo(p.ref.priority, p.ref.flags, p.ref.min_volume, String.fromCharCodes(chars));
+    } finally {
+      calloc.free(p);
+    }
+  }
+
+  /// The sound's WAV file bytes, or null if it has none.
+  Uint8List? loadSound(int soundId) {
+    if (!_ok(_b.bw_bridge_load_sound(_h, soundId, ffi.nullptr, 0, _int1))) return null;
+    final len = _int1.value;
+    if (len <= 0) return null;
+    final buf = calloc<ffi.Uint8>(len);
+    try {
+      if (!_ok(_b.bw_bridge_load_sound(_h, soundId, buf, len, _int1))) return null;
+      return Uint8List.fromList(buf.asTypedList(len));
+    } finally {
+      calloc.free(buf);
+    }
+  }
+
+  List<SoundEvent> pollSounds() {
+    final n = _b.bw_bridge_poll_sounds(_h, _soundBuf, 256);
+    if (n <= 0) return const [];
+    return List<SoundEvent>.generate(n, (i) {
+      final e = _soundBuf[i];
+      return SoundEvent(e.sound_id, e.has_position != 0, e.x, e.y, e.unit_type_id);
+    }, growable: false);
+  }
+
   void dispose() {
     if (_disposed) return;
     _disposed = true;
@@ -327,5 +392,7 @@ class BwEngine {
     calloc.free(_idBuf);
     calloc.free(_int1);
     calloc.free(_int2);
+    calloc.free(_int3);
+    calloc.free(_soundBuf);
   }
 }

@@ -102,6 +102,7 @@ class BwPainter extends CustomPainter {
       }
     }
 
+    _drawMarkers(canvas, atlas, camX, camY);
     _drawPlacementGhost(canvas, camX, camY);
 
     final box = c.dragBox;
@@ -147,6 +148,37 @@ class BwPainter extends CustomPainter {
     final hp = item.hpPermille / 1000;
     bar(hp, hp > 0.66 ? const Color(0xFF2EE62E) : hp > 0.33 ? const Color(0xFFF5D90A) : const Color(0xFFE5322E));
   }
+
+  // Right-click confirmation, as in the original: the cursor marker animates
+  // on the ground at the destination, or the target's selection circle
+  // flashes three times (green own, yellow neutral, red enemy).
+  void _drawMarkers(Canvas canvas, SpriteAtlas atlas, double camX, double camY) {
+    if (c.markers.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final markerImage = c.engine.cursorMarkerImage;
+    final frames = _markerFrames ??= c.engine.getImageFrameCount(markerImage);
+    for (final m in c.markers) {
+      final age = now - m.startMs;
+      final ground = m.ground;
+      if (ground != null) {
+        if (frames <= 0) continue;
+        final frame = (age * frames ~/ GameController.markerMs).clamp(0, frames - 1);
+        final img = atlas.resolveColor(markerImage, frame, false, 0);
+        if (img == null) continue;
+        canvas.drawImage(img, Offset(ground.dx - camX - img.width / 2, ground.dy - camY - img.height / 2), _plain);
+        continue;
+      }
+      if ((age ~/ 100).isOdd) continue; // flash: 100 ms on, 100 ms off
+      final circle = c.engine.selectionCircle(m.unitId);
+      if (circle == null) continue;
+      final (imageId, x, y) = circle;
+      final img = atlas.resolveMask(imageId, 0, false);
+      if (img == null) continue;
+      canvas.drawImage(img, Offset(x - camX, y - camY), _circlePaints[relationColor(m.owner)]!);
+    }
+  }
+
+  static int? _markerFrames;
 
   void _drawPlacementGhost(Canvas canvas, double camX, double camY) {
     final type = c.buildTypeId;

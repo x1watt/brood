@@ -17,7 +17,16 @@ const _dimText = Color(0xFF8A96A0);
 
 class TopBar extends StatelessWidget {
   final GameController c;
-  const TopBar({super.key, required this.c});
+  final bool fullscreen;
+  final VoidCallback onToggleFullscreen;
+  final VoidCallback onToggleMute;
+  const TopBar({
+    super.key,
+    required this.c,
+    required this.fullscreen,
+    required this.onToggleFullscreen,
+    required this.onToggleMute,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -58,6 +67,22 @@ class TopBar extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: c.message != null ? const Color(0xFFFFD54F) : _textColor),
             ),
+          ),
+          IconButton(
+            tooltip: (c.sound?.muted ?? false) ? 'Unmute' : 'Mute',
+            iconSize: 18,
+            visualDensity: VisualDensity.compact,
+            color: _textColor,
+            onPressed: onToggleMute,
+            icon: Icon((c.sound?.muted ?? false) ? Icons.volume_off : Icons.volume_up),
+          ),
+          IconButton(
+            tooltip: fullscreen ? 'Exit fullscreen (F11)' : 'Fullscreen (F11)',
+            iconSize: 18,
+            visualDensity: VisualDensity.compact,
+            color: _textColor,
+            onPressed: onToggleFullscreen,
+            icon: Icon(fullscreen ? Icons.fullscreen_exit : Icons.fullscreen),
           ),
         ],
       ),
@@ -236,8 +261,10 @@ class _Help extends StatelessWidget {
     return const Text(
       'Left click: select   ·   Drag: box select   ·   Shift: add to selection   ·   Double click: all of that type\n'
       'Right click: move / attack / gather / set rally point   ·   Minimap: click to jump, right click to command\n'
-      'A attack   M move   S stop   H hold   P patrol   Esc cancel   ·   Arrows, screen edge or middle drag: scroll\n'
-      'Select an SCV for its build menu, a Command Center to train SCVs. Workers start mining automatically.',
+      'Hotkeys as in the original: the highlighted letter on each button. Workers: B / V open the build menus,\n'
+      'then the building letter (SCV: B, S = Supply Depot; Probe: B, C = Photon Cannon). Esc goes back / cancels.\n'
+      'Ctrl+1..9 assigns a group, 1..9 selects it (twice jumps to it), Shift+1..9 adds to it.\n'
+      'Scroll: push the mouse against any screen edge or corner, arrow keys, middle drag. F11: fullscreen.',
       style: style,
     );
   }
@@ -249,80 +276,103 @@ class CommandCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final selected = c.selectedUnits;
-    final buttons = <Widget>[];
-    if (c.selectionIsMine) {
-      final movable = selected.any((u) => u.canMove);
-      if (movable) {
-        buttons.addAll([
-          _button('Move', 'M', () => c.setMode(CommandMode.move), active: c.mode == CommandMode.move),
-          _button('Stop', 'S', () => c.instantOrder(UnitOrder.stop)),
-          _button('Attack', 'A', () => c.setMode(CommandMode.attack), active: c.mode == CommandMode.attack),
-          _button('Patrol', 'P', () => c.setMode(CommandMode.patrol), active: c.mode == CommandMode.patrol),
-          _button('Hold', 'H', () => c.instantOrder(UnitOrder.hold)),
-        ]);
-      }
-      if (selected.length == 1) {
-        final u = selected.first;
-        for (final typeId in c.engine.getBuildable(GameController.myPlayer)) {
-          final t = c.engine.unitType(typeId);
-          final affordable = c.minerals >= t.mineralCost && c.gas >= t.gasCost;
-          buttons.add(_produceButton(t, affordable, active: c.mode == CommandMode.build && c.buildTypeId == typeId));
-        }
-        if ((u.isBuilding && u.queue.isNotEmpty) || (!u.isCompleted && u.isBuilding)) {
-          buttons.add(_button('Cancel', '', c.cancelLast, danger: true));
-        }
-      }
-    }
+    final buttons = c.commandCard();
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(color: _panelColor, border: Border.all(color: _borderColor)),
       child: buttons.isEmpty
           ? const Center(child: Text('No commands', style: TextStyle(color: _dimText)))
-          : SingleChildScrollView(child: Wrap(spacing: 6, runSpacing: 6, children: buttons)),
+          : GridView.count(
+              crossAxisCount: 3,
+              mainAxisSpacing: 6,
+              crossAxisSpacing: 6,
+              childAspectRatio: 1.9,
+              children: [for (final b in buttons) _button(b)],
+            ),
     );
   }
 
-  Widget _button(String label, String key, VoidCallback onTap, {bool active = false, bool danger = false}) => _Tile(
-    onTap: onTap,
-    active: active,
-    child: Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Text(label, style: TextStyle(color: danger ? const Color(0xFFFF6B5E) : _textColor, fontSize: 12)),
-        if (key.isNotEmpty) Text(key, style: const TextStyle(color: _dimText, fontSize: 10)),
-      ],
-    ),
-  );
-
-  Widget _produceButton(UnitTypeInfo t, bool affordable, {bool active = false}) => Tooltip(
-    message: '${t.name}\n${t.mineralCost} minerals${t.gasCost > 0 ? ', ${t.gasCost} gas' : ''}'
-        '${t.supply > 0 ? ', ${t.supply.toStringAsFixed(0)} supply' : ''}',
-    child: _Tile(
-      onTap: () => c.produce(t.typeId),
-      active: active,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            t.shortName,
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: affordable ? _textColor : _dimText, fontSize: 11),
-          ),
-          const SizedBox(height: 2),
-          Text.rich(
-            TextSpan(children: [
-              TextSpan(text: '${t.mineralCost}', style: const TextStyle(color: _mineralColor)),
-              if (t.gasCost > 0) TextSpan(text: ' ${t.gasCost}', style: const TextStyle(color: _gasColor)),
-            ]),
-            style: const TextStyle(fontSize: 10),
-          ),
-        ],
+  Widget _button(CmdButton b) {
+    final t = b.kind == CmdKind.produce ? c.engine.unitType(b.typeId) : null;
+    // Like the original: missing requirements grey a button out; being short
+    // on resources doesn't (clicking it gets the advisor's complaint), only
+    // the cost turns red.
+    final color = !b.enabled ? const Color(0xFF55606A) : (b.kind == CmdKind.cancel ? const Color(0xFFFF6B5E) : _textColor);
+    const short = Color(0xFFFF6B5E);
+    final tooltip = t == null
+        ? '${b.label}${b.hotkey.isEmpty ? '' : ' (${b.hotkey})'}'
+        : '${t.name}${b.hotkey.isEmpty ? '' : ' (${b.hotkey})'}\n${t.mineralCost} minerals'
+              '${t.gasCost > 0 ? ', ${t.gasCost} gas' : ''}${t.supply > 0 ? ', ${t.supply.toStringAsFixed(0)} supply' : ''}'
+              '${b.enabled ? '' : '\nRequirements not met'}';
+    return Tooltip(
+      message: tooltip,
+      waitDuration: const Duration(milliseconds: 400),
+      child: _Tile(
+        onTap: () => c.activate(b, fromClick: true),
+        active: b.active,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _HotkeyLabel(label: b.label, hotkey: b.hotkey, color: color),
+            if (t != null)
+              Text.rich(
+                TextSpan(children: [
+                  TextSpan(
+                    text: '${t.mineralCost}',
+                    style: TextStyle(color: !b.enabled ? const Color(0xFF55606A) : c.minerals >= t.mineralCost ? _mineralColor : short),
+                  ),
+                  if (t.gasCost > 0)
+                    TextSpan(
+                      text: ' ${t.gasCost}',
+                      style: TextStyle(color: !b.enabled ? const Color(0xFF55606A) : c.gas >= t.gasCost ? _gasColor : short),
+                    ),
+                ]),
+                style: const TextStyle(fontSize: 10),
+              )
+            else if (b.hotkey.length > 1)
+              Text(b.hotkey, style: const TextStyle(color: _dimText, fontSize: 10)),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
+}
+
+/// A label with its hotkey letter highlighted, like the original's buttons.
+class _HotkeyLabel extends StatelessWidget {
+  final String label;
+  final String hotkey;
+  final Color color;
+  const _HotkeyLabel({required this.label, required this.hotkey, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final style = TextStyle(color: color, fontSize: 11);
+    final i = hotkey.length == 1 ? label.toUpperCase().indexOf(hotkey) : -1;
+    if (i < 0) {
+      return Text(
+        hotkey.length == 1 ? '$label ($hotkey)' : label,
+        style: style,
+        textAlign: TextAlign.center,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+    return Text.rich(
+      TextSpan(children: [
+        TextSpan(text: label.substring(0, i)),
+        TextSpan(
+          text: label.substring(i, i + 1),
+          style: TextStyle(color: color == const Color(0xFF55606A) ? color : const Color(0xFFFFD54F), fontWeight: FontWeight.w700),
+        ),
+        TextSpan(text: label.substring(i + 1)),
+      ]),
+      style: style,
+      textAlign: TextAlign.center,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
 }
 
 class _Tile extends StatelessWidget {
@@ -340,7 +390,7 @@ class _Tile extends StatelessWidget {
     ),
     child: InkWell(
       onTap: onTap,
-      child: SizedBox(width: 74, height: 50, child: Padding(padding: const EdgeInsets.all(3), child: child)),
+      child: Padding(padding: const EdgeInsets.all(3), child: Center(child: child)),
     ),
   );
 }

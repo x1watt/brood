@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 7
+#define BW_BRIDGE_ABI_VERSION 8
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -189,6 +189,13 @@ typedef struct bw_unit_type_info {
 	int32_t is_addon;
 	int32_t race;                // 0 zerg, 1 terran, 2 protoss, 3 other
 	char name[48];               // from rez/stat_txt.tbl, UTF-8-safe ASCII
+	// Voice lines (sound ids, inclusive ranges; first > last means none),
+	// played by the host on selection (what), command (yes), repeated
+	// clicking (pissed) and completion (ready).
+	int32_t ready_sound;
+	int32_t what_first, what_last;
+	int32_t pissed_first, pissed_last;
+	int32_t yes_first, yes_last;
 } bw_unit_type_info;
 
 bw_status bw_bridge_get_unit_type_info(bw_bridge_t* bridge, int unit_type_id, bw_unit_type_info* out_info);
@@ -205,6 +212,8 @@ int bw_bridge_get_selected_units(bw_bridge_t* bridge, int owner, int32_t* out_un
 #define BW_ORDER_STOP    3
 #define BW_ORDER_HOLD    4
 #define BW_ORDER_PATROL  5
+#define BW_ORDER_RETURN_CARGO 6
+#define BW_ORDER_REPAIR  7 // target_unit_id required
 
 // Issues an order to the current selection.
 bw_status bw_bridge_order(bw_bridge_t* bridge, int owner, int order, int x, int y, int32_t target_unit_id, int queue);
@@ -225,6 +234,56 @@ bw_status bw_bridge_build(bw_bridge_t* bridge, int owner, int unit_type_id, int 
 
 // Cancels the last item of the selected building's queue (refunds it).
 bw_status bw_bridge_cancel_last(bw_bridge_t* bridge, int owner);
+
+// Control groups 0-9 (OpenBW's action_control_group): BW_GROUP_ASSIGN
+// stores the current selection (Ctrl+N), BW_GROUP_RECALL selects the group's
+// surviving units (N), BW_GROUP_ADD adds the selection to it (Shift+N).
+#define BW_GROUP_ASSIGN 0
+#define BW_GROUP_RECALL 1
+#define BW_GROUP_ADD    2
+bw_status bw_bridge_control_group(bw_bridge_t* bridge, int owner, int group, int action);
+
+// --- Feedback visuals -------------------------------------------------------
+
+// Image type of the original's right-click target marker.
+int bw_bridge_cursor_marker_image(void);
+
+// Selection circle image and its top-left map position for unit_id (for
+// flashing a command target the way the original does).
+bw_status bw_bridge_get_selection_circle(bw_bridge_t* bridge, int32_t unit_id, int* out_image_type_id, int* out_x, int* out_y);
+
+// --- Sound -------------------------------------------------------------------
+//
+// The simulation reports sounds (weapons, deaths, construction...) through
+// OpenBW's play_sound hook; they queue up here until polled. The host plays
+// them, using bw_sound_info and the reference UI's rules: volume from
+// min_volume and distance to the screen, priority-based channel stealing,
+// flags 0x10 = don't restart while playing, 0x02 = one at a time per unit type.
+
+typedef struct bw_sound_event {
+	int32_t sound_id;
+	int32_t has_position; // 0 = not positional (play at min_volume)
+	int32_t x;
+	int32_t y;
+	int32_t unit_type_id; // source unit type, -1 if none
+} bw_sound_event;
+
+typedef struct bw_sound_info {
+	int32_t priority;
+	int32_t flags;
+	int32_t min_volume; // 0-100
+	char filename[80];  // relative to sound/ in the MPQs
+} bw_sound_info;
+
+int bw_bridge_sound_count(bw_bridge_t* bridge);
+bw_status bw_bridge_get_sound_info(bw_bridge_t* bridge, int sound_id, bw_sound_info* out_info);
+
+// Copies the sound's WAV file into out_data. Pass out_data NULL to just get
+// *out_len.
+bw_status bw_bridge_load_sound(bw_bridge_t* bridge, int sound_id, uint8_t* out_data, int out_cap, int* out_len);
+
+// Drains queued sound events (oldest first). Returns the count written.
+int bw_bridge_poll_sounds(bw_bridge_t* bridge, bw_sound_event* out_events, int max_count);
 
 #ifdef __cplusplus
 }

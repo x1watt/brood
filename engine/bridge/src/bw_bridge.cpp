@@ -36,6 +36,41 @@ int permille(int value, int max) {
 
 } // namespace
 
+// Sounds the simulation and command code ask for, waiting to be polled.
+struct sound_queue {
+	a_vector<bw_sound_event> events;
+	void push(int id, xy position, const unit_t* source_unit, bool add_race_index) {
+		if (events.size() >= 256) return;
+		// Same adjustment as OpenBW's reference UI (ui/ui.h play_sound).
+		if (add_race_index) id += 1;
+		bw_sound_event e;
+		e.sound_id = id;
+		e.has_position = position != xy() ? 1 : 0;
+		e.x = position.x;
+		e.y = position.y;
+		e.unit_type_id = source_unit ? (int32_t)source_unit->unit_type->id : -1;
+		events.push_back(e);
+	}
+};
+
+// OpenBW reports sounds through the virtual play_sound hook, which is a
+// no-op in the base classes; these subclasses route it into the queue.
+struct sim_functions : state_functions {
+	sound_queue* sounds;
+	sim_functions(state& st, sound_queue* sounds) : state_functions(st), sounds(sounds) {}
+	void play_sound(int id, xy position, const unit_t* source_unit, bool add_race_index) override {
+		sounds->push(id, position, source_unit, add_race_index);
+	}
+};
+
+struct command_functions : action_functions {
+	sound_queue* sounds;
+	command_functions(state& st, action_state& action_st, sound_queue* sounds) : action_functions(st, action_st), sounds(sounds) {}
+	void play_sound(int id, xy position, const unit_t* source_unit, bool add_race_index) override {
+		sounds->push(id, position, source_unit, add_race_index);
+	}
+};
+
 struct bw_bridge {
 	std::unique_ptr<game_player> player;
 	std::string data_dir;
@@ -58,7 +93,29 @@ struct bw_bridge {
 	a_vector<std::string> unit_names;
 
 	action_state action_st;
-	action_functions actions() { return action_functions(player->st(), action_st); }
+	sound_queue sounds;
+	std::unique_ptr<sim_functions> sim;
+	// Always bind the result with `auto`: assigning it to an
+	// action_functions would slice off the sound hook.
+	command_functions actions() { return command_functions(player->st(), action_st, &sounds); }
+
+	bool sound_table_loaded = false;
+	sound_types_t sound_types;
+	a_vector<std::string> sound_filenames;
+	void ensure_sound_table() {
+		if (sound_table_loaded) return;
+		a_vector<uint8_t> data;
+		asset_loader()(data, "arr/sfxdata.dat");
+		sound_types = data_loading::load_sfxdata_dat(data);
+		string_table_data tbl;
+		asset_loader()(tbl.data, "arr/sfxdata.tbl");
+		sound_filenames.resize(sound_types.vec.size());
+		for (size_t i = 0; i != sound_types.vec.size(); ++i) {
+			size_t index = sound_types.vec[i].filename_index;
+			if (index) sound_filenames[i] = tbl[index].c_str();
+		}
+		sound_table_loaded = true;
+	}
 
 	data_loading::data_files_loader<>& asset_loader() {
 		if (!asset_loader_) asset_loader_ = std::make_unique<data_loading::data_files_loader<>>(data_loading::data_files_directory(data_dir));
@@ -108,12 +165,12 @@ static bw_bridge* B(bw_bridge_t* bridge) {
 	return reinterpret_cast<bw_bridge*>(bridge);
 }
 
-static unit_t* resolve_unit(action_functions& f, int32_t unit_id_raw) {
+static unit_t* resolve_unit(state_functions& f, int32_t unit_id_raw) {
 	if (unit_id_raw == 0) return nullptr;
 	return f.get_unit(unit_id_32((uint32_t)unit_id_raw));
 }
 
-static int32_t unit_handle(action_functions& f, const unit_t* u) {
+static int32_t unit_handle(state_functions& f, const unit_t* u) {
 	return u ? (int32_t)f.get_unit_id_32(u).raw_value : 0;
 }
 
@@ -180,6 +237,7 @@ bw_status bw_bridge_new_melee_game(bw_bridge_t* bridge, const char* map_file, in
 				}
 			}
 		});
+		b->sim = std::make_unique<sim_functions>(b->player->st(), &b->sounds);
 		b->game_started = true;
 		return BW_OK;
 	} catch (...) {
@@ -193,7 +251,7 @@ bw_status bw_bridge_step(bw_bridge_t* bridge, int n_frames) {
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
 	try {
-		for (int i = 0; i != n_frames; ++i) b->player->next_frame();
+		for (int i = 0; i != n_frames; ++i) b->sim->next_frame();
 		return BW_OK;
 	} catch (...) {
 		return BW_ERR_UNKNOWN;
@@ -259,7 +317,7 @@ int bw_bridge_get_draw_list(bw_bridge_t* bridge, int selected_owner,
 	if (!b->in_game()) return -1;
 
 	try {
-		action_functions f = b->actions();
+		auto f = b->actions();
 		state& st = b->player->st();
 
 		// Sprites don't point back at their unit, so build that map once
@@ -514,7 +572,7 @@ bw_status bw_bridge_decode_megatile(bw_bridge_t* bridge, int megatile_index, uin
 
 // --- Units --------------------------------------------------------------------
 
-static void fill_unit_info(action_functions& f, const unit_t* u, bw_unit_info& out) {
+static void fill_unit_info(state_functions& f, const unit_t* u, bw_unit_info& out) {
 	std::memset(&out, 0, sizeof(out));
 	out.unit_id = unit_handle(f, u);
 	out.unit_type_id = (int32_t)u->unit_type->id;
@@ -565,7 +623,7 @@ int bw_bridge_get_units(bw_bridge_t* bridge, bw_unit_info* out_units, int max_co
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return -1;
 	try {
-		action_functions f = b->actions();
+		auto f = b->actions();
 		state& st = b->player->st();
 		int n = 0;
 		for (int owner = 0; owner != 12; ++owner) {
@@ -586,7 +644,7 @@ bw_status bw_bridge_get_unit(bw_bridge_t* bridge, int32_t unit_id, bw_unit_info*
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
 	try {
-		action_functions f = b->actions();
+		auto f = b->actions();
 		unit_t* u = resolve_unit(f, unit_id);
 		if (!u || !u->sprite) return BW_ERR_INVALID_ARGUMENT;
 		fill_unit_info(f, u, *out_unit);
@@ -600,7 +658,7 @@ int32_t bw_bridge_pick_unit_at(bw_bridge_t* bridge, int x, int y) {
 	if (!bridge || !B(bridge)->in_game()) return 0;
 	try {
 		bw_bridge* b = B(bridge);
-		action_functions f = b->actions();
+		auto f = b->actions();
 		xy pos{x, y};
 		// find_units_noexpand's index is keyed on each unit's left edge, so
 		// widen the query by the largest unit size (as ui.h's
@@ -635,7 +693,7 @@ bw_status bw_bridge_get_unit_type_info(bw_bridge_t* bridge, int unit_type_id, bw
 	if (!b->in_game()) return BW_ERR_NO_GAME;
 	if (unit_type_id < 0 || unit_type_id >= (int)UnitTypes::None) return BW_ERR_INVALID_ARGUMENT;
 	try {
-		action_functions f = b->actions();
+		auto f = b->actions();
 		const unit_type_t* ut = f.get_unit_type((UnitTypes)unit_type_id);
 		std::memset(out_info, 0, sizeof(*out_info));
 		out_info->mineral_cost = ut->mineral_cost;
@@ -656,6 +714,13 @@ bw_status bw_bridge_get_unit_type_info(bw_bridge_t* bridge, int unit_type_id, bw
 		std::string name = (size_t)unit_type_id < b->unit_names.size() ? b->unit_names[(size_t)unit_type_id] : std::string();
 		if (name.empty()) name = "Unit " + std::to_string(unit_type_id);
 		std::strncpy(out_info->name, name.c_str(), sizeof(out_info->name) - 1);
+		out_info->ready_sound = ut->ready_sound;
+		out_info->what_first = ut->first_what_sound;
+		out_info->what_last = ut->last_what_sound;
+		out_info->pissed_first = ut->first_pissed_sound;
+		out_info->pissed_last = ut->last_pissed_sound;
+		out_info->yes_first = ut->first_yes_sound;
+		out_info->yes_last = ut->last_yes_sound;
 		return BW_OK;
 	} catch (...) {
 		return BW_ERR_UNKNOWN;
@@ -669,7 +734,7 @@ bw_status bw_bridge_select_units(bw_bridge_t* bridge, int owner, const int32_t* 
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
 	try {
-		action_functions f = b->actions();
+		auto f = b->actions();
 		a_vector<unit_t*> units;
 		for (int i = 0; i != count && units.size() < 12; ++i) {
 			unit_t* u = resolve_unit(f, unit_ids[i]);
@@ -687,7 +752,7 @@ int bw_bridge_get_selected_units(bw_bridge_t* bridge, int owner, int32_t* out_un
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return -1;
 	try {
-		action_functions f = b->actions();
+		auto f = b->actions();
 		int n = 0;
 		for (unit_t* u : b->action_st.selection.at(owner)) {
 			if (n >= max_count) break;
@@ -705,7 +770,7 @@ bw_status bw_bridge_order(bw_bridge_t* bridge, int owner, int order, int x, int 
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
 	try {
-		action_functions f = b->actions();
+		auto f = b->actions();
 		unit_t* target = resolve_unit(f, target_unit_id);
 		bool q = queue != 0;
 		xy pos(x, y);
@@ -725,7 +790,14 @@ bw_status bw_bridge_order(bw_bridge_t* bridge, int owner, int order, int x, int 
 			ok = f.action_stop(owner, q);
 			break;
 		case BW_ORDER_HOLD:
-			ok = f.action_order(owner, f.get_order_type(Orders::HoldPosition), pos, nullptr, nullptr, q);
+			ok = f.action_hold_position(owner, q);
+			break;
+		case BW_ORDER_RETURN_CARGO:
+			ok = f.action_return_cargo(owner, q);
+			break;
+		case BW_ORDER_REPAIR:
+			if (!target) return BW_ERR_INVALID_ARGUMENT;
+			ok = f.action_order(owner, f.get_order_type(Orders::Repair), pos, target, target->unit_type, q);
 			break;
 		case BW_ORDER_PATROL:
 			ok = f.action_order(owner, f.get_order_type(Orders::Patrol), pos, nullptr, nullptr, q);
@@ -739,13 +811,26 @@ bw_status bw_bridge_order(bw_bridge_t* bridge, int owner, int order, int x, int 
 	}
 }
 
+// The selected unit when the selection is one unit, or several units of the
+// same type (e.g. a group of larvae), otherwise null.
+static unit_t* first_of_uniform_selection(bw_bridge* b, state_functions& f, int owner) {
+	(void)f;
+	auto& selection = b->action_st.selection.at(owner);
+	if (selection.empty()) return nullptr;
+	unit_t* first = selection.front();
+	for (unit_t* u : selection) {
+		if (u->unit_type != first->unit_type) return nullptr;
+	}
+	return first;
+}
+
 int bw_bridge_get_buildable(bw_bridge_t* bridge, int owner, int32_t* out_unit_type_ids, int max_count) {
 	if (!bridge || !out_unit_type_ids || owner < 0 || owner > 7) return -1;
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return -1;
 	try {
-		action_functions f = b->actions();
-		unit_t* u = f.get_single_selected_unit(owner);
+		auto f = b->actions();
+		unit_t* u = first_of_uniform_selection(b, f, owner);
 		if (!u || u->owner != owner) return 0;
 		int n = 0;
 		for (int id = 0; id < (int)UnitTypes::None && n < max_count; ++id) {
@@ -758,7 +843,7 @@ int bw_bridge_get_buildable(bw_bridge_t* bridge, int owner, int32_t* out_unit_ty
 	}
 }
 
-static const order_type_t* build_order_for(action_functions& f, const unit_t* builder, const unit_type_t* ut) {
+static const order_type_t* build_order_for(state_functions& f, const unit_t* builder, const unit_type_t* ut) {
 	if (f.ut_addon(ut)) return f.get_order_type(Orders::PlaceAddon);
 	if (f.unit_is(builder, UnitTypes::Protoss_Probe)) return f.get_order_type(Orders::PlaceProtossBuilding);
 	if (f.unit_is(builder, UnitTypes::Zerg_Drone)) return f.get_order_type(Orders::DroneStartBuild);
@@ -770,9 +855,9 @@ bw_status bw_bridge_train(bw_bridge_t* bridge, int owner, int unit_type_id) {
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
 	try {
-		action_functions f = b->actions();
+		auto f = b->actions();
 		const unit_type_t* ut = f.get_unit_type((UnitTypes)unit_type_id);
-		unit_t* u = f.get_single_selected_unit(owner);
+		unit_t* u = first_of_uniform_selection(b, f, owner);
 		if (!u) return BW_ERR_REJECTED;
 		bool ok;
 		if (f.ut_addon(ut)) {
@@ -781,6 +866,10 @@ bw_status bw_bridge_train(bw_bridge_t* bridge, int owner, int unit_type_id) {
 			xy top_left = u->sprite->position - u->unit_type->placement_size / 2;
 			xy_t<size_t> tile((size_t)((top_left.x + ut->addon_position.x) / 32), (size_t)((top_left.y + ut->addon_position.y) / 32));
 			ok = f.action_build(owner, build_order_for(f, u, ut), ut, tile);
+		} else if (f.unit_is(u, UnitTypes::Zerg_Larva) || f.unit_is(u, UnitTypes::Zerg_Hydralisk) || f.unit_is(u, UnitTypes::Zerg_Mutalisk)) {
+			ok = f.action_morph(owner, ut);
+		} else if (f.unit_is_zerg_building(u) && f.unit_is_zerg_building(ut)) {
+			ok = f.action_morph_building(owner, ut);
 		} else {
 			ok = f.action_train(owner, ut);
 		}
@@ -796,7 +885,7 @@ int bw_bridge_can_place(bw_bridge_t* bridge, int owner, int unit_type_id, int ti
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return 0;
 	try {
-		action_functions f = b->actions();
+		auto f = b->actions();
 		unit_t* u = f.get_single_selected_unit(owner);
 		if (!u) return 0;
 		const unit_type_t* ut = f.get_unit_type((UnitTypes)unit_type_id);
@@ -813,7 +902,7 @@ bw_status bw_bridge_build(bw_bridge_t* bridge, int owner, int unit_type_id, int 
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
 	try {
-		action_functions f = b->actions();
+		auto f = b->actions();
 		unit_t* u = f.get_single_selected_unit(owner);
 		if (!u) return BW_ERR_REJECTED;
 		const unit_type_t* ut = f.get_unit_type((UnitTypes)unit_type_id);
@@ -833,7 +922,7 @@ bw_status bw_bridge_cancel_last(bw_bridge_t* bridge, int owner) {
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
 	try {
-		action_functions f = b->actions();
+		auto f = b->actions();
 		unit_t* u = f.get_single_selected_unit(owner);
 		if (!u) return BW_ERR_REJECTED;
 		bool ok;
@@ -843,4 +932,102 @@ bw_status bw_bridge_cancel_last(bw_bridge_t* bridge, int owner) {
 	} catch (...) {
 		return BW_ERR_UNKNOWN;
 	}
+}
+
+bw_status bw_bridge_control_group(bw_bridge_t* bridge, int owner, int group, int action) {
+	if (!bridge || owner < 0 || owner > 7 || group < 0 || group > 9 || action < 0 || action > 2) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	try {
+		auto f = b->actions();
+		return f.action_control_group(owner, (size_t)group, action) ? BW_OK : BW_ERR_REJECTED;
+	} catch (...) {
+		return BW_ERR_UNKNOWN;
+	}
+}
+
+int bw_bridge_cursor_marker_image(void) {
+	return (int)ImageTypes::IMAGEID_Cursor_Marker;
+}
+
+bw_status bw_bridge_get_selection_circle(bw_bridge_t* bridge, int32_t unit_id, int* out_image_type_id, int* out_x, int* out_y) {
+	if (!bridge || !out_image_type_id || !out_x || !out_y) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	try {
+		auto f = b->actions();
+		unit_t* u = resolve_unit(f, unit_id);
+		if (!u || !u->sprite) return BW_ERR_INVALID_ARGUMENT;
+		const sprite_t* sprite = u->sprite;
+		auto* circle_type = f.get_image_type((ImageTypes)((int)ImageTypes::IMAGEID_Selection_Circle_22pixels + sprite->sprite_type->selection_circle));
+		const grp_t* grp = b->player->st().global->image_grp[(size_t)circle_type->id];
+		if (!grp || grp->frames.empty()) return BW_ERR_INVALID_ARGUMENT;
+		auto& frame = grp->frames.at(0);
+		xy pos = sprite->position + xy(0, sprite->sprite_type->selection_circle_vpos);
+		*out_image_type_id = (int)circle_type->id;
+		*out_x = pos.x + int(frame.offset.x - grp->width / 2);
+		*out_y = pos.y + int(frame.offset.y - grp->height / 2);
+		return BW_OK;
+	} catch (...) {
+		return BW_ERR_UNKNOWN;
+	}
+}
+
+int bw_bridge_sound_count(bw_bridge_t* bridge) {
+	if (!bridge || !B(bridge)->assets_loaded) return -1;
+	try {
+		B(bridge)->ensure_sound_table();
+		return (int)B(bridge)->sound_types.vec.size();
+	} catch (...) {
+		return -1;
+	}
+}
+
+bw_status bw_bridge_get_sound_info(bw_bridge_t* bridge, int sound_id, bw_sound_info* out_info) {
+	if (!bridge || !out_info) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->assets_loaded) return BW_ERR_NOT_LOADED;
+	try {
+		b->ensure_sound_table();
+		if (sound_id < 0 || (size_t)sound_id >= b->sound_types.vec.size()) return BW_ERR_INVALID_ARGUMENT;
+		const sound_type_t& t = b->sound_types.vec[(size_t)sound_id];
+		std::memset(out_info, 0, sizeof(*out_info));
+		out_info->priority = t.priority;
+		out_info->flags = t.flags;
+		out_info->min_volume = t.min_volume;
+		std::strncpy(out_info->filename, b->sound_filenames[(size_t)sound_id].c_str(), sizeof(out_info->filename) - 1);
+		return BW_OK;
+	} catch (...) {
+		return BW_ERR_UNKNOWN;
+	}
+}
+
+bw_status bw_bridge_load_sound(bw_bridge_t* bridge, int sound_id, uint8_t* out_data, int out_cap, int* out_len) {
+	if (!bridge || !out_len) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->assets_loaded) return BW_ERR_NOT_LOADED;
+	try {
+		b->ensure_sound_table();
+		if (sound_id < 0 || (size_t)sound_id >= b->sound_filenames.size()) return BW_ERR_INVALID_ARGUMENT;
+		const std::string& name = b->sound_filenames[(size_t)sound_id];
+		if (name.empty()) return BW_ERR_INVALID_ARGUMENT;
+		a_vector<uint8_t> data;
+		b->asset_loader()(data, a_string("sound/") + name.c_str());
+		*out_len = (int)data.size();
+		if (!out_data) return BW_OK;
+		if (out_cap < (int)data.size()) return BW_ERR_INVALID_ARGUMENT;
+		std::memcpy(out_data, data.data(), data.size());
+		return BW_OK;
+	} catch (...) {
+		return BW_ERR_ASSET_LOAD_FAILED;
+	}
+}
+
+int bw_bridge_poll_sounds(bw_bridge_t* bridge, bw_sound_event* out_events, int max_count) {
+	if (!bridge || !out_events || max_count < 0) return -1;
+	auto& events = B(bridge)->sounds.events;
+	int n = (int)std::min(events.size(), (size_t)max_count);
+	for (int i = 0; i != n; ++i) out_events[i] = events[(size_t)i];
+	events.erase(events.begin(), events.begin() + n);
+	return n;
 }

@@ -22,8 +22,25 @@ click selection, attack/move/patrol/hold/stop, and edge/arrow/middle-drag/
 minimap scrolling. engine/bridge/tests/bridge_smoke_test.c plays an opening
 (mine, train, depot, refinery + gas, barracks + marine) as a regression test.
 
-Still missing: an AI opponent (OpenBW has none), fog-of-war, creep, sound,
-command button icons, and the web/Android targets.
+Sound: the bridge overrides OpenBW's virtual play_sound hook (sim and
+command code) to queue sound events and serves WAVs from the MPQs;
+lib/audio/sound_system.dart plays them with flutter_soloud using the
+reference UI's rules (distance volume, 8 prioritized channels, no-restart
+flags). Unit voice lines (what/yes/pissed/ready) and advisor errors are
+triggered UI-side, as in the original.
+
+Controls follow the original: command cards and hotkeys per unit type
+(lib/game/command_cards.dart; workers' B/V build menus), control groups
+through OpenBW's action_control_group, right-click markers (Cursor_Marker
+image on ground, flashing selection circle on targets), edge scrolling along
+the whole window border, fullscreen through a GTK method channel
+("brood/window" in linux/runner/my_application.cc), race and map choice on a
+start screen. bridge_smoke_test also covers sound, control groups and
+Protoss/Zerg openings.
+
+Still missing: an AI opponent (OpenBW has none), fog-of-war, creep,
+research/upgrades and unit abilities on the command card, command button
+icons, and the web/Android targets.
 
 ## Layers
 

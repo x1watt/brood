@@ -7,9 +7,14 @@
 
 #include "flutter/generated_plugin_registrant.h"
 
+#include <cstring>
+
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
+  GtkWindow* window;
+  gboolean fullscreen;
+  FlMethodChannel* window_channel;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -17,6 +22,44 @@ G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
+}
+
+static gboolean window_state_cb(GtkWidget* widget, GdkEventWindowState* event,
+                                MyApplication* self) {
+  (void)widget;
+  self->fullscreen =
+      (event->new_window_state & GDK_WINDOW_STATE_FULLSCREEN) != 0;
+  return FALSE;
+}
+
+// "brood/window" channel: setFullscreen(bool?) toggles when called without a
+// bool argument; isFullscreen() reports the current state.
+static void window_method_cb(FlMethodChannel* channel, FlMethodCall* call,
+                             gpointer user_data) {
+  (void)channel;
+  MyApplication* self = MY_APPLICATION(user_data);
+  const gchar* method = fl_method_call_get_name(call);
+  g_autoptr(FlMethodResponse) response = nullptr;
+  if (strcmp(method, "setFullscreen") == 0) {
+    FlValue* args = fl_method_call_get_args(call);
+    gboolean on = (args != nullptr && fl_value_get_type(args) == FL_VALUE_TYPE_BOOL)
+                      ? fl_value_get_bool(args)
+                      : !self->fullscreen;
+    if (on) {
+      gtk_window_fullscreen(self->window);
+    } else {
+      gtk_window_unfullscreen(self->window);
+    }
+    // The window-state-event confirms this later; record the request now so
+    // repeated toggles stay consistent even before (or without) it.
+    self->fullscreen = on;
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(fl_value_new_bool(on)));
+  } else if (strcmp(method, "isFullscreen") == 0) {
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(fl_value_new_bool(self->fullscreen)));
+  } else {
+    response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
+  }
+  fl_method_call_respond(call, response, nullptr);
 }
 
 // Implements GApplication::activate.
@@ -75,6 +118,15 @@ static void my_application_activate(GApplication* application) {
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
 
+  self->window = window;
+  g_signal_connect(window, "window-state-event", G_CALLBACK(window_state_cb), self);
+  g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
+  self->window_channel = fl_method_channel_new(
+      fl_engine_get_binary_messenger(fl_view_get_engine(view)), "brood/window",
+      FL_METHOD_CODEC(codec));
+  fl_method_channel_set_method_call_handler(self->window_channel, window_method_cb,
+                                            self, nullptr);
+
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
 
@@ -121,6 +173,7 @@ static void my_application_shutdown(GApplication* application) {
 static void my_application_dispose(GObject* object) {
   MyApplication* self = MY_APPLICATION(object);
   g_clear_pointer(&self->dart_entrypoint_arguments, g_strfreev);
+  g_clear_object(&self->window_channel);
   G_OBJECT_CLASS(my_application_parent_class)->dispose(object);
 }
 

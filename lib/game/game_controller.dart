@@ -1,8 +1,8 @@
 // lib/game/game_controller.dart
 //
 // Owns the engine and all game-screen state: frame pacing, camera,
-// selection, command modes and building placement. Widgets only forward
-// input here and read state back.
+// selection, command card and hotkeys, control groups, command feedback
+// markers, sound. Widgets only forward input here and read state back.
 //
 // Two notifiers so the widget tree isn't rebuilt every frame: `repaint`
 // fires when the world view must be redrawn (sim step or camera move) and
@@ -14,21 +14,49 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 
+import '../audio/sound_system.dart';
 import '../engine/bw_engine_io.dart';
 import '../engine/models.dart';
 import '../rendering/sprite_atlas.dart';
 import '../rendering/terrain_layer.dart';
+import 'command_cards.dart';
 
-enum CommandMode { none, move, attack, patrol, build }
+enum CommandMode { none, move, attack, patrol, gather, repair, build }
+
+enum CardMenu { main, basic, advanced }
+
+enum CmdKind { move, stop, attack, patrol, hold, gather, returnCargo, repair, basicMenu, advancedMenu, back, produce, selectLarva, cancel, cancelTarget }
+
+class CmdButton {
+  final CmdKind kind;
+  final String hotkey; // single uppercase letter, '' for none, 'Esc' for back/cancel
+  final String label;
+  final int typeId; // for CmdKind.produce
+  final bool enabled;
+  final bool active;
+  const CmdButton(this.kind, this.hotkey, this.label, {this.typeId = -1, this.enabled = true, this.active = false});
+}
+
+/// A right-click confirmation, drawn like the original: a marker animating
+/// on the ground, or the target's selection circle flashing.
+class CommandMarker {
+  final Offset? ground; // map position, for ground markers
+  final int unitId; // flashing target, for unit markers
+  final int owner;
+  final int startMs;
+  const CommandMarker({this.ground, this.unitId = 0, this.owner = 0, required this.startMs});
+}
+
+enum _Edge { none, top, bottom, left, right }
 
 class GameController {
   static const int myPlayer = 0;
-  static const int myRace = 1; // terran
   static const int neutralPlayer = 11;
   // Brood War's "Fastest" game speed: one simulation frame every 42 ms.
   static const int frameMicros = 42000;
-  static const double edgeScrollMargin = 14;
-  static const double scrollSpeed = 900; // map pixels per second
+  static const double edgeScrollMargin = 8;
+  static const double scrollSpeed = 1100; // map pixels per second
+  static const int markerMs = 600;
 
   final Signal repaint = Signal();
   final Signal hud = Signal();
@@ -36,7 +64,9 @@ class GameController {
   BwEngine? _engine;
   SpriteAtlas? atlas;
   TerrainLayer? terrain;
+  SoundSystem? sound;
   String? error;
+  int myRace = 1; // 0 zerg, 1 terran, 2 protoss
   bool get ready => _engine != null && terrain != null && atlas != null;
   BwEngine get engine => _engine!;
 
@@ -45,8 +75,15 @@ class GameController {
   double camY = 0;
   Size viewport = Size.zero;
   final Set<_Scroll> _keyScroll = {};
-  Offset? pointer; // last known pointer position over the viewport, screen space
+  Offset? pointer; // pointer over the world viewport, viewport space
   bool pointerInside = false;
+
+  // Pointer relative to the whole window, for edge scrolling anywhere along
+  // the window border (including over the panels).
+  Offset? _windowPointer;
+  Size _windowSize = Size.zero;
+  bool _pointerInWindow = false;
+  _Edge _exitEdge = _Edge.none;
 
   List<DrawItem> drawItems = const [];
   List<UnitInfo> units = const [];
@@ -59,8 +96,11 @@ class GameController {
   int frame = 0;
 
   CommandMode mode = CommandMode.none;
+  CardMenu cardMenu = CardMenu.main;
   int? buildTypeId;
-  Rect? dragBox; // screen space
+  Rect? dragBox; // viewport space
+
+  final List<CommandMarker> markers = [];
 
   String? message;
   int _messageUntilMs = 0;
@@ -69,19 +109,37 @@ class GameController {
   int _accMicros = 0;
   int _lastHudMs = 0;
 
+  Set<int> _buildable = const {};
+  final Set<int> _completedSeen = {};
+  int _lastClickedUnit = 0;
+  int _sameUnitClicks = 0;
+  int _lastClickMs = 0;
+  int _lastGroup = -1;
+  int _lastGroupMs = 0;
+
+  int get _nowMs => DateTime.now().millisecondsSinceEpoch;
+
   // --- startup ---
 
-  Future<void> start({required String dataDir, required String mapFile}) async {
+  Future<void> start({required String dataDir, required String mapFile, required int race}) async {
+    myRace = race;
     try {
       final e = BwEngine.open();
       e.loadAssets(dataDir);
-      e.newMeleeGame(mapFile, playerSlot: myPlayer, race: myRace);
+      e.newMeleeGame(mapFile, playerSlot: myPlayer, race: race);
       e.step(1);
       _engine = e;
       atlas = SpriteAtlas(e);
+      final s = SoundSystem(e);
+      await s.init();
+      sound = s;
       terrain = await TerrainLayer.build(e);
       _refreshUnits();
+      for (final u in units) {
+        if (u.owner == myPlayer && u.isCompleted) _completedSeen.add(u.unitId);
+      }
       _startWorkersMining();
+      engine.pollSounds(); // drop sounds from setup
       _centerOnHome();
       _refreshView();
     } catch (err, st) {
@@ -93,6 +151,7 @@ class GameController {
   }
 
   void dispose() {
+    sound?.dispose();
     _engine?.dispose();
     repaint.dispose();
     hud.dispose();
@@ -139,7 +198,7 @@ class GameController {
 
   /// Called from a vsync Ticker. Steps the simulation at a fixed 42 ms per
   /// frame regardless of display refresh rate, and redraws only when
-  /// something changed.
+  /// something changed (markers count as a change while animating).
   void tick(Duration elapsed) {
     if (!ready) return;
     final last = _lastTick ?? elapsed;
@@ -156,6 +215,14 @@ class GameController {
       if (_accMicros > frameMicros) _accMicros = 0;
       engine.step(steps);
       _refreshUnits();
+      sound?.drainEngine(screenRect);
+      _announceCompletedUnits();
+      changed = true;
+    }
+
+    if (markers.isNotEmpty) {
+      final now = _nowMs;
+      markers.removeWhere((m) => now - m.startMs > markerMs);
       changed = true;
     }
 
@@ -169,28 +236,35 @@ class GameController {
   void _refreshUnits() {
     units = engine.getUnits();
     unitsById = {for (final u in units) u.unitId: u};
+    final previous = selection;
     selection = engine.getSelectedUnits(myPlayer);
+    if (!listEquals(previous, selection)) cardMenu = CardMenu.main;
     minerals = engine.minerals(myPlayer);
     gas = engine.gas(myPlayer);
     final (used, max) = engine.supply(myPlayer, myRace);
     supplyUsed = used;
     supplyMax = max;
     frame = engine.currentFrame;
+    _buildable = selectionIsMine ? engine.getBuildable(myPlayer).toSet() : const {};
+  }
+
+  // A newly finished unit says its "ready" line, like the original.
+  void _announceCompletedUnits() {
+    for (final u in units) {
+      if (u.owner != myPlayer || !u.isCompleted || _completedSeen.contains(u.unitId)) continue;
+      _completedSeen.add(u.unitId);
+      final t = engine.unitType(u.typeId);
+      if (t.readySound > 0) sound?.play(t.readySound, ui: true, unitTypeId: u.typeId);
+    }
   }
 
   void _refreshView() {
     if (viewport.isEmpty) return;
-    drawItems = engine.getDrawList(
-      myPlayer,
-      camX.floor(),
-      camY.floor(),
-      viewport.width.ceil(),
-      viewport.height.ceil(),
-    );
+    drawItems = engine.getDrawList(myPlayer, camX.floor(), camY.floor(), viewport.width.ceil(), viewport.height.ceil());
   }
 
   void _notifyHud({bool force = false}) {
-    final now = DateTime.now().millisecondsSinceEpoch;
+    final now = _nowMs;
     if (!force && now - _lastHudMs < 100) return;
     _lastHudMs = now;
     if (message != null && now > _messageUntilMs) message = null;
@@ -199,6 +273,7 @@ class GameController {
 
   void _changed() {
     if (!ready) return;
+    _refreshUnits();
     _refreshView();
     repaint.fire();
     _notifyHud(force: true);
@@ -206,9 +281,9 @@ class GameController {
 
   // --- camera ---
 
-  Size get mapSize => terrain == null
-      ? Size.zero
-      : Size(terrain!.widthPx.toDouble(), terrain!.heightPx.toDouble());
+  Size get mapSize => terrain == null ? Size.zero : Size(terrain!.widthPx.toDouble(), terrain!.heightPx.toDouble());
+
+  Rect get screenRect => Rect.fromLTWH(camX, camY, viewport.width, viewport.height);
 
   void setViewport(Size size) {
     if (size == viewport) return;
@@ -262,18 +337,66 @@ class GameController {
     }
   }
 
+  void stopAllScrolling() {
+    _keyScroll.clear();
+    _exitEdge = _Edge.none;
+    _pointerInWindow = false;
+  }
+
+  // Window-level pointer tracking. In fullscreen (or a maximized window) the
+  // window border is the screen border, so pushing the mouse against any
+  // screen edge or corner scrolls, as in the original.
+  void onWindowPointer(Offset position, Size windowSize) {
+    _windowPointer = position;
+    _windowSize = windowSize;
+    _pointerInWindow = true;
+    _exitEdge = _Edge.none;
+  }
+
+  // Leaving through the top edge of a maximized window lands on the title
+  // bar, not the screen edge, so keep scrolling that way until the pointer
+  // comes back (or focus is lost).
+  void onWindowExit(Offset lastPosition, Size windowSize) {
+    _pointerInWindow = false;
+    _exitEdge = _Edge.none;
+    if (lastPosition.dy <= edgeScrollMargin * 3) {
+      _exitEdge = _Edge.top;
+    } else if (lastPosition.dy >= windowSize.height - edgeScrollMargin * 3) {
+      _exitEdge = _Edge.bottom;
+    } else if (lastPosition.dx <= edgeScrollMargin * 3) {
+      _exitEdge = _Edge.left;
+    } else if (lastPosition.dx >= windowSize.width - edgeScrollMargin * 3) {
+      _exitEdge = _Edge.right;
+    }
+  }
+
   bool _applyScroll(double dt) {
     double dx = 0, dy = 0;
     for (final s in _keyScroll) {
       dx += s.dx;
       dy += s.dy;
     }
-    final p = pointer;
-    if (pointerInside && p != null && dragBox == null && !viewport.isEmpty) {
-      if (p.dx <= edgeScrollMargin) dx -= 1;
-      if (p.dx >= viewport.width - edgeScrollMargin) dx += 1;
-      if (p.dy <= edgeScrollMargin) dy -= 1;
-      if (p.dy >= viewport.height - edgeScrollMargin) dy += 1;
+    final p = _windowPointer;
+    if (dragBox == null) {
+      if (_pointerInWindow && p != null && !_windowSize.isEmpty) {
+        if (p.dx <= edgeScrollMargin) dx -= 1;
+        if (p.dx >= _windowSize.width - 1 - edgeScrollMargin) dx += 1;
+        if (p.dy <= edgeScrollMargin) dy -= 1;
+        if (p.dy >= _windowSize.height - 1 - edgeScrollMargin) dy += 1;
+      } else {
+        switch (_exitEdge) {
+          case _Edge.top:
+            dy -= 1;
+          case _Edge.bottom:
+            dy += 1;
+          case _Edge.left:
+            dx -= 1;
+          case _Edge.right:
+            dx += 1;
+          case _Edge.none:
+            break;
+        }
+      }
     }
     if (dx == 0 && dy == 0) return false;
     final oldX = camX, oldY = camY;
@@ -285,35 +408,84 @@ class GameController {
 
   Offset screenToMap(Offset screen) => Offset(screen.dx + camX, screen.dy + camY);
 
-  // --- messages ---
+  // --- messages and feedback ---
 
-  void showMessage(String text) {
+  void showMessage(String text, {int advisorSound = -1}) {
     message = text;
-    _messageUntilMs = DateTime.now().millisecondsSinceEpoch + 2500;
+    _messageUntilMs = _nowMs + 2500;
+    if (advisorSound >= 0) {
+      sound?.play(advisorSound + myRace, ui: true);
+    } else {
+      sound?.play(soundErrorBuzz, ui: true);
+    }
     _notifyHud(force: true);
+  }
+
+  void _markGround(Offset mapPos) {
+    markers.add(CommandMarker(ground: mapPos, startMs: _nowMs));
+  }
+
+  void _markUnit(int unitId) {
+    final u = unitsById[unitId];
+    if (u == null) return;
+    markers.add(CommandMarker(unitId: unitId, owner: u.owner, startMs: _nowMs));
+  }
+
+  UnitTypeInfo? get _voiceType {
+    final sel = selectedUnits;
+    if (sel.isEmpty || sel.first.owner != myPlayer) return null;
+    return engine.unitType(sel.first.typeId);
+  }
+
+  void _sayYes() {
+    final t = _voiceType;
+    if (t != null) sound?.playRandom(t.yesFirst, t.yesLast, unitTypeId: t.typeId);
+  }
+
+  // Selecting plays a "what" line; clicking the same unit over and over
+  // eventually gets the "pissed" lines, as in the original.
+  void _sayWhat({required bool repeatedClick}) {
+    final t = _voiceType;
+    if (t == null) return;
+    if (repeatedClick && _sameUnitClicks >= 4 && t.pissedFirst > 0 && t.pissedLast >= t.pissedFirst) {
+      final count = t.pissedLast - t.pissedFirst + 1;
+      sound?.play(t.pissedFirst + (_sameUnitClicks - 4) % count, ui: true, unitTypeId: t.typeId);
+    } else {
+      sound?.playRandom(t.whatFirst, t.whatLast, unitTypeId: t.typeId);
+    }
   }
 
   // --- selection ---
 
-  List<UnitInfo> get selectedUnits =>
-      [for (final id in selection) if (unitsById[id] != null) unitsById[id]!];
+  List<UnitInfo> get selectedUnits => [for (final id in selection) if (unitsById[id] != null) unitsById[id]!];
 
   bool get selectionIsMine => selection.isNotEmpty && selectedUnits.every((u) => u.owner == myPlayer);
 
-  void select(List<int> ids) {
+  void select(List<int> ids, {bool voice = true, bool repeatedClick = false}) {
     engine.selectUnits(myPlayer, ids.take(12).toList());
-    selection = engine.getSelectedUnits(myPlayer);
-    if (mode != CommandMode.none) cancelMode();
+    if (mode != CommandMode.none) mode = CommandMode.none;
+    buildTypeId = null;
+    cardMenu = CardMenu.main;
     _changed();
+    if (voice) _sayWhat(repeatedClick: repeatedClick);
   }
 
   void clickSelect(Offset screen, {bool add = false}) {
     final p = screenToMap(screen);
     final id = engine.pickUnitAt(p.dx.round(), p.dy.round());
     if (id == 0) {
-      if (!add) select(const []);
+      if (!add) select(const [], voice: false);
       return;
     }
+    final now = _nowMs;
+    if (id == _lastClickedUnit && now - _lastClickMs < 2000) {
+      _sameUnitClicks++;
+    } else {
+      _sameUnitClicks = 1;
+    }
+    _lastClickedUnit = id;
+    _lastClickMs = now;
+
     final u = unitsById[id];
     if (add && u != null && u.owner == myPlayer && selectionIsMine) {
       final next = [...selection];
@@ -324,7 +496,7 @@ class GameController {
       }
       select(next);
     } else {
-      select([id]);
+      select([id], repeatedClick: true);
     }
   }
 
@@ -338,6 +510,10 @@ class GameController {
     // Like the original: a box with units in it ignores buildings.
     final mobile = hit.where((u) => !u.isBuilding).toList();
     final chosen = (mobile.isNotEmpty ? mobile : hit.take(1)).map((u) => u.unitId).toList();
+    if (chosen.isEmpty && !add) {
+      select(const [], voice: false);
+      return;
+    }
     if (add && selectionIsMine) {
       select({...selection, ...chosen}.toList());
     } else {
@@ -346,16 +522,201 @@ class GameController {
   }
 
   void selectAllOfTypeOnScreen(int typeId) {
-    final r = Rect.fromLTWH(camX, camY, viewport.width, viewport.height);
+    final r = screenRect;
     select(units
         .where((u) => u.owner == myPlayer && u.typeId == typeId && r.contains(Offset(u.x.toDouble(), u.y.toDouble())))
         .map((u) => u.unitId)
         .toList());
   }
 
-  // --- commands ---
+  // --- control groups (Ctrl+N assign, Shift+N add, N recall, N twice = jump) ---
 
-  void setMode(CommandMode m) {
+  void controlGroup(int n, {required bool assign, required bool add}) {
+    if (!ready) return;
+    if (assign || add) {
+      if (!selectionIsMine) return;
+      engine.controlGroup(myPlayer, n, assign ? GroupAction.assign : GroupAction.add);
+      showMessageQuiet(assign ? 'Group $n assigned.' : 'Added to group $n.');
+      return;
+    }
+    final now = _nowMs;
+    final doubleTap = _lastGroup == n && now - _lastGroupMs < 450;
+    _lastGroup = n;
+    _lastGroupMs = now;
+    if (!engine.controlGroup(myPlayer, n, GroupAction.recall)) return;
+    mode = CommandMode.none;
+    buildTypeId = null;
+    cardMenu = CardMenu.main;
+    _changed();
+    final sel = selectedUnits;
+    if (doubleTap && sel.isNotEmpty) {
+      centerOn(sel.first.x.toDouble(), sel.first.y.toDouble());
+    }
+  }
+
+  void showMessageQuiet(String text) {
+    message = text;
+    _messageUntilMs = _nowMs + 1500;
+    _notifyHud(force: true);
+  }
+
+  // --- command card ---
+
+  bool get _uniform => selection.isNotEmpty && selectedUnits.every((u) => u.typeId == selectedUnits.first.typeId);
+
+  List<CmdButton> commandCard() {
+    if (!ready || !selectionIsMine) return const [];
+    final sel = selectedUnits;
+    if (sel.isEmpty) return const [];
+    final first = sel.first;
+    final uniform = _uniform;
+    final worker = uniform ? workerMenus[first.typeId] : null;
+
+    // While choosing a target or a building spot the original shows only
+    // Cancel, so no other hotkey fires by accident.
+    if (mode != CommandMode.none) return const [CmdButton(CmdKind.cancelTarget, 'Esc', 'Cancel')];
+
+    CmdButton produceButton(String key, int typeId) {
+      final t = engine.unitType(typeId);
+      return CmdButton(
+        CmdKind.produce,
+        key,
+        t.shortName,
+        typeId: typeId,
+        enabled: _buildable.contains(typeId),
+        active: mode == CommandMode.build && buildTypeId == typeId,
+      );
+    }
+
+    if (worker != null && cardMenu != CardMenu.main) {
+      final entries = cardMenu == CardMenu.basic ? worker.basic : worker.advanced;
+      return [
+        for (final (key, typeId) in entries) produceButton(key, typeId),
+        const CmdButton(CmdKind.back, 'Esc', 'Back'),
+      ];
+    }
+
+    final buttons = <CmdButton>[];
+    final mobile = sel.any((u) => u.canMove);
+    if (mobile) {
+      buttons.addAll([
+        CmdButton(CmdKind.move, 'M', 'Move', active: mode == CommandMode.move),
+        const CmdButton(CmdKind.stop, 'S', 'Stop'),
+        CmdButton(CmdKind.attack, 'A', 'Attack', active: mode == CommandMode.attack),
+      ]);
+      if (worker != null) {
+        buttons.add(CmdButton(CmdKind.gather, 'G', 'Gather', active: mode == CommandMode.gather));
+        buttons.add(const CmdButton(CmdKind.returnCargo, 'C', 'Return Cargo'));
+        if (first.typeId == terranScv) {
+          buttons.add(CmdButton(CmdKind.repair, 'R', 'Repair', active: mode == CommandMode.repair));
+        }
+        buttons.add(const CmdButton(CmdKind.basicMenu, 'B', 'Build'));
+        buttons.add(const CmdButton(CmdKind.advancedMenu, 'V', 'Adv. Build'));
+      } else {
+        buttons.add(CmdButton(CmdKind.patrol, 'P', 'Patrol', active: mode == CommandMode.patrol));
+        buttons.add(const CmdButton(CmdKind.hold, 'H', 'Hold'));
+      }
+    }
+
+    if (uniform) {
+      if (larvaProducers.contains(first.typeId)) buttons.add(const CmdButton(CmdKind.selectLarva, 'S', 'Select Larva'));
+      final table = productionMenus[first.typeId];
+      final listed = <int>{};
+      if (table != null) {
+        for (final (key, typeId) in table) {
+          listed.add(typeId);
+          buttons.add(produceButton(key, typeId));
+        }
+      }
+      // Anything else the engine says this unit can make (e.g. rare
+      // addons) still gets a button, just without a hotkey.
+      if (worker == null) {
+        for (final typeId in _buildable) {
+          if (!listed.contains(typeId)) buttons.add(produceButton('', typeId));
+        }
+      }
+    }
+
+    if (sel.length == 1 && first.isBuilding && (first.queue.isNotEmpty || !first.isCompleted)) {
+      buttons.add(const CmdButton(CmdKind.cancel, 'Esc', 'Cancel'));
+    }
+    return buttons;
+  }
+
+  void activate(CmdButton b, {bool fromClick = false}) {
+    if (fromClick) sound?.play(soundButton, ui: true);
+    if (!b.enabled) {
+      showMessage('Requirements not met for ${b.label}.');
+      return;
+    }
+    switch (b.kind) {
+      case CmdKind.move:
+        _setMode(CommandMode.move);
+      case CmdKind.attack:
+        _setMode(CommandMode.attack);
+      case CmdKind.patrol:
+        _setMode(CommandMode.patrol);
+      case CmdKind.gather:
+        _setMode(CommandMode.gather);
+      case CmdKind.repair:
+        _setMode(CommandMode.repair);
+      case CmdKind.stop:
+        _instantOrder(UnitOrder.stop);
+      case CmdKind.hold:
+        _instantOrder(UnitOrder.hold);
+      case CmdKind.returnCargo:
+        _instantOrder(UnitOrder.returnCargo);
+      case CmdKind.basicMenu:
+        _setMenu(CardMenu.basic);
+      case CmdKind.advancedMenu:
+        _setMenu(CardMenu.advanced);
+      case CmdKind.back:
+        _setMenu(CardMenu.main);
+      case CmdKind.produce:
+        _produce(b.typeId);
+      case CmdKind.selectLarva:
+        _selectLarva();
+      case CmdKind.cancel:
+        _cancelLast();
+      case CmdKind.cancelTarget:
+        cancelMode();
+    }
+  }
+
+  /// A letter key: runs the command card button with that hotkey, as in the
+  /// original. Returns false when nothing on the card uses it.
+  bool pressHotkey(String letter) {
+    final card = commandCard();
+    final matching = card.where((b) => b.hotkey == letter).toList();
+    if (matching.isEmpty) return false;
+    activate(matching.firstWhere((b) => b.enabled, orElse: () => matching.first));
+    return true;
+  }
+
+  /// Esc: cancel a targeting mode, else leave a build submenu, else cancel
+  /// the last queued item (as the original's Cancel hotkey).
+  void escape() {
+    if (mode != CommandMode.none) {
+      cancelMode();
+      return;
+    }
+    if (cardMenu != CardMenu.main) {
+      _setMenu(CardMenu.main);
+      return;
+    }
+    final cancel = commandCard().where((b) => b.kind == CmdKind.cancel);
+    if (cancel.isNotEmpty) activate(cancel.first);
+  }
+
+  void _setMenu(CardMenu menu) {
+    cardMenu = menu;
+    mode = CommandMode.none;
+    buildTypeId = null;
+    _notifyHud(force: true);
+    repaint.fire();
+  }
+
+  void _setMode(CommandMode m) {
     if (!selectionIsMine) return;
     mode = m;
     buildTypeId = null;
@@ -370,6 +731,28 @@ class GameController {
     repaint.fire();
   }
 
+  void _instantOrder(UnitOrder order) {
+    if (!selectionIsMine) return;
+    if (engine.order(myPlayer, order, 0, 0)) _sayYes();
+    _changed();
+  }
+
+  void _selectLarva() {
+    final hatcheries = selectedUnits.where((u) => larvaProducers.contains(u.typeId)).toList();
+    final larvae = units.where((l) {
+      if (l.owner != myPlayer || l.typeId != zergLarva) return false;
+      return hatcheries.any((h) {
+        final dx = l.x - h.x, dy = l.y - h.y;
+        return dx * dx + dy * dy < 160 * 160;
+      });
+    }).map((l) => l.unitId).toList();
+    if (larvae.isEmpty) {
+      showMessage('No larva available.');
+      return;
+    }
+    select(larvae, voice: false);
+  }
+
   /// Right click in the world: the original game's context command.
   void smartCommand(Offset mapPos, {bool queue = false}) {
     if (mode != CommandMode.none) {
@@ -379,32 +762,53 @@ class GameController {
     if (!selectionIsMine) return;
     final x = mapPos.dx.round(), y = mapPos.dy.round();
     final target = engine.pickUnitAt(x, y);
-    engine.order(myPlayer, UnitOrder.smart, x, y, targetUnitId: target, queue: queue);
+    if (engine.order(myPlayer, UnitOrder.smart, x, y, targetUnitId: target, queue: queue)) {
+      target != 0 ? _markUnit(target) : _markGround(mapPos);
+      _sayYes();
+    }
     _changed();
   }
 
-  /// Left click while a targeted command (attack/move/patrol/build) is armed.
+  /// Left click while a targeted command is armed.
   void modeClick(Offset mapPos, {bool queue = false}) {
     final x = mapPos.dx.round(), y = mapPos.dy.round();
     switch (mode) {
       case CommandMode.move:
       case CommandMode.attack:
       case CommandMode.patrol:
+      case CommandMode.gather:
+      case CommandMode.repair:
         final order = switch (mode) {
           CommandMode.move => UnitOrder.move,
           CommandMode.attack => UnitOrder.attack,
-          _ => UnitOrder.patrol,
+          CommandMode.patrol => UnitOrder.patrol,
+          CommandMode.repair => UnitOrder.repair,
+          _ => UnitOrder.smart,
         };
         final target = order == UnitOrder.patrol ? 0 : engine.pickUnitAt(x, y);
-        engine.order(myPlayer, order, x, y, targetUnitId: target, queue: queue);
-        if (!queue) cancelMode();
+        if ((mode == CommandMode.gather || mode == CommandMode.repair) && target == 0) {
+          showMessage(mode == CommandMode.gather ? 'Must target a resource.' : 'Must target a unit to repair.');
+          return;
+        }
+        if (engine.order(myPlayer, order, x, y, targetUnitId: target, queue: queue)) {
+          target != 0 ? _markUnit(target) : _markGround(mapPos);
+          _sayYes();
+        } else {
+          showMessage('Invalid target.');
+        }
+        if (!queue) mode = CommandMode.none;
       case CommandMode.build:
         final type = buildTypeId;
         if (type == null) return;
         final (tx, ty) = placementTile(mapPos, type);
         if (!_canAfford(engine.unitType(type), checkSupply: false)) return;
         if (engine.build(myPlayer, type, tx, ty)) {
-          if (!queue) cancelMode();
+          _sayYes();
+          if (!queue) {
+            mode = CommandMode.none;
+            buildTypeId = null;
+            cardMenu = CardMenu.main;
+          }
         } else {
           showMessage("Can't build there.");
         }
@@ -414,20 +818,14 @@ class GameController {
     _changed();
   }
 
-  void instantOrder(UnitOrder order) {
+  void _produce(int typeId) {
     if (!selectionIsMine) return;
-    engine.order(myPlayer, order, 0, 0);
-    _changed();
-  }
-
-  /// Production / build-menu button for unit type [typeId].
-  void produce(int typeId) {
-    if (!selectionIsMine || selection.length != 1) return;
     final t = engine.unitType(typeId);
     final builder = selectedUnits.first;
     final placesBuilding = t.isBuilding && !t.isAddon && builder.isWorker;
     if (!_canAfford(t, checkSupply: !t.isBuilding)) return;
     if (placesBuilding) {
+      if (selection.length != 1) select([builder.unitId], voice: false);
       mode = CommandMode.build;
       buildTypeId = typeId;
       _notifyHud(force: true);
@@ -437,30 +835,29 @@ class GameController {
     if (!engine.train(myPlayer, typeId)) {
       showMessage('Unable to build ${t.shortName} right now.');
     }
-    _refreshUnits();
     _changed();
   }
 
   bool _canAfford(UnitTypeInfo t, {required bool checkSupply}) {
     if (minerals < t.mineralCost) {
-      showMessage('Not enough minerals.');
+      showMessage('Not enough minerals.', advisorSound: soundNotEnoughMinerals);
       return false;
     }
     if (gas < t.gasCost) {
-      showMessage('Not enough Vespene gas.');
+      showMessage('Not enough Vespene gas.', advisorSound: soundNotEnoughGas);
       return false;
     }
     if (checkSupply && t.supply > 0 && supplyUsed + t.supply > supplyMax) {
-      showMessage('You must construct additional Supply Depots.');
+      const needs = ['Spawn more Overlords.', 'You must construct additional Supply Depots.', 'You must construct additional Pylons.'];
+      showMessage(needs[myRace.clamp(0, 2)], advisorSound: soundNeedSupply);
       return false;
     }
     return true;
   }
 
-  void cancelLast() {
+  void _cancelLast() {
     if (!selectionIsMine || selection.length != 1) return;
     engine.cancelLast(myPlayer);
-    _refreshUnits();
     _changed();
   }
 

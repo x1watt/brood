@@ -863,6 +863,179 @@ class BwBridgeBindings {
       >('bw_bridge_cancel_last');
   late final _bw_bridge_cancel_last = _bw_bridge_cancel_lastPtr
       .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int)>();
+
+  bw_status bw_bridge_control_group(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    int group,
+    int action,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_control_group(bridge, owner, group, action),
+    );
+  }
+
+  late final _bw_bridge_control_groupPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_control_group');
+  late final _bw_bridge_control_group = _bw_bridge_control_groupPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int, int)>();
+
+  /// Image type of the original's right-click target marker.
+  int bw_bridge_cursor_marker_image() {
+    return _bw_bridge_cursor_marker_image();
+  }
+
+  late final _bw_bridge_cursor_marker_imagePtr =
+      _lookup<ffi.NativeFunction<ffi.Int Function()>>(
+        'bw_bridge_cursor_marker_image',
+      );
+  late final _bw_bridge_cursor_marker_image = _bw_bridge_cursor_marker_imagePtr
+      .asFunction<int Function()>();
+
+  /// Selection circle image and its top-left map position for unit_id (for
+  /// flashing a command target the way the original does).
+  bw_status bw_bridge_get_selection_circle(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int unit_id,
+    ffi.Pointer<ffi.Int> out_image_type_id,
+    ffi.Pointer<ffi.Int> out_x,
+    ffi.Pointer<ffi.Int> out_y,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_get_selection_circle(
+        bridge,
+        unit_id,
+        out_image_type_id,
+        out_x,
+        out_y,
+      ),
+    );
+  }
+
+  late final _bw_bridge_get_selection_circlePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int32,
+            ffi.Pointer<ffi.Int>,
+            ffi.Pointer<ffi.Int>,
+            ffi.Pointer<ffi.Int>,
+          )
+        >
+      >('bw_bridge_get_selection_circle');
+  late final _bw_bridge_get_selection_circle =
+      _bw_bridge_get_selection_circlePtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<bw_bridge_t>,
+              int,
+              ffi.Pointer<ffi.Int>,
+              ffi.Pointer<ffi.Int>,
+              ffi.Pointer<ffi.Int>,
+            )
+          >();
+
+  int bw_bridge_sound_count(ffi.Pointer<bw_bridge_t> bridge) {
+    return _bw_bridge_sound_count(bridge);
+  }
+
+  late final _bw_bridge_sound_countPtr =
+      _lookup<ffi.NativeFunction<ffi.Int Function(ffi.Pointer<bw_bridge_t>)>>(
+        'bw_bridge_sound_count',
+      );
+  late final _bw_bridge_sound_count = _bw_bridge_sound_countPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>)>();
+
+  bw_status bw_bridge_get_sound_info(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int sound_id,
+    ffi.Pointer<bw_sound_info> out_info,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_get_sound_info(bridge, sound_id, out_info),
+    );
+  }
+
+  late final _bw_bridge_get_sound_infoPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Pointer<bw_sound_info>,
+          )
+        >
+      >('bw_bridge_get_sound_info');
+  late final _bw_bridge_get_sound_info = _bw_bridge_get_sound_infoPtr
+      .asFunction<
+        int Function(ffi.Pointer<bw_bridge_t>, int, ffi.Pointer<bw_sound_info>)
+      >();
+
+  /// Copies the sound's WAV file into out_data. Pass out_data NULL to just get
+  /// *out_len.
+  bw_status bw_bridge_load_sound(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int sound_id,
+    ffi.Pointer<ffi.Uint8> out_data,
+    int out_cap,
+    ffi.Pointer<ffi.Int> out_len,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_load_sound(bridge, sound_id, out_data, out_cap, out_len),
+    );
+  }
+
+  late final _bw_bridge_load_soundPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Pointer<ffi.Uint8>,
+            ffi.Int,
+            ffi.Pointer<ffi.Int>,
+          )
+        >
+      >('bw_bridge_load_sound');
+  late final _bw_bridge_load_sound = _bw_bridge_load_soundPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<bw_bridge_t>,
+          int,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Int>,
+        )
+      >();
+
+  /// Drains queued sound events (oldest first). Returns the count written.
+  int bw_bridge_poll_sounds(
+    ffi.Pointer<bw_bridge_t> bridge,
+    ffi.Pointer<bw_sound_event> out_events,
+    int max_count,
+  ) {
+    return _bw_bridge_poll_sounds(bridge, out_events, max_count);
+  }
+
+  late final _bw_bridge_poll_soundsPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Pointer<bw_sound_event>,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_poll_sounds');
+  late final _bw_bridge_poll_sounds = _bw_bridge_poll_soundsPtr
+      .asFunction<
+        int Function(ffi.Pointer<bw_bridge_t>, ffi.Pointer<bw_sound_event>, int)
+      >();
 }
 
 typedef __u_char = ffi.UnsignedChar;
@@ -1188,9 +1361,75 @@ final class bw_unit_type_info extends ffi.Struct {
   /// from rez/stat_txt.tbl, UTF-8-safe ASCII
   @ffi.Array.multi([48])
   external ffi.Array<ffi.Char> name;
+
+  /// Voice lines (sound ids, inclusive ranges; first > last means none),
+  /// played by the host on selection (what), command (yes), repeated
+  /// clicking (pissed) and completion (ready).
+  @ffi.Int32()
+  external int ready_sound;
+
+  @ffi.Int32()
+  external int what_first;
+
+  @ffi.Int32()
+  external int what_last;
+
+  @ffi.Int32()
+  external int pissed_first;
+
+  @ffi.Int32()
+  external int pissed_last;
+
+  @ffi.Int32()
+  external int yes_first;
+
+  @ffi.Int32()
+  external int yes_last;
 }
 
-const int BW_BRIDGE_ABI_VERSION = 7;
+/// --- Sound -------------------------------------------------------------------
+///
+/// The simulation reports sounds (weapons, deaths, construction...) through
+/// OpenBW's play_sound hook; they queue up here until polled. The host plays
+/// them, using bw_sound_info and the reference UI's rules: volume from
+/// min_volume and distance to the screen, priority-based channel stealing,
+/// flags 0x10 = don't restart while playing, 0x02 = one at a time per unit type.
+final class bw_sound_event extends ffi.Struct {
+  @ffi.Int32()
+  external int sound_id;
+
+  /// 0 = not positional (play at min_volume)
+  @ffi.Int32()
+  external int has_position;
+
+  @ffi.Int32()
+  external int x;
+
+  @ffi.Int32()
+  external int y;
+
+  /// source unit type, -1 if none
+  @ffi.Int32()
+  external int unit_type_id;
+}
+
+final class bw_sound_info extends ffi.Struct {
+  @ffi.Int32()
+  external int priority;
+
+  @ffi.Int32()
+  external int flags;
+
+  /// 0-100
+  @ffi.Int32()
+  external int min_volume;
+
+  /// relative to sound/ in the MPQs
+  @ffi.Array.multi([80])
+  external ffi.Array<ffi.Char> filename;
+}
+
+const int BW_BRIDGE_ABI_VERSION = 8;
 
 const int BW_DRAW_IMAGE = 0;
 
@@ -1227,3 +1466,13 @@ const int BW_ORDER_STOP = 3;
 const int BW_ORDER_HOLD = 4;
 
 const int BW_ORDER_PATROL = 5;
+
+const int BW_ORDER_RETURN_CARGO = 6;
+
+const int BW_ORDER_REPAIR = 7;
+
+const int BW_GROUP_ASSIGN = 0;
+
+const int BW_GROUP_RECALL = 1;
+
+const int BW_GROUP_ADD = 2;

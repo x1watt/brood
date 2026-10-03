@@ -103,6 +103,10 @@ class UnitTypeInfo {
   final bool isAddon;
   final int race;
   final String name;
+  final int readySound;
+  final int whatFirst, whatLast;
+  final int pissedFirst, pissedLast;
+  final int yesFirst, yesLast;
 
   const UnitTypeInfo({
     required this.typeId,
@@ -116,6 +120,13 @@ class UnitTypeInfo {
     required this.isAddon,
     required this.race,
     required this.name,
+    required this.readySound,
+    required this.whatFirst,
+    required this.whatLast,
+    required this.pissedFirst,
+    required this.pissedLast,
+    required this.yesFirst,
+    required this.yesLast,
   });
 
   double get supply => supplyRaw / 2.0;
@@ -129,5 +140,26 @@ class UnitTypeInfo {
   }
 }
 
-/// Orders accepted by BwEngine.order (BW_ORDER_* in bw_bridge.h).
-enum UnitOrder { smart, move, attack, stop, hold, patrol }
+/// Orders accepted by BwEngine.order (BW_ORDER_* in bw_bridge.h; the
+/// index is the wire value).
+enum UnitOrder { smart, move, attack, stop, hold, patrol, returnCargo, repair }
+
+/// Control group actions (BW_GROUP_* in bw_bridge.h).
+enum GroupAction { assign, recall, add }
+
+class SoundEvent {
+  final int soundId;
+  final bool hasPosition;
+  final int x;
+  final int y;
+  final int unitTypeId;
+  const SoundEvent(this.soundId, this.hasPosition, this.x, this.y, this.unitTypeId);
+}
+
+class SoundInfo {
+  final int priority;
+  final int flags;
+  final int minVolume;
+  final String filename;
+  const SoundInfo(this.priority, this.flags, this.minVolume, this.filename);
+}
