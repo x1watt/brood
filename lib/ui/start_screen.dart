@@ -23,6 +23,7 @@ import '../game/saved_games.dart';
 import '../game/settings.dart';
 import 'game_screen.dart';
 import 'menu_art.dart';
+import 'saved_games_list.dart';
 import 'window_control.dart';
 
 const _line = Color(0xFF2A2A2A);
@@ -55,7 +56,6 @@ class _StartScreenState extends State<StartScreen> {
   bool _showTitle = false;
   Timer? _titleTimer;
   final _mapSearch = TextEditingController();
-  final _saveSearch = TextEditingController();
 
   // Setup being edited: index 0 is you, the rest computer opponents.
   int _myRace = 1;
@@ -94,46 +94,8 @@ class _StartScreenState extends State<StartScreen> {
   void dispose() {
     _titleTimer?.cancel();
     _mapSearch.dispose();
-    _saveSearch.dispose();
     super.dispose();
   }
-
-  /// Every word typed must appear somewhere in [text] (any case, any order).
-  static bool _matches(String query, String text) {
-    final t = text.toLowerCase();
-    return query.toLowerCase().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).every(t.contains);
-  }
-
-  Widget _searchField(TextEditingController controller, String hint) => Padding(
-    padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-    child: TextField(
-      controller: controller,
-      onChanged: (_) => setState(() {}),
-      textInputAction: TextInputAction.search,
-      style: const TextStyle(fontSize: 14),
-      decoration: InputDecoration(
-        isDense: true,
-        hintText: hint,
-        hintStyle: const TextStyle(color: _faint),
-        prefixIcon: const Icon(Icons.search, size: 18, color: _dim),
-        suffixIcon: controller.text.isEmpty
-            ? null
-            : IconButton(
-                tooltip: 'Clear',
-                icon: const Icon(Icons.close, size: 16, color: _dim),
-                onPressed: () => setState(controller.clear),
-              ),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(6),
-          borderSide: const BorderSide(color: _line),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(6),
-          borderSide: const BorderSide(color: _line),
-        ),
-      ),
-    ),
-  );
 
   Widget _noMatch(String text) => Padding(
     padding: const EdgeInsets.all(16),
@@ -406,14 +368,14 @@ class _StartScreenState extends State<StartScreen> {
       );
     }
     final query = _mapSearch.text;
-    final shown = _maps.where((m) => _matches(query, '${m.name} ${m.folder}')).toList();
+    final shown = _maps.where((m) => searchMatches(query, '${m.name} ${m.folder}')).toList();
     final played = shown.where((m) => _seconds(m) > 0).toList();
     final rest = shown.where((m) => _seconds(m) == 0).toList();
     return _box(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _searchField(_mapSearch, 'Search ${_maps.length} maps'),
+          SearchField(controller: _mapSearch, hint: 'Search ${_maps.length} maps', onChanged: () => setState(() {})),
           Expanded(
             child: ListView(
               children: [
@@ -447,7 +409,7 @@ class _StartScreenState extends State<StartScreen> {
                 children: [
                   Text(PlayStats.formatDuration(st.seconds), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                   Text(
-                    '${st.games} ${st.games == 1 ? 'game' : 'games'}${st.lastPlayed != null ? ' · ${_ago(st.lastPlayed!)}' : ''}',
+                    '${st.games} ${st.games == 1 ? 'game' : 'games'}${st.lastPlayed != null ? ' · ${timeAgo(st.lastPlayed!)}' : ''}',
                     style: const TextStyle(fontSize: 11, color: _faint),
                   ),
                 ],
@@ -466,14 +428,6 @@ class _StartScreenState extends State<StartScreen> {
         },
       ),
     );
-  }
-
-  static String _ago(DateTime t) {
-    final d = DateTime.now().difference(t);
-    if (d.inMinutes < 1) return 'just now';
-    if (d.inHours < 1) return '${d.inMinutes}m ago';
-    if (d.inDays < 1) return '${d.inHours}h ago';
-    return '${d.inDays}d ago';
   }
 
   static const _raceChoices = [0, 1, 2, randomRace];
@@ -605,89 +559,18 @@ class _StartScreenState extends State<StartScreen> {
     );
   }
 
-  // Sessions grouped by map (most recent first), each with its points in
-  // time: continue from the latest or pick an earlier one.
-  Widget _savedGames() {
-    if (_saves.isEmpty) {
-      return _box(
-        child: const Center(
-          child: Text('No saved games yet.', style: TextStyle(color: _dim)),
-        ),
-      );
-    }
-    final query = _saveSearch.text;
-    final byMap = <String, List<SaveSession>>{};
-    for (final s in _saves) {
-      if (!_matches(query, '${s.name} ${s.mapName} ${s.origin}')) continue;
-      byMap.putIfAbsent(s.mapKey, () => []).add(s);
-    }
-    return _box(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _searchField(_saveSearch, 'Search ${_saves.length} saved games'),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.only(bottom: 12),
-              children: [
-                if (byMap.isEmpty) _noMatch('No saved game matches "$query".'),
-                for (final entry in byMap.entries) ...[_heading(entry.value.first.mapName), for (final s in entry.value) _sessionTile(s)],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _sessionTile(SaveSession s) {
-    final me = s.setup.players.where((p) => p.human).firstOrNull;
-    final others = s.setup.players.where((p) => !p.human).map((p) => raceName(p.race)).join(', ');
-    final latest = s.latest!;
-    return Theme(
-      data: _menuTheme(context).copyWith(dividerColor: Colors.transparent),
-      child: ExpansionTile(
-        tilePadding: const EdgeInsets.fromLTRB(16, 0, 12, 0),
-        childrenPadding: const EdgeInsets.fromLTRB(32, 0, 12, 8),
-        title: Text(s.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text(
-          [
-            'you as ${raceName(me?.race ?? 1)} vs $others',
-            s.setup.alliances.label,
-            '${s.points.length} ${s.points.length == 1 ? 'point' : 'points'} up to ${latest.gameTime}',
-            'saved ${_ago(s.lastSaved)}',
-            if (s.origin.isNotEmpty) 'from ${s.origin}',
-          ].join('  ·  '),
-          style: const TextStyle(fontSize: 12, color: _faint),
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              tooltip: 'Delete this session',
-              icon: const Icon(Icons.delete_outline, color: _dim),
-              onPressed: () => _delete(s),
-            ),
-            const SizedBox(width: 4),
-            FilledButton(onPressed: () => _load(s, latest), child: Text('Continue at ${latest.gameTime}')),
-            const SizedBox(width: 4),
-            const Icon(Icons.expand_more, color: _dim),
-          ],
-        ),
-        children: [
-          for (final p in s.points.reversed)
-            ListTile(
-              dense: true,
-              leading: Icon(p.manual ? Icons.bookmark : Icons.history, size: 18, color: p.manual ? Colors.white : _dim),
-              title: Text(p.manual ? '${p.gameTime}  ${p.name}' : '${p.gameTime}  auto-save'),
-              subtitle: Text('saved ${_ago(p.saved)}', style: const TextStyle(fontSize: 11, color: _faint)),
-              trailing: OutlinedButton(onPressed: () => _load(s, p), child: const Text('Load')),
-              onTap: () => _load(s, p),
-            ),
-        ],
-      ),
-    );
-  }
+  // The saved games: sessions grouped by map, with their points in time.
+  Widget _savedGames() => _box(
+    child: SavedGamesList(
+      onLoad: _load,
+      onHover: _hover,
+      onClick: _click,
+      onDeleted: () => setState(() {
+        _saves = SaveSession.list();
+        if (_saves.isEmpty) _loadTab = false;
+      }),
+    ),
+  );
 
   void _load(SaveSession s, SavePoint p) {
     if (!GameFiles.instance.exists(s.mapFile)) {
@@ -699,26 +582,6 @@ class _StartScreenState extends State<StartScreen> {
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not read this save: $e')));
     }
-  }
-
-  Future<void> _delete(SaveSession s) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete this session?'),
-        content: Text('"${s.name}" and its ${s.points.length} points in time will be deleted.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    s.delete();
-    setState(() {
-      _saves = SaveSession.list();
-      if (_saves.isEmpty) _loadTab = false;
-    });
   }
 }
 

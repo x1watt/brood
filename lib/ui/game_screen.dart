@@ -1,7 +1,7 @@
 // lib/ui/game_screen.dart
 //
 // The in-game screen: top bar, world view, minimap, selection panel and
-// command card, plus the game menu (pause, save, exit) and the victory or
+// command card, plus the game menu (pause, save, load, exit) and the victory or
 // defeat screen.
 
 import 'dart:async';
@@ -24,6 +24,7 @@ import 'autoplay_panel.dart';
 import 'game_viewport.dart';
 import 'hud.dart';
 import 'minimap_view.dart';
+import 'saved_games_list.dart';
 import 'start_screen.dart';
 import 'window_control.dart';
 
@@ -326,6 +327,77 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not save the game: $e')));
     }
+  }
+
+  // Load game, from the menu: pick a saved game, then this one is saved
+  // (when auto-save is on) and the picked one takes its place.
+  Future<void> _loadGame() async {
+    final size = MediaQuery.sizeOf(context);
+    final picked = await showDialog<(SaveSession, SavePoint)>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: const EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: const BorderSide(color: Color(0xFF3A3A3A)),
+        ),
+        child: SizedBox(
+          width: size.width < 932 ? size.width - 32 : 900,
+          height: size.height * 0.85,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 4, 0),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text('Load game', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white)),
+                    ),
+                    IconButton(tooltip: 'Close', onPressed: () => Navigator.pop(ctx), icon: const Icon(Icons.close)),
+                  ],
+                ),
+              ),
+              Expanded(child: SavedGamesList(onLoad: (session, point) => Navigator.pop(ctx, (session, point)))),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    final (session, point) = picked;
+    if (!GameFiles.instance.exists(session.mapFile)) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('The map of this save is missing: ${session.mapFile}')));
+      return;
+    }
+    final GameLaunch launch;
+    try {
+      launch = session.launch(point);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not read this save: $e')));
+      return;
+    }
+    if (!widget.settings.autosave) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Load this game?'),
+          content: const Text('Auto-save is off: progress in this game since your last save will be lost.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Load')),
+          ],
+        ),
+      );
+      if (ok != true || !mounted) return;
+    }
+    await _autosave(force: true);
+    _flushPlayTime();
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => GameScreen(launch: launch, stats: widget.stats, settings: widget.settings)),
+    );
   }
 
   Future<void> _exitToMenu({bool confirm = true}) async {
@@ -705,6 +777,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
               _GameMenu(
                 onResume: _closeMenu,
                 onSave: _saveGame,
+                onLoad: _loadGame,
                 onExit: _exitToMenu,
                 onQuit: _quit,
                 autosave: widget.settings.autosave,
@@ -761,6 +834,7 @@ class _Overlay extends StatelessWidget {
 class _GameMenu extends StatelessWidget {
   final VoidCallback onResume;
   final VoidCallback onSave;
+  final VoidCallback onLoad;
   final VoidCallback onExit;
   final VoidCallback onQuit;
   final bool autosave;
@@ -769,6 +843,7 @@ class _GameMenu extends StatelessWidget {
   const _GameMenu({
     required this.onResume,
     required this.onSave,
+    required this.onLoad,
     required this.onExit,
     required this.onQuit,
     required this.autosave,
@@ -858,6 +933,12 @@ class _GameMenu extends StatelessWidget {
             style: OutlinedButton.styleFrom(minimumSize: button),
             onPressed: onSave,
             child: const Text('Save game'),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton(
+            style: OutlinedButton.styleFrom(minimumSize: button),
+            onPressed: onLoad,
+            child: const Text('Load game'),
           ),
           const SizedBox(height: 10),
           OutlinedButton(

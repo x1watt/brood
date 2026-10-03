@@ -74,6 +74,18 @@ struct sim_functions : state_functions {
 	void on_kill_unit(unit_t* u) override {
 		if (allies) allies->on_kill(u);
 	}
+	// A unit that dies (or otherwise can't stay selected) leaves every
+	// player's selection, as in OpenBW's own UI. Without this the selection
+	// kept the dead unit's slot, and the next unit created in that slot (an
+	// enemy's, say) showed up selected and took the player's orders.
+	action_state* selections = nullptr;
+	void on_unit_deselect(unit_t* u) override {
+		if (!selections) return;
+		for (auto& selection : selections->selection) {
+			auto it = std::find(selection.begin(), selection.end(), u);
+			if (it != selection.end()) selection.erase(it);
+		}
+	}
 };
 
 struct command_functions : action_functions {
@@ -383,6 +395,7 @@ bw_status bw_bridge_new_melee_game(bw_bridge_t* bridge, const char* map_file, in
 			}
 		});
 		b->sim = std::make_unique<sim_functions>(b->player->st(), &b->sounds);
+		b->sim->selections = &b->action_st;
 		b->game_started = true;
 		return BW_OK;
 	} catch (...) {
@@ -459,6 +472,7 @@ bw_status bw_bridge_new_game(bw_bridge_t* bridge, const char* map_file, const bw
 			}
 		});
 		b->sim = std::make_unique<sim_functions>(b->player->st(), &b->sounds);
+		b->sim->selections = &b->action_st;
 		b->game_started = true;
 		state& st = b->player->st();
 		for (int k = 0; k != count; ++k) {
