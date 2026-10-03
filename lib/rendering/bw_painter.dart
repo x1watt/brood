@@ -218,7 +218,7 @@ class BwPainter extends CustomPainter {
     final sel = c.selectedUnits;
     if (sel.length != 1) return;
     final b = sel.first;
-    if (b.owner != c.myPlayer || !b.hasRally) return;
+    if (!c.canControl(b.owner) || !b.hasRally) return;
     final from = Offset(b.x - camX, b.y - camY);
     final to = Offset(b.rallyX - camX, b.rallyY - camY);
     final line = Paint()

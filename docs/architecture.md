@@ -90,6 +90,27 @@ grow after each attack, base defense and expansions. It issues commands
 through OpenBW's action functions inside bw_bridge_step and is
 deterministic (no pointer ordering, its own seeded random numbers).
 
+In-game alliances (engine/bridge/src/bw_alliances.h, lib/ui/alliance_panel.dart,
+F9 or the top bar button): players invite each other and accept or decline;
+an alliance shares one treasury (each frame every member's spending and
+income is folded into one pool), researched techs and upgrade levels, and
+mining points, and the human may command allies' units: bridge commands
+split the selection by owner and give each part in its owner's name
+(OpenBW only lets a player order its own units); the computer then leaves
+those units alone for a minute. Computers never command the human's units.
+An alliance can never hold every player still in the game. Leaving takes an
+equal share of the treasury. Setup teams start as alliances.
+
+Score per player: mining (shared with allies while allied), Brood War's own
+production score (unit_score + building_score) and destroy score (credited
+to the unit's last attacker through OpenBW's on_kill_unit hook).
+
+Computer diplomacy weighs the situation: losses and enemy armies at its
+base (it asks the attacker for peace or a strong neighbour for help when it
+can't hold), proximity (neighbours make useful allies), a common stronger
+enemy, its own dominance (then it needs nobody, and a distrustful one may
+leave an alliance once the war is won), and a personality (trust).
+
 Fog of war: bw_bridge_set_viewer filters the draw list, unit list and
 picking to what the player sees (neutral resources stay on explored
 ground); bw_bridge_get_fog gives per-tile state, drawn as a one-texel-per-

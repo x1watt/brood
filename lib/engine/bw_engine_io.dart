@@ -481,6 +481,52 @@ class BwEngine {
 
   bool setRally(int owner, int x, int y, {int targetUnitId = 0}) => _ok(_b.bw_bridge_set_rally(_h, owner, x, y, targetUnitId));
 
+  // --- alliances ---
+
+  final ffi.Pointer<bw_alliance_player> _allianceBuf = calloc<bw_alliance_player>(8);
+  final ffi.Pointer<bw_alliance_event> _allianceEvents = calloc<bw_alliance_event>(64);
+
+  List<AlliancePlayer> alliances() {
+    if (_b.bw_bridge_alliances(_h, _allianceBuf, 8) != 8) return const [];
+    return List<AlliancePlayer>.generate(8, (i) {
+      final a = _allianceBuf[i];
+      return AlliancePlayer(
+        slot: i,
+        playing: a.playing != 0,
+        active: a.active != 0,
+        group: a.group,
+        open: a.open != 0,
+        invitedBy: a.invited_by,
+        color: a.color,
+        race: a.race,
+        mineralsMined: a.minerals_mined,
+        gasMined: a.gas_mined,
+        points: a.points,
+        ownPoints: a.own_points,
+        productionScore: a.production_score,
+        killScore: a.kill_score,
+        unitsKilled: a.units_killed,
+        buildingsRazed: a.buildings_razed,
+        unitsLost: a.units_lost,
+      );
+    }, growable: false);
+  }
+
+  bool setAllianceOpen(int slot, bool open) => _ok(_b.bw_bridge_alliance_set_open(_h, slot, open ? 1 : 0));
+  bool allianceInvite(int from, int to) => _ok(_b.bw_bridge_alliance_invite(_h, from, to));
+  bool allianceRespond(int slot, int from, bool accept) => _ok(_b.bw_bridge_alliance_respond(_h, slot, from, accept ? 1 : 0));
+  bool allianceLeave(int slot) => _ok(_b.bw_bridge_alliance_leave(_h, slot));
+
+  List<AllianceEvent> pollAllianceEvents() {
+    final n = _b.bw_bridge_poll_alliance_events(_h, _allianceEvents, 64);
+    if (n <= 0) return const [];
+    return List<AllianceEvent>.generate(n, (i) {
+      final e = _allianceEvents[i];
+      final kind = e.kind >= 0 && e.kind < AllianceEventKind.values.length ? AllianceEventKind.values[e.kind] : AllianceEventKind.none;
+      return AllianceEvent(e.frame, kind, e.a, e.b);
+    }, growable: false);
+  }
+
   // --- arbitrary UI graphics ---
 
   int grpLoad(String path) {
@@ -593,5 +639,7 @@ class BwEngine {
     calloc.free(_int3);
     calloc.free(_soundBuf);
     if (_fogBuf != null) calloc.free(_fogBuf!);
+    calloc.free(_allianceBuf);
+    calloc.free(_allianceEvents);
   }
 }

@@ -217,3 +217,58 @@ class UpgradeInfo {
 
 /// Instant abilities (BW_ACT_* in bw_bridge.h; index is the wire value).
 enum Ability { stim, siege, unsiege, cloak, decloak, burrow, unburrow, trainFighter, archonWarp, darkArchonMeld, unloadAll, cancelResearch, cancelUpgrade }
+
+/// One player's alliance standing (bw_alliance_player).
+class AlliancePlayer {
+  final int slot;
+  final bool playing;
+  final bool active;
+  final int group; // equal groups are allied
+  final bool open;
+  final int invitedBy; // bit mask of slots waiting for this player's answer
+  final int color;
+  final int race;
+  final int mineralsMined;
+  final int gasMined;
+  final int points; // mining score: shared within an alliance
+  final int ownPoints; // mined by this player's own workers
+  final int productionScore; // Brood War's unit and building score
+  final int killScore; // Brood War's destroy score of what it destroyed
+  final int unitsKilled;
+  final int buildingsRazed;
+  final int unitsLost;
+  const AlliancePlayer({
+    required this.slot,
+    required this.playing,
+    required this.active,
+    required this.group,
+    required this.open,
+    required this.invitedBy,
+    required this.color,
+    required this.race,
+    required this.mineralsMined,
+    required this.gasMined,
+    required this.points,
+    required this.ownPoints,
+    required this.productionScore,
+    required this.killScore,
+    required this.unitsKilled,
+    required this.buildingsRazed,
+    required this.unitsLost,
+  });
+
+  /// Overall score: mining (shared with allies) + building + destroying.
+  int get score => points + productionScore + killScore;
+
+  bool invitedBySlot(int slot) => invitedBy & (1 << slot) != 0;
+}
+
+enum AllianceEventKind { none, invited, declined, formed, left, open, closed }
+
+class AllianceEvent {
+  final int frame;
+  final AllianceEventKind kind;
+  final int a;
+  final int b;
+  const AllianceEvent(this.frame, this.kind, this.a, this.b);
+}

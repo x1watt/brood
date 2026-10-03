@@ -74,6 +74,15 @@ enum GameOutcome { victory, defeat }
 
 enum Relation { own, ally, enemy, neutral }
 
+/// A line in the alliance panel's history.
+class AllianceNote {
+  final int frame;
+  final String text;
+  final bool aboutMe;
+  final AllianceEventKind kind;
+  const AllianceNote(this.frame, this.text, this.aboutMe, this.kind);
+}
+
 class GamePlayer {
   final int slot; // the engine's player id
   final int race;
@@ -144,6 +153,7 @@ class GameController {
   double supplyUsed = 0;
   double supplyMax = 0;
   int frame = 0;
+  (double, double) _selectionSupply = (0, 0); // supply of the selected units' owner
 
   CommandMode mode = CommandMode.none;
   CardMenu cardMenu = CardMenu.main;
@@ -217,6 +227,7 @@ class GameController {
       await s.init();
       sound = s;
       terrain = await TerrainLayer.build(e);
+      _loadColors();
       _refreshUnits();
       for (final u in units) {
         if (u.owner == myPlayer && u.isCompleted) _completedSeen.add(u.unitId);
@@ -246,11 +257,113 @@ class GameController {
 
   Relation relation(int owner) {
     if (owner == myPlayer) return Relation.own;
-    final o = playerAt(owner);
-    if (o == null) return Relation.neutral;
-    final me = playerAt(myPlayer);
-    if (me != null && me.team != 0 && me.team == o.team) return Relation.ally;
-    return Relation.enemy;
+    if (owner < 0 || owner >= 8 || alliance.length != 8) return playerAt(owner) == null ? Relation.neutral : Relation.enemy;
+    final o = alliance[owner];
+    if (!o.playing) return Relation.neutral;
+    return o.active && o.group == alliance[myPlayer].group ? Relation.ally : Relation.enemy;
+  }
+
+  /// Own units, and those of allies still in the game.
+  bool canControl(int owner) => owner == myPlayer || (relation(owner) == Relation.ally && alliance[owner].active);
+
+  // --- alliances ---
+
+  List<AlliancePlayer> alliance = const [];
+  final List<AllianceNote> allianceFeed = [];
+  List<Color> _colorTable = const [];
+
+  AlliancePlayer? get me => alliance.length == 8 ? alliance[myPlayer] : null;
+  int get score => me?.score ?? 0;
+
+  /// Players whose invitation waits for my answer.
+  List<int> get invitationsForMe {
+    final m = me;
+    if (m == null) return const [];
+    return [for (int s = 0; s < 8; ++s) if (m.invitedBySlot(s) && alliance[s].active) s];
+  }
+
+  bool invitedByMe(int slot) => alliance.length == 8 && alliance[slot].invitedBySlot(myPlayer);
+
+  /// The other players of my alliance (active ones).
+  List<int> get myAllies => [for (final a in alliance) if (a.slot != myPlayer && a.active && relation(a.slot) == Relation.ally) a.slot];
+
+  String nameOf(int slot) => slot == myPlayer ? 'You' : (playerAt(slot)?.name ?? 'Player ${slot + 1}');
+
+  /// The player's color in the game (minimap, unit trim).
+  Color colorOf(int slot) {
+    if (alliance.length != 8 || _colorTable.isEmpty) return const Color(0xFF888888);
+    final c = alliance[slot].color;
+    return c >= 0 && c < _colorTable.length ? _colorTable[c] : const Color(0xFF888888);
+  }
+
+  void _loadColors() {
+    final palette = engine.getPalette();
+    final remap = engine.getPlayerColors();
+    _colorTable = [
+      for (int c = 0; c < remap.length ~/ 8; ++c)
+        Color.fromARGB(255, palette[remap[c * 8 + 1] * 4], palette[remap[c * 8 + 1] * 4 + 1], palette[remap[c * 8 + 1] * 4 + 2]),
+    ];
+  }
+
+  void _refreshAlliance() {
+    alliance = engine.alliances();
+    for (final e in engine.pollAllianceEvents()) {
+      final text = _describe(e);
+      if (text == null) continue;
+      final mine = e.a == myPlayer || e.b == myPlayer;
+      allianceFeed.insert(0, AllianceNote(e.frame, text, mine, e.kind));
+      if (allianceFeed.length > 40) allianceFeed.removeLast();
+      if (mine && e.kind != AllianceEventKind.open && e.kind != AllianceEventKind.closed) {
+        showMessageQuiet(text);
+        sound?.play(soundButton, ui: true);
+      }
+    }
+  }
+
+  String? _describe(AllianceEvent e) {
+    final a = nameOf(e.a);
+    String poss(int slot) => slot == myPlayer ? 'your' : "${nameOf(slot)}'s";
+    return switch (e.kind) {
+      AllianceEventKind.invited => e.b == myPlayer ? '$a invites you to an alliance.' : '$a invited ${nameOf(e.b)} to an alliance.',
+      AllianceEventKind.declined => e.b == myPlayer ? "You declined $a's invitation." : '${nameOf(e.b)} declined ${poss(e.a)} invitation.',
+      AllianceEventKind.formed => e.b == myPlayer ? "You joined $a's alliance." : '${nameOf(e.b)} joined ${poss(e.a)} alliance.',
+      AllianceEventKind.left => e.a == myPlayer ? 'You left your alliance.' : '$a left ${myAllies.contains(e.a) ? 'your' : 'their'} alliance.',
+      AllianceEventKind.open => e.a == myPlayer ? 'You are open to alliances.' : '$a is open to alliances.',
+      AllianceEventKind.closed => e.a == myPlayer ? 'You no longer accept alliances.' : '$a no longer accepts alliances.',
+      AllianceEventKind.none => null,
+    };
+  }
+
+  void setOpenToAlliances(bool on) {
+    if (!ready) return;
+    engine.setAllianceOpen(myPlayer, on);
+    _allianceChanged();
+  }
+
+  void inviteToAlliance(int slot) {
+    if (!ready) return;
+    if (!engine.allianceInvite(myPlayer, slot)) showMessage("An alliance can't include every player still in the game.");
+    _allianceChanged();
+  }
+
+  void answerInvitation(int from, bool accept) {
+    if (!ready) return;
+    engine.allianceRespond(myPlayer, from, accept);
+    _allianceChanged();
+  }
+
+  void leaveAlliance() {
+    if (!ready) return;
+    engine.allianceLeave(myPlayer);
+    // Allied units in the selection are no longer mine to command.
+    final keep = selection.where((id) => unitsById[id]?.owner == myPlayer).toList();
+    if (keep.length != selection.length) engine.selectUnits(myPlayer, keep);
+    _allianceChanged();
+  }
+
+  void _allianceChanged() {
+    _refreshAlliance();
+    _changed();
   }
 
   void setPaused(bool on) {
@@ -434,6 +547,7 @@ class GameController {
   }
 
   void _refreshUnits() {
+    _refreshAlliance();
     units = engine.getUnits();
     unitsById = {for (final u in units) u.unitId: u};
     final previous = selection;
@@ -444,8 +558,16 @@ class GameController {
     final (used, max) = engine.supply(myPlayer, myRace);
     supplyUsed = used;
     supplyMax = max;
+    // Selected allied units use their owner's supply.
+    final sel = selection.isEmpty ? null : unitsById[selection.first];
+    if (sel != null && sel.owner != myPlayer && canControl(sel.owner)) {
+      final (u2, m2) = engine.supply(sel.owner, alliance[sel.owner].race.clamp(0, 2));
+      _selectionSupply = (u2, m2);
+    } else {
+      _selectionSupply = (used, max);
+    }
     frame = engine.currentFrame;
-    _buildable = selectionIsMine ? engine.getBuildable(myPlayer).toSet() : const {};
+    _buildable = selectionCommandable ? engine.getBuildable(myPlayer).toSet() : const {};
   }
 
   // A newly finished unit says its "ready" line, like the original.
@@ -459,16 +581,18 @@ class GameController {
   }
 
   // The original shows pylons' power fields while placing a building that
-  // needs power; also shown while a pylon is selected.
-  bool get showsPsiFields {
-    if (mode == CommandMode.build && buildTypeId != null) return engine.unitType(buildTypeId!).requiresPower;
+  // needs power; also shown while a pylon is selected. Returns whose
+  // fields (the builder's or the pylon's owner), -1 for none.
+  int get psiFieldsOwner {
     final sel = selectedUnits;
-    return sel.length == 1 && sel.first.owner == myPlayer && sel.first.typeId == 156;
+    if (sel.isEmpty || !canControl(sel.first.owner)) return -1;
+    if (mode == CommandMode.build && buildTypeId != null) return engine.unitType(buildTypeId!).requiresPower ? sel.first.owner : -1;
+    return sel.length == 1 && sel.first.typeId == 156 ? sel.first.owner : -1;
   }
 
   void _refreshView() {
     if (viewport.isEmpty) return;
-    engine.showPsiFields(showsPsiFields ? myPlayer : -1);
+    engine.showPsiFields(psiFieldsOwner);
     drawItems = engine.getDrawList(myPlayer, camX.floor(), camY.floor(), viewport.width.ceil(), viewport.height.ceil());
   }
 
@@ -643,7 +767,7 @@ class GameController {
 
   UnitTypeInfo? get _voiceType {
     final sel = selectedUnits;
-    if (sel.isEmpty || sel.first.owner != myPlayer) return null;
+    if (sel.isEmpty || !canControl(sel.first.owner)) return null;
     return engine.unitType(sel.first.typeId);
   }
 
@@ -669,7 +793,8 @@ class GameController {
 
   List<UnitInfo> get selectedUnits => [for (final id in selection) if (unitsById[id] != null) unitsById[id]!];
 
-  bool get selectionIsMine => selection.isNotEmpty && selectedUnits.every((u) => u.owner == myPlayer);
+  /// The selection holds only units I may command (mine and my allies').
+  bool get selectionCommandable => selection.isNotEmpty && selectedUnits.every((u) => canControl(u.owner));
 
   void select(List<int> ids, {bool voice = true, bool repeatedClick = false}) {
     engine.selectUnits(myPlayer, ids.take(12).toList());
@@ -697,7 +822,7 @@ class GameController {
     _lastClickMs = now;
 
     final u = unitsById[id];
-    if (add && u != null && u.owner == myPlayer && selectionIsMine) {
+    if (add && u != null && canControl(u.owner) && selectionCommandable) {
       final next = [...selection];
       if (next.contains(id)) {
         next.remove(id);
@@ -713,7 +838,7 @@ class GameController {
   void boxSelect(Rect screenRect, {bool add = false}) {
     final r = Rect.fromPoints(screenToMap(screenRect.topLeft), screenToMap(screenRect.bottomRight));
     final hit = units.where((u) {
-      if (u.owner != myPlayer) return false;
+      if (!canControl(u.owner)) return false;
       final ur = Rect.fromCenter(center: Offset(u.x.toDouble(), u.y.toDouble()), width: u.width.toDouble(), height: u.height.toDouble());
       return ur.overlaps(r);
     }).toList();
@@ -724,7 +849,7 @@ class GameController {
       select(const [], voice: false);
       return;
     }
-    if (add && selectionIsMine) {
+    if (add && selectionCommandable) {
       select({...selection, ...chosen}.toList());
     } else {
       select(chosen);
@@ -734,7 +859,7 @@ class GameController {
   void selectAllOfTypeOnScreen(int typeId) {
     final r = screenRect;
     select(units
-        .where((u) => u.owner == myPlayer && u.typeId == typeId && r.contains(Offset(u.x.toDouble(), u.y.toDouble())))
+        .where((u) => canControl(u.owner) && u.typeId == typeId && r.contains(Offset(u.x.toDouble(), u.y.toDouble())))
         .map((u) => u.unitId)
         .toList());
   }
@@ -744,7 +869,7 @@ class GameController {
   void controlGroup(int n, {required bool assign, required bool add}) {
     if (!ready) return;
     if (assign || add) {
-      if (!selectionIsMine) return;
+      if (!selectionCommandable) return;
       engine.controlGroup(myPlayer, n, assign ? GroupAction.assign : GroupAction.add);
       showMessageQuiet(assign ? 'Group $n assigned.' : 'Added to group $n.');
       return;
@@ -775,7 +900,7 @@ class GameController {
   bool get _uniform => selection.isNotEmpty && selectedUnits.every((u) => u.typeId == selectedUnits.first.typeId);
 
   List<CmdButton> commandCard() {
-    if (!ready || !selectionIsMine) return const [];
+    if (!ready || !selectionCommandable) return const [];
     final sel = selectedUnits;
     if (sel.isEmpty) return const [];
     final first = sel.first;
@@ -998,7 +1123,7 @@ class GameController {
   }
 
   void _setMode(CommandMode m) {
-    if (!selectionIsMine) return;
+    if (!selectionCommandable) return;
     mode = m;
     buildTypeId = null;
     if (m != CommandMode.cast) castAbility = null;
@@ -1015,7 +1140,7 @@ class GameController {
   }
 
   void _instantOrder(UnitOrder order) {
-    if (!selectionIsMine) return;
+    if (!selectionCommandable) return;
     if (engine.order(myPlayer, order, 0, 0)) _sayYes();
     _changed();
   }
@@ -1023,7 +1148,7 @@ class GameController {
   void _selectLarva() {
     final hatcheries = selectedUnits.where((u) => larvaProducers.contains(u.typeId)).toList();
     final larvae = units.where((l) {
-      if (l.owner != myPlayer || l.typeId != zergLarva) return false;
+      if (l.typeId != zergLarva || !hatcheries.any((h) => h.owner == l.owner)) return false;
       return hatcheries.any((h) {
         final dx = l.x - h.x, dy = l.y - h.y;
         return dx * dx + dy * dy < 160 * 160;
@@ -1042,7 +1167,7 @@ class GameController {
       cancelMode();
       return;
     }
-    if (!selectionIsMine) return;
+    if (!selectionCommandable) return;
     final x = mapPos.dx.round(), y = mapPos.dy.round();
     final target = engine.pickUnitAt(x, y);
     if (engine.order(myPlayer, UnitOrder.smart, x, y, targetUnitId: target, queue: queue)) {
@@ -1196,7 +1321,7 @@ class GameController {
   }
 
   void _produce(int typeId) {
-    if (!selectionIsMine) return;
+    if (!selectionCommandable) return;
     final t = engine.unitType(typeId);
     final builder = selectedUnits.first;
     final placesBuilding = t.isBuilding && !t.isAddon && builder.isWorker;
@@ -1224,7 +1349,7 @@ class GameController {
       showMessage('Not enough Vespene gas.', advisorSound: soundNotEnoughGas);
       return false;
     }
-    if (checkSupply && t.supply > 0 && supplyUsed + t.supply > supplyMax) {
+    if (checkSupply && t.supply > 0 && _selectionSupply.$1 + t.supply > _selectionSupply.$2) {
       const needs = ['Spawn more Overlords.', 'You must construct additional Supply Depots.', 'You must construct additional Pylons.'];
       showMessage(needs[myRace.clamp(0, 2)], advisorSound: soundNeedSupply);
       return false;
@@ -1234,20 +1359,20 @@ class GameController {
 
   /// Clicking a queued item cancels it (slot 0 is the one in production).
   void cancelQueueSlot(int slot) {
-    if (!selectionIsMine || selection.length != 1) return;
+    if (!selectionCommandable || selection.length != 1) return;
     sound?.play(soundButton, ui: true);
     engine.cancelQueueSlot(myPlayer, slot);
     _changed();
   }
 
   void cancelResearch() {
-    if (!selectionIsMine || selection.length != 1) return;
+    if (!selectionCommandable || selection.length != 1) return;
     sound?.play(soundButton, ui: true);
     _cancelLast();
   }
 
   void _cancelLast() {
-    if (!selectionIsMine || selection.length != 1) return;
+    if (!selectionCommandable || selection.length != 1) return;
     final u = selectedUnits.first;
     if (u.researchingTech >= 0) {
       engine.ability(myPlayer, Ability.cancelResearch);

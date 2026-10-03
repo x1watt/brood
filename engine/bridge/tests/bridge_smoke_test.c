@@ -224,7 +224,7 @@ static int play_ai_game(const char* dd, const char* mf, const int* teams, uint32
 			if (st >= 3) any_win = 1;
 			if (st == 0 && (teams[i] == 0 || teams[i] != last_team)) { ++alive_sides; last_team = teams[i]; }
 		}
-		if (minute % 4 == 0 || any_win) {
+		if (minute % 2 == 0 || any_win) {
 			printf("bridge_smoke_test: ai: minute %2d:", minute);
 			for (int i = 0; i != 4; ++i) {
 				int w, bl, a, used = 0, avail = 0;
@@ -234,13 +234,31 @@ static int play_ai_game(const char* dd, const char* mf, const int* teams, uint32
 				       bw_bridge_minerals(b, slots[i]), bw_bridge_victory_state(b, slots[i]));
 			}
 			printf("\n");
+			bw_alliance_player al[8];
+			bw_bridge_alliances(b, al, 8);
+			printf("bridge_smoke_test: ai:   score");
+			for (int i = 0; i != 4; ++i) {
+				bw_alliance_player* a = &al[slots[i]];
+				printf(" [g%d %s mined %lld built %d killed %d/%d (%lld) lost %d]", a->group, a->open ? "open" : "closed", (long long)a->points, a->production_score,
+				       a->units_killed, a->buildings_razed, (long long)a->kill_score, a->units_lost);
+			}
+			printf("\n");
 		}
-		if (minute == 8) {
+		if (minute == 4) {
 			for (int i = 1; i != 4; ++i) {
 				int w, bl, a;
 				count_owned(b, slots[i], &w, &bl, &a);
 				if (bw_bridge_victory_state(b, slots[i]) == 0)
-					CHECK(w >= 12 && bl >= 4, "ai: player %d (race %d) did not build up by 8 min (workers %d buildings %d)", i, setup.race[i], w, bl);
+					CHECK(w >= 12 && bl >= 3, "ai: player %d (race %d) did not build up by 4 min (workers %d buildings %d)", i, setup.race[i], w, bl);
+			}
+		}
+		{
+			static const char* kinds[] = {"", "invited", "declined", "formed (b joined a)", "left", "open", "closed"};
+			bw_alliance_event ev[64];
+			int n = bw_bridge_poll_alliance_events(b, ev, 64);
+			for (int i = 0; i != n; ++i) {
+				if (ev[i].kind == BW_ALLIANCE_OPEN || ev[i].kind == BW_ALLIANCE_CLOSED) continue;
+				printf("bridge_smoke_test: ai:   %d:%02d diplomacy %s a=%d b=%d\n", ev[i].frame * 42 / 60000, ev[i].frame * 42 / 1000 % 60, kinds[ev[i].kind], ev[i].a, ev[i].b);
 			}
 		}
 		if (any_win) decided = minute;
@@ -333,6 +351,157 @@ static void test_save_replay(const char* dd, const char* mf) {
 	free(log);
 	bw_bridge_destroy(a);
 	bw_bridge_destroy(c);
+}
+
+static void alliance_state(bw_bridge_t* b, bw_alliance_player* out) {
+	CHECK(bw_bridge_alliances(b, out, 8) == 8, "alliances query");
+}
+
+/* Alliances: invite a computer player until one accepts, then check the
+ * shared treasury, commanding the ally's units, shared points, the "never
+ * everyone" rule, leaving, and that it all replays from the command log. */
+static void test_alliances(const char* dd, const char* mf) {
+	bw_game_setup setup;
+	memset(&setup, 0, sizeof(setup));
+	setup.player_count = 3;
+	setup.controller[0] = BW_PLAYER_HUMAN; setup.race[0] = 1;
+	setup.controller[1] = BW_PLAYER_COMPUTER; setup.race[1] = 1;
+	setup.controller[2] = BW_PLAYER_COMPUTER; setup.race[2] = 2;
+	int32_t slots[8];
+	bw_bridge_t* b = NULL;
+	int me = -1, ally = -1, other = -1;
+	bw_alliance_player al[8];
+	for (uint32_t seed = 1; seed != 20 && ally < 0; ++seed) {
+		if (b) bw_bridge_destroy(b);
+		setup.seed = seed;
+		b = bw_bridge_create();
+		CHECK(b && bw_bridge_load_assets(b, dd) == BW_OK && bw_bridge_new_game(b, mf, &setup, slots) == BW_OK, "alliances: new game");
+		me = slots[0];
+		bw_bridge_step(b, 1);
+		send_workers_mining(b, me, TERRAN_SCV);
+		bw_bridge_step(b, 24 * 20);
+		CHECK(bw_bridge_alliance_set_open(b, me, 1) == BW_OK, "alliances: open");
+		for (int k = 1; k != 3 && ally < 0; ++k) {
+			CHECK(bw_bridge_alliance_invite(b, me, slots[k]) == BW_OK, "alliances: invite %d", slots[k]);
+			alliance_state(b, al);
+			CHECK(al[slots[k]].invited_by & (1 << me), "alliances: invitation not pending");
+			bw_bridge_step(b, 24 * 10);
+			alliance_state(b, al);
+			CHECK(!(al[slots[k]].invited_by & (1 << me)), "alliances: computer never answered");
+			if (al[slots[k]].group == al[me].group) { ally = slots[k]; other = slots[3 - k]; }
+		}
+	}
+	CHECK(ally >= 0, "alliances: no computer ever accepted");
+	printf("bridge_smoke_test: alliances: seed %u, human %d allied with %d\n", setup.seed, me, ally);
+	{
+		bw_alliance_event ev[64];
+		int n = bw_bridge_poll_alliance_events(b, ev, 64), formed = 0;
+		for (int i = 0; i != n; ++i) if (ev[i].kind == BW_ALLIANCE_FORMED) formed = 1;
+		CHECK(formed, "alliances: no 'formed' event");
+	}
+	/* One treasury. */
+	CHECK(bw_bridge_minerals(b, me) == bw_bridge_minerals(b, ally) && bw_bridge_gas(b, me) == bw_bridge_gas(b, ally), "alliances: treasury not shared (%d vs %d)", bw_bridge_minerals(b, me), bw_bridge_minerals(b, ally));
+	int32_t cc[1];
+	CHECK(find_units(b, me, TERRAN_COMMAND_CENTER, cc, 1) == 1, "alliances: cc");
+	for (int i = 0; i != 24 * 60 && bw_bridge_minerals(b, me) < 50; ++i) bw_bridge_step(b, 1);
+	int before = bw_bridge_minerals(b, me);
+	bw_bridge_select_units(b, me, cc, 1);
+	if (bw_bridge_train(b, me, TERRAN_SCV) == BW_OK) {
+		bw_bridge_step(b, 1);
+		printf("bridge_smoke_test: alliances: trained an SCV, treasury %d -> %d (ally sees %d)\n", before, bw_bridge_minerals(b, me), bw_bridge_minerals(b, ally));
+		CHECK(bw_bridge_minerals(b, me) == bw_bridge_minerals(b, ally), "alliances: spending not shared");
+	}
+	/* "Never everyone": with the third player in, nobody would be left. */
+	CHECK(bw_bridge_alliance_invite(b, me, other) == BW_ERR_REJECTED, "alliances: an alliance of everyone was allowed");
+	/* Command the ally's worker. */
+	{
+		int n = bw_bridge_get_units(b, units, 4096);
+		int32_t worker = 0;
+		bw_unit_info w0;
+		/* (An SCV busy constructing refuses orders, as in the original.) */
+		for (int i = 0; i != n && !worker; ++i) {
+			if (units[i].owner != ally || !(units[i].flags & BW_UNIT_FLAG_WORKER)) continue;
+			CHECK(bw_bridge_select_units(b, me, &units[i].unit_id, 1) == BW_OK, "alliances: select ally worker");
+			if (bw_bridge_order(b, me, BW_ORDER_MOVE, units[i].x + 160, units[i].y, 0, 0) == BW_OK) { worker = units[i].unit_id; w0 = units[i]; }
+		}
+		CHECK(worker, "alliances: no ally worker took the order");
+		bw_bridge_step(b, 24 * 4);
+		bw_unit_info w1;
+		bw_bridge_get_unit(b, worker, &w1);
+		int moved = abs(w1.x - w0.x) + abs(w1.y - w0.y);
+		printf("bridge_smoke_test: alliances: ally's worker moved %d px on the human's order\n", moved);
+		CHECK(moved > 40, "alliances: ally's worker ignored the order");
+		/* Control groups hold allied units too. */
+		CHECK(bw_bridge_control_group(b, me, 5, BW_GROUP_ASSIGN) == BW_OK, "alliances: group ally unit");
+		bw_bridge_select_units(b, me, NULL, 0);
+		CHECK(bw_bridge_control_group(b, me, 5, BW_GROUP_RECALL) == BW_OK, "alliances: recall ally unit");
+		/* Enemy units can't be commanded. */
+		for (int i = 0; i != n; ++i) {
+			if (units[i].owner == other && (units[i].flags & BW_UNIT_FLAG_WORKER)) {
+				bw_bridge_select_units(b, me, &units[i].unit_id, 1);
+				CHECK(bw_bridge_order(b, me, BW_ORDER_MOVE, units[i].x + 160, units[i].y, 0, 0) != BW_OK, "alliances: commanded an enemy unit");
+				break;
+			}
+		}
+	}
+	/* The computer ally never moves the human's units: stop one SCV and
+	 * check it stays put for a minute. */
+	{
+		int32_t scv[1];
+		CHECK(find_units(b, me, TERRAN_SCV, scv, 1) == 1, "alliances: human scv");
+		bw_unit_info c0;
+		bw_bridge_get_unit(b, cc[0], &c0);
+		int mw, mh;
+		bw_bridge_get_map_tile_size(b, &mw, &mh);
+		/* Away from the mineral line, toward the middle of the map. */
+		int px = c0.x + (mw * 16 > c0.x ? 320 : -320), py = c0.y + (mh * 16 > c0.y ? 320 : -320);
+		bw_bridge_select_units(b, me, scv, 1);
+		bw_bridge_order(b, me, BW_ORDER_MOVE, px, py, 0, 0);
+		bw_bridge_step(b, 24 * 15);
+		bw_unit_info s0, s1;
+		bw_bridge_get_unit(b, scv[0], &s0);
+		bw_bridge_step(b, 24 * 60);
+		bw_bridge_get_unit(b, scv[0], &s1);
+		printf("bridge_smoke_test: alliances: scv %d,%d -> %d,%d\n", s0.x, s0.y, s1.x, s1.y);
+		CHECK(s0.x == s1.x && s0.y == s1.y, "alliances: the computer ally moved the human's unit");
+		printf("bridge_smoke_test: alliances: the computer ally left the human's idle SCV alone\n");
+	}
+	/* Shared points: both gain the same from here on. */
+	alliance_state(b, al);
+	int64_t p_me = al[me].points, p_ally = al[ally].points, own_me = al[me].own_points, own_ally = al[ally].own_points;
+	bw_bridge_step(b, 24 * 60);
+	alliance_state(b, al);
+	long long gain_me = (long long)(al[me].points - p_me), gain_ally = (long long)(al[ally].points - p_ally);
+	long long mined = (long long)(al[me].own_points - own_me + al[ally].own_points - own_ally);
+	printf("bridge_smoke_test: alliances: points +%lld / +%lld, mined together %lld\n", gain_me, gain_ally, mined);
+	CHECK(gain_me == gain_ally && gain_me == mined && mined > 0, "alliances: points not shared");
+	/* Leaving splits the treasury. */
+	int pool = bw_bridge_minerals(b, me);
+	CHECK(bw_bridge_alliance_leave(b, me) == BW_OK, "alliances: leave");
+	alliance_state(b, al);
+	CHECK(al[me].group != al[ally].group, "alliances: still allied after leaving");
+	CHECK(bw_bridge_minerals(b, me) + bw_bridge_minerals(b, ally) == pool, "alliances: split %d + %d != %d", bw_bridge_minerals(b, me), bw_bridge_minerals(b, ally), pool);
+	bw_bridge_step(b, 24 * 30);
+
+	/* Replays exactly. */
+	int end_frame = bw_bridge_current_frame(b);
+	unsigned long long h = state_hash(b);
+	alliance_state(b, al);
+	int len = bw_bridge_command_log(b, NULL, 0);
+	int32_t* log = (int32_t*)malloc((size_t)len * sizeof(int32_t));
+	bw_bridge_command_log(b, log, len);
+	bw_bridge_t* c = bw_bridge_create();
+	int32_t slots2[8];
+	CHECK(c && bw_bridge_load_assets(c, dd) == BW_OK && bw_bridge_new_game(c, mf, &setup, slots2) == BW_OK, "alliances: replay game");
+	CHECK(bw_bridge_replay_commands(c, log, len, end_frame) == BW_OK, "alliances: replay");
+	CHECK(state_hash(c) == h, "alliances: replay diverged");
+	bw_alliance_player al2[8];
+	alliance_state(c, al2);
+	for (int p = 0; p != 8; ++p) CHECK(al2[p].points == al[p].points && al2[p].group == al[p].group, "alliances: replayed alliances differ");
+	printf("bridge_smoke_test: alliances: replay matches\n");
+	free(log);
+	bw_bridge_destroy(c);
+	bw_bridge_destroy(b);
 }
 
 int main(int argc, char** argv) {
@@ -644,6 +813,7 @@ int main(int argc, char** argv) {
 	test_protoss(dd, mf);
 	test_zerg(dd, mf);
 	test_save_replay(dd, mf);
+	test_alliances(dd, mf);
 	test_ai(dd, mf);
 	printf("bridge_smoke_test: OK\n");
 	return 0;

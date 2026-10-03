@@ -17,6 +17,7 @@ import '../game/game_data.dart';
 import '../game/game_setup.dart';
 import '../game/play_stats.dart';
 import '../game/settings.dart';
+import 'alliance_panel.dart';
 import 'game_viewport.dart';
 import 'hud.dart';
 import 'minimap_view.dart';
@@ -40,6 +41,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
   late final AppLifecycleListener _lifecycle;
   bool _fullscreen = false;
   bool _menuOpen = false;
+  bool _alliancesOpen = false;
   bool _outcomeShown = false;
   Timer? _statsTimer;
   int _countedFrames = 0;
@@ -186,6 +188,12 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
 
   bool get _outcomeVisible => _outcomeShown && _c.paused;
 
+  void _toggleAlliances() {
+    if (!_c.ready) return;
+    setState(() => _alliancesOpen = !_alliancesOpen);
+    _focus.requestFocus();
+  }
+
   Future<void> _saveGame() async {
     final seconds = _c.frame * GameController.frameMicros ~/ 1000000;
     final now = DateTime.now();
@@ -289,6 +297,10 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       _openMenu();
       return KeyEventResult.handled;
     }
+    if (e is KeyDownEvent && key == LogicalKeyboardKey.f9) {
+      _toggleAlliances();
+      return KeyEventResult.handled;
+    }
 
     final arrow = _arrows[key];
     if (arrow != null) {
@@ -375,6 +387,8 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                         c: _c,
                         fullscreen: _fullscreen,
                         onMenu: _openMenu,
+                        onAlliances: _toggleAlliances,
+                        alliancesOpen: _alliancesOpen,
                         onToggleFullscreen: _toggleFullscreen,
                         onToggleMute: _toggleMute,
                         onVolume: _setVolume,
@@ -385,6 +399,25 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                       child: Stack(
                         children: [
                           Positioned.fill(child: GameViewport(controller: _c)),
+                          // Invitations wait at the top of the view until answered.
+                          Positioned(
+                            top: 0,
+                            left: 0,
+                            right: _alliancesOpen ? 440 : 0,
+                            child: Center(child: ListenableBuilder(listenable: _c.hud, builder: (_, _) => InvitationCards(c: _c))),
+                          ),
+                          AnimatedPositioned(
+                            duration: const Duration(milliseconds: 180),
+                            curve: Curves.easeOutCubic,
+                            top: 0,
+                            bottom: 0,
+                            right: _alliancesOpen ? 0 : -450,
+                            width: 440,
+                            child: ListenableBuilder(
+                              listenable: _c.hud,
+                              builder: (_, _) => AlliancePanel(c: _c, onClose: _toggleAlliances),
+                            ),
+                          ),
                           if (_showPerf)
                             Positioned(
                               right: 8,
@@ -425,7 +458,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                 ),
               ),
             ),
-            if (_menuOpen) _GameMenu(onResume: _closeMenu, onSave: _saveGame, onExit: _exitToMenu, players: _c.players, myPlayer: _c.myPlayer),
+            if (_menuOpen) _GameMenu(onResume: _closeMenu, onSave: _saveGame, onExit: _exitToMenu, c: _c),
             if (_outcomeVisible) _OutcomeScreen(outcome: _c.outcome!, onWatch: _keepWatching, onExit: () => _exitToMenu(confirm: false)),
           ],
         ),
@@ -473,20 +506,17 @@ class _GameMenu extends StatelessWidget {
   final VoidCallback onResume;
   final VoidCallback onSave;
   final VoidCallback onExit;
-  final List<GamePlayer> players;
-  final int myPlayer;
-  const _GameMenu({required this.onResume, required this.onSave, required this.onExit, required this.players, required this.myPlayer});
+  final GameController c;
+  const _GameMenu({required this.onResume, required this.onSave, required this.onExit, required this.c});
 
   @override
   Widget build(BuildContext context) {
-    final me = players.where((p) => p.slot == myPlayer).firstOrNull;
-    String side(GamePlayer p) {
-      if (p.slot == myPlayer) return '';
-      if (me != null && me.team != 0 && p.team == me.team) return 'ally';
-      return 'enemy';
-    }
-
     const button = Size.fromHeight(44);
+    // Scoreboard: highest points first.
+    final players = [...c.players]..sort((a, b) {
+      int pts(GamePlayer p) => c.alliance.length == 8 ? c.alliance[p.slot].score : 0;
+      return pts(b).compareTo(pts(a));
+    });
     return _Overlay(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -499,25 +529,38 @@ class _GameMenu extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           for (final p in players)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(p.name, style: TextStyle(color: p.human ? Colors.white : const Color(0xFFBDBDBD))),
-                  ),
-                  Text(raceName(p.race), style: const TextStyle(color: Color(0xFF8C8C8C))),
-                  SizedBox(
-                    width: 60,
-                    child: Text(
-                      side(p),
-                      textAlign: TextAlign.right,
-                      style: TextStyle(color: side(p) == 'ally' ? const Color(0xFFFFE14D) : const Color(0xFFFF6B5E)),
+            Builder(builder: (_) {
+              final rel = c.relation(p.slot);
+              final out = c.alliance.length == 8 && !c.alliance[p.slot].active;
+              final side = out ? 'out' : rel == Relation.own ? '' : rel == Relation.ally ? 'ally' : 'enemy';
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(
+                  children: [
+                    PlayerSwatch(c.colorOf(p.slot), size: 10),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(p.name, style: TextStyle(color: p.human ? Colors.white : const Color(0xFFBDBDBD)))),
+                    Text(raceName(p.race), style: const TextStyle(color: Color(0xFF8C8C8C))),
+                    SizedBox(
+                      width: 50,
+                      child: Text(
+                        side,
+                        textAlign: TextAlign.right,
+                        style: TextStyle(color: side == 'ally' ? const Color(0xFFFFE14D) : side == 'out' ? const Color(0xFF5E5E5E) : const Color(0xFFFF6B5E)),
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            ),
+                    SizedBox(
+                      width: 72,
+                      child: Text(
+                        formatPoints(c.alliance.length == 8 ? c.alliance[p.slot].score : 0),
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(color: Color(0xFFFFD54F), fontWeight: FontWeight.w600, fontFeatures: [FontFeature.tabularFigures()]),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
           const SizedBox(height: 20),
           FilledButton(
             style: FilledButton.styleFrom(minimumSize: button),

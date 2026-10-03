@@ -6,6 +6,17 @@
 // researches a few key upgrades, trains an army, defends its bases, attacks
 // in growing waves and takes expansions.
 //
+// Diplomacy (bw_alliances.h) weighs the situation like a player would:
+// neighbours make useful allies, a player losing a fight at home asks for
+// peace or for help, a common stronger enemy brings others together, a
+// dominant player doesn't need anyone and may drop an ally once the war is
+// won. A personality (trust) colours every decision.
+//
+// It only ever commands its own units: OpenBW refuses orders for anyone
+// else's, and only the human player is given allies' units to command (in
+// bw_bridge.cpp). Units a human ally took over recently are left alone, and
+// allied with a human it spends only its share of the common treasury.
+//
 // It plays through OpenBW's action functions (select, train, build, order),
 // the same way a human's commands reach the simulation. It runs inside
 // bw_bridge_step and only uses deterministic inputs (unit list order, its
@@ -17,6 +28,7 @@
 
 #include "bwgame.h"
 #include "actions.h"
+#include "bw_alliances.h"
 
 #include <algorithm>
 #include <array>
@@ -27,6 +39,7 @@ namespace bw_ai {
 using namespace bwgame;
 
 static const int think_interval = 12; // frames between decisions (about 0.5 s)
+static const int human_command_hold = 24 * 60; // frames a human-commanded unit is left alone
 
 struct player {
 	int owner = -1;
@@ -38,6 +51,17 @@ struct player {
 	bool attacking = false;
 	int last_attack_order = -10000;
 	int expand_worker_frame = -10000;
+	int trust = 50; // 0-99: personality for alliances
+	bool diplomacy_started = false;
+	int next_invite = 0;
+	int next_assess = 0;
+	int next_open_change = 0;
+	int next_betrayal_check = 0;
+	bool losing = false;      // being beaten at home right now
+	int attacker = -1;        // who is doing it
+	std::array<int, 8> pressure{};  // decaying value lost to each player
+	std::array<int, 8> lost_seen{};
+	std::array<int, 8> asked_at{}; // frame we last invited each player (+1; 0 = never)
 
 	uint32_t next() {
 		rng = rng * 1103515245u + 12345u;
@@ -62,6 +86,19 @@ struct ai_system {
 	a_vector<player> players;
 	a_vector<xy> sites; // resource clusters: possible bases
 	bool sites_ready = false;
+	bw_alliances::alliance_system* allies = nullptr;
+	// Frame a human last commanded each unit (by unit index), for allied
+	// units a human player took over.
+	a_vector<int> human_frame;
+
+	void human_commanded(const unit_t* u, int frame) {
+		if (human_frame.size() <= u->index) human_frame.resize(u->index + 1, -100000);
+		human_frame[u->index] = frame;
+	}
+
+	bool held_by_human(const unit_t* u, int frame) const {
+		return u->index < human_frame.size() && frame - human_frame[u->index] < human_command_hold;
+	}
 
 	void add(int owner, race_t race, uint32_t seed, xy home) {
 		player p;
@@ -70,6 +107,8 @@ struct ai_system {
 		p.rng = seed * 2654435761u + (uint32_t)owner * 40503u + 1;
 		p.home = home;
 		p.rally = home;
+		p.trust = (int)(p.next() % 100);
+		p.next_invite = 24 * 60 * 3 + (int)(p.next() % (24 * 60));
 		players.push_back(p);
 	}
 
@@ -77,6 +116,7 @@ struct ai_system {
 		players.clear();
 		sites.clear();
 		sites_ready = false;
+		human_frame.clear();
 	}
 
 	void update(state& st, action_state& action_st) {
@@ -89,10 +129,14 @@ struct ai_system {
 			// Defeated (its units turned neutral) or already won.
 			if (st.players[p.owner].controller != player_t::controller_occupied || st.players[p.owner].victory_state >= 3) continue;
 			try {
+				if (allies) diplomacy(f, p);
 				think(f, p);
 			} catch (...) {
 				// A failed decision must never stop the game; try again next time.
 			}
+			// Fold this player's spending into its alliance's treasury
+			// before the next one decides.
+			if (allies) allies->sync(st);
 		}
 	}
 
@@ -241,8 +285,9 @@ private:
 			}
 			bool completed = f.u_completed(u);
 			if (completed) bump(s.done, u->unit_type);
+			bool held = held_by_human(u, st.current_frame);
 			if (f.ut_worker(u)) {
-				if (!completed) continue;
+				if (!completed || held) continue;
 				s.workers.push_back(u);
 				if (is_gas_order(u->order_type->id)) ++s.gas_workers;
 				if (is_build_order(u->order_type->id) && !u->build_queue.empty()) bump(s.planned, u->build_queue.front());
@@ -251,7 +296,7 @@ private:
 				if (completed && f.ut_resource_depot(u)) s.depots.push_back(u);
 			} else if (f.unit_is(u, UnitTypes::Zerg_Larva)) {
 				s.larvae.push_back(u);
-			} else if (completed && !f.ut_turret(u) && is_army_type(u->unit_type->id)) {
+			} else if (completed && !held && !f.ut_turret(u) && is_army_type(u->unit_type->id)) {
 				s.army.push_back(u);
 			}
 		}
@@ -444,6 +489,210 @@ private:
 
 	// --- decisions ------------------------------------------------------------
 
+	// What a player can see of the balance of power.
+	struct assessment {
+		std::array<int, 8> army{};    // mineral + gas value of combat units
+		std::array<int, 8> economy{}; // 50 per worker
+		std::array<xy, 8> base{};     // main base
+		std::array<bool, 8> has_base{};
+		std::array<int, 8> near_me{}; // army value within reach of my buildings
+		int my_home_army = 0;
+		int map_diagonal = 1;
+	};
+
+	assessment assess(action_functions& f, player& p) {
+		assessment a;
+		state& st = f.st;
+		a.map_diagonal = std::max(1, f.xy_length(xy((int)f.game_st.map_width, (int)f.game_st.map_height)));
+		a_vector<xy> mine;
+		for (unit_t* u : ptr(st.player_units.at(p.owner))) {
+			if (!f.unit_dead(u) && u->sprite && f.ut_building(u)) mine.push_back(u->sprite->position);
+		}
+		auto near_mine = [&](xy pos) {
+			for (xy b : mine) {
+				if (dist2(b, pos) < 640 * 640) return true;
+			}
+			return false;
+		};
+		for (int o = 0; o != 8; ++o) {
+			if (!allies->playing[o]) continue;
+			for (unit_t* u : ptr(st.player_units.at(o))) {
+				if (f.unit_dead(u) || !u->sprite) continue;
+				if (f.ut_resource_depot(u) && !a.has_base[o]) {
+					a.base[o] = u->sprite->position;
+					a.has_base[o] = true;
+				}
+				if (f.ut_worker(u)) {
+					a.economy[o] += 50;
+					continue;
+				}
+				if (f.ut_building(u) || !f.u_completed(u) || f.ut_turret(u) || !is_army_type(u->unit_type->id)) continue;
+				int value = u->unit_type->mineral_cost + u->unit_type->gas_cost;
+				a.army[o] += value;
+				if (near_mine(u->sprite->position)) {
+					if (o == p.owner) a.my_home_army += value;
+					else a.near_me[o] += value;
+				}
+			}
+			if (!a.has_base[o]) a.base[o] = st.game->start_locations[(size_t)o];
+		}
+		return a;
+	}
+
+	int strength(const assessment& a, const a_vector<int>& group) const {
+		int s = 0;
+		for (int m : group) s += a.army[(size_t)m] + a.economy[(size_t)m] / 4;
+		return s;
+	}
+
+	// How much this player wants to be allied with `g` (another group).
+	int alliance_utility(action_functions& f, player& p, const assessment& a, const a_vector<int>& g) {
+		auto& al = *allies;
+		int u = (p.trust - 50) / 2;
+		// Neighbours make the most useful allies (and the worst enemies).
+		int d = a.map_diagonal;
+		for (int m : g) d = std::min(d, f.xy_length(a.base[(size_t)m] - a.base[(size_t)p.owner]));
+		int closeness = 100 - std::min(100, d * 100 / a.map_diagonal);
+		u += closeness / 4;
+		a_vector<int> my_group = al.members(al.group[p.owner]);
+		int mine = strength(a, my_group), theirs = strength(a, g);
+		// The strongest of everyone else.
+		int strongest = 0;
+		for (int q = 0; q != 8; ++q) {
+			if (!al.active(f.st, q) || al.group[q] == al.group[p.owner] || al.group[q] == al.group[g.front()]) continue;
+			strongest = std::max(strongest, strength(a, al.members(al.group[q])));
+		}
+		if (p.losing) {
+			bool has_attacker = std::find(g.begin(), g.end(), p.attacker) != g.end();
+			if (has_attacker) u += 55; // peace with whoever is winning against us
+			else {
+				int threat = 0;
+				for (int q = 0; q != 8; ++q) threat += a.near_me[(size_t)q];
+				if (theirs >= threat) u += 40 + closeness / 4; // they can come and help
+			}
+		} else {
+			if (mine > 0 && mine * 10 > std::max(strongest, theirs) * 16) u -= 35; // we don't need anyone
+			if (theirs * 3 < mine) u -= 15;                                      // they'd be dead weight
+			// Winning a fight against them right now: no reason to stop.
+			int beating = 0;
+			for (int m : g) beating += allies->value_lost_to[(size_t)m][(size_t)p.owner];
+			if (beating > 0 && p.pressure[(size_t)g.front()] == 0 && beating > 400) u -= 20;
+		}
+		if (strongest * 10 > mine * 13 && strongest > theirs) u += 25; // a common stronger enemy
+		if (theirs > mine * 2 && !p.losing) u += 10;                    // safety with the strong
+		return u;
+	}
+
+	void diplomacy(action_functions& f, player& p) {
+		auto& al = *allies;
+		state& st = f.st;
+		if (!al.active(st, p.owner)) return;
+		int frame = st.current_frame;
+		if (!p.diplomacy_started) {
+			p.diplomacy_started = true;
+			if (p.trust >= 30) al.set_open(st, p.owner, true);
+		}
+		if (frame < p.next_assess) return;
+		p.next_assess = frame + 24;
+		assessment a = assess(f, p);
+
+		// Losses to each player, fading over about ten seconds.
+		int recent = 0;
+		for (int k = 0; k != 8; ++k) {
+			int lost = al.value_lost_to[(size_t)p.owner][(size_t)k];
+			p.pressure[(size_t)k] = p.pressure[(size_t)k] * 15 / 16 + (lost - p.lost_seen[(size_t)k]);
+			p.lost_seen[(size_t)k] = lost;
+			recent += p.pressure[(size_t)k];
+		}
+		int threat = 0, worst = 0;
+		p.attacker = -1;
+		for (int k = 0; k != 8; ++k) {
+			if (k == p.owner || al.same_group(k, p.owner)) continue;
+			threat += a.near_me[(size_t)k];
+			int danger = a.near_me[(size_t)k] + p.pressure[(size_t)k] * 2;
+			if (danger > worst) {
+				worst = danger;
+				p.attacker = k;
+			}
+		}
+		// Invaders at home that the defenders can't stop.
+		p.losing = threat > 300 && threat * 10 > a.my_home_army * 13 && recent > 150;
+
+		a_vector<int> my_group = al.members(al.group[p.owner]);
+		int mine = strength(a, my_group);
+		int others_best = 0;
+		for (int q = 0; q != 8; ++q) {
+			if (al.active(st, q) && !al.same_group(q, p.owner)) others_best = std::max(others_best, strength(a, al.members(al.group[q])));
+		}
+
+		// Openness follows the situation: under pressure or outmatched,
+		// look for friends; dominant and distrustful, keep to yourself.
+		if (frame >= p.next_open_change) {
+			bool want_open = p.losing || others_best * 10 > mine * 13 || (p.trust >= 30 && !(mine > others_best * 2 && p.trust < 60));
+			if (want_open != al.open[p.owner]) {
+				al.set_open(st, p.owner, want_open);
+				p.next_open_change = frame + 24 * 60;
+			}
+		}
+
+		// Answer invitations after a moment's thought.
+		for (int from = 0; from != bw_alliances::max_players; ++from) {
+			int sent = al.invite_frame[p.owner][from];
+			if (sent < 0 || frame - sent < 24 * (3 + p.trust % 5)) continue;
+			bool yes = false;
+			if (al.merge_allowed(st, from, p.owner)) {
+				int u = alliance_utility(f, p, a, al.members(al.group[from])) + (int)(p.next() % 20);
+				yes = u >= (al.open[p.owner] ? 35 : 55);
+			}
+			al.respond(st, p.owner, from, yes);
+		}
+
+		// Drop an ally once the war is as good as won (the distrustful only).
+		if (my_group.size() > 1 && frame >= p.next_betrayal_check) {
+			p.next_betrayal_check = frame + 24 * 120;
+			int alone = a.army[(size_t)p.owner] + a.economy[(size_t)p.owner] / 4;
+			if (p.trust < 40 && !p.losing && others_best * 2 < alone && frame > 24 * 60 * 10) {
+				al.leave(st, p.owner);
+				return;
+			}
+		}
+
+		// Look for a partner: urgently when losing, otherwise now and then.
+		if (frame < p.next_invite) return;
+		if (!p.losing && frame < 24 * 60 * 3) return;
+		p.next_invite = frame + (p.losing ? 24 * 15 : 24 * (45 + (int)(p.next() % 45)));
+		if (!p.losing && (!al.open[p.owner] || my_group.size() >= 3)) return;
+		int best = -1000;
+		int target = -1;
+		std::array<bool, 8> seen{};
+		for (int q = 0; q != bw_alliances::max_players; ++q) {
+			if (q == p.owner || !al.active(st, q) || al.same_group(q, p.owner) || seen[(size_t)al.group[q]]) continue;
+			seen[(size_t)al.group[q]] = true;
+			a_vector<int> g = al.members(al.group[q]);
+			if (!al.merge_allowed(st, p.owner, q)) continue;
+			bool pending = false, receptive = p.losing;
+			for (int m : g) {
+				if (al.invite_frame[(size_t)m][(size_t)p.owner] >= 0) pending = true;
+				if (al.open[m]) receptive = true;
+			}
+			// Don't pester someone who was just asked.
+			for (int m : g) {
+				if (p.asked_at[(size_t)m] && frame - (p.asked_at[(size_t)m] - 1) < 24 * 60) pending = true;
+			}
+			if (pending || !receptive) continue;
+			int u = alliance_utility(f, p, a, g);
+			if (u <= best) continue;
+			// Ask the member closest to us.
+			int who = g.front();
+			for (int m : g) {
+				if (dist2(a.base[(size_t)m], a.base[(size_t)p.owner]) < dist2(a.base[(size_t)who], a.base[(size_t)p.owner])) who = m;
+			}
+			best = u;
+			target = who;
+		}
+		if (target >= 0 && best >= 40 && al.invite(st, p.owner, target)) p.asked_at[(size_t)target] = frame + 1;
+	}
+
 	void think(action_functions& f, player& p) {
 		snapshot s = take_snapshot(f, p);
 		if (s.depots.empty() && s.workers.empty() && s.army.empty()) return;
@@ -451,8 +700,22 @@ private:
 
 		manage_workers(f, p, s);
 
-		// Money still uncommitted after this round's decisions.
+		// Money still uncommitted after this round's decisions. With human
+		// allies the treasury is common: use only the computers' share.
 		int minerals = s.minerals, gas = s.gas;
+		if (allies) {
+			auto mates = allies->members(allies->group[p.owner]);
+			int computers = 0;
+			for (int m : mates) {
+				for (auto& o : players) {
+					if (o.owner == m) ++computers;
+				}
+			}
+			if (computers < (int)mates.size()) {
+				minerals = minerals * computers / (int)mates.size();
+				gas = gas * computers / (int)mates.size();
+			}
+		}
 
 		bool supply_ordered = keep_supply(f, p, s, minerals, gas);
 		train_workers(f, p, s, minerals, gas);

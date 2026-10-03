@@ -11,6 +11,7 @@ import '../engine/models.dart';
 import '../game/command_cards.dart';
 import '../game/game_controller.dart';
 import '../rendering/icon_atlas.dart';
+import 'alliance_panel.dart';
 
 const _panelColor = Color(0xFF000000);
 const _borderColor = Color(0xFF2A2A2A);
@@ -27,10 +28,14 @@ class TopBar extends StatelessWidget {
   final ValueChanged<double> onVolume;
   final ValueChanged<double> onVolumeDone;
   final VoidCallback onMenu;
+  final VoidCallback onAlliances;
+  final bool alliancesOpen;
   const TopBar({
     super.key,
     required this.c,
     required this.onMenu,
+    required this.onAlliances,
+    required this.alliancesOpen,
     required this.fullscreen,
     required this.onToggleFullscreen,
     required this.onToggleMute,
@@ -93,6 +98,20 @@ class TopBar extends StatelessWidget {
           ),
           const SizedBox(width: 20),
           Text(time, style: const TextStyle(color: _dimText, fontFeatures: [FontFeature.tabularFigures()])),
+          const SizedBox(width: 20),
+          Tooltip(
+            message: scoreBreakdown(c.me, allied: c.myAllies.isNotEmpty),
+            child: Row(
+              children: [
+                const Icon(Icons.emoji_events_outlined, size: 17, color: Color(0xFFFFD54F)),
+                const SizedBox(width: 5),
+                Text(
+                  formatPoints(c.score),
+                  style: const TextStyle(color: Color(0xFFFFD54F), fontWeight: FontWeight.w700, fontFeatures: [FontFeature.tabularFigures()]),
+                ),
+              ],
+            ),
+          ),
           const SizedBox(width: 24),
           Expanded(
             child: Text(
@@ -101,6 +120,8 @@ class TopBar extends StatelessWidget {
               style: TextStyle(color: c.message != null ? const Color(0xFFFFD54F) : _textColor),
             ),
           ),
+          _AllianceButton(c: c, open: alliancesOpen, onPressed: onAlliances),
+          const SizedBox(width: 6),
           IconButton(
             tooltip: (c.sound?.muted ?? false) ? 'Unmute' : 'Mute',
             iconSize: 18,
@@ -162,6 +183,55 @@ class TopBar extends StatelessWidget {
   );
 }
 
+/// Opens the alliance panel; shows your allies' colors and a badge for
+/// invitations waiting for an answer.
+class _AllianceButton extends StatelessWidget {
+  final GameController c;
+  final bool open;
+  final VoidCallback onPressed;
+  const _AllianceButton({required this.c, required this.open, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    final waiting = c.invitationsForMe.length;
+    final allies = c.myAllies;
+    return Tooltip(
+      message: 'Alliances (F9)',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6),
+        onTap: onPressed,
+        child: Container(
+          height: 26,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: waiting > 0 ? const Color(0xFFFFE14D) : (open ? const Color(0xFF555555) : _borderColor)),
+            color: open ? const Color(0xFF1A1A1A) : null,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Badge(
+                isLabelVisible: waiting > 0,
+                backgroundColor: const Color(0xFFFFE14D),
+                textColor: Colors.black,
+                label: Text('$waiting'),
+                child: Icon(Icons.handshake_outlined, size: 17, color: allies.isEmpty ? _textColor : const Color(0xFFFFE14D)),
+              ),
+              const SizedBox(width: 6),
+              Text(allies.isEmpty ? 'Alliances' : 'Allied', style: const TextStyle(color: _textColor, fontSize: 12)),
+              for (final s in allies) ...[
+                const SizedBox(width: 5),
+                PlayerSwatch(c.colorOf(s), size: 9),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class SelectionPanel extends StatelessWidget {
   final GameController c;
   const SelectionPanel({super.key, required this.c});
@@ -186,7 +256,7 @@ class SelectionPanel extends StatelessWidget {
     final owner = switch (c.relation(u.owner)) {
       Relation.own => 'You',
       Relation.neutral => 'Neutral',
-      Relation.ally => '${player?.name ?? 'Player ${u.owner + 1}'} (ally)',
+      Relation.ally => '${player?.name ?? 'Player ${u.owner + 1}'} (ally, under your command)',
       Relation.enemy => '${player?.name ?? 'Player ${u.owner + 1}'} (enemy)',
     };
     final lines = <Widget>[
@@ -214,7 +284,7 @@ class SelectionPanel extends StatelessWidget {
       if (u.maxShields > 0) lines.add(_statBar('Shields', u.shields, u.maxShields, const Color(0xFF4FA3FF)));
       if (u.maxEnergy > 0) lines.add(_statBar('Energy', u.energy, u.maxEnergy, const Color(0xFFB57BFF)));
     }
-    if (u.isBusyResearching && u.researchProgressPermille >= 0 && u.owner == c.myPlayer) {
+    if (u.isBusyResearching && u.researchProgressPermille >= 0 && c.canControl(u.owner)) {
       final tech = u.researchingTech >= 0 ? c.engine.techInfo(c.myPlayer, u.researchingTech) : null;
       final upgrade = u.upgrading >= 0 ? c.engine.upgradeInfo(c.myPlayer, u.upgrading) : null;
       final name = tech?.name ?? upgrade?.name ?? '';
@@ -240,7 +310,7 @@ class SelectionPanel extends StatelessWidget {
     if (!u.isCompleted && u.progressPermille >= 0) {
       lines.add(const SizedBox(height: 6));
       lines.add(_progress('Under construction', u.progressPermille));
-    } else if (u.queue.isNotEmpty && u.owner == c.myPlayer && (u.isBuilding || u.typeId == 72 || u.typeId == 83 || u.typeId == 36)) {
+    } else if (u.queue.isNotEmpty && c.canControl(u.owner) && (u.isBuilding || u.typeId == 72 || u.typeId == 83 || u.typeId == 36)) {
       // The original's five production slots: what's being made (with its
       // progress) and what's waiting, each a unit icon; click one to cancel it.
       final first = c.engine.unitType(u.queue.first).shortName;

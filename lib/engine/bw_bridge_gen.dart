@@ -172,6 +172,136 @@ class BwBridgeBindings {
   late final _bw_bridge_victory_state = _bw_bridge_victory_statePtr
       .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int)>();
 
+  /// Fills one entry per slot 0-7. Returns 8, or -1 without a game.
+  int bw_bridge_alliances(
+    ffi.Pointer<bw_bridge_t> bridge,
+    ffi.Pointer<bw_alliance_player> out,
+    int max_count,
+  ) {
+    return _bw_bridge_alliances(bridge, out, max_count);
+  }
+
+  late final _bw_bridge_alliancesPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Pointer<bw_alliance_player>,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_alliances');
+  late final _bw_bridge_alliances = _bw_bridge_alliancesPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<bw_bridge_t>,
+          ffi.Pointer<bw_alliance_player>,
+          int,
+        )
+      >();
+
+  bw_status bw_bridge_alliance_set_open(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int player_slot,
+    int open,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_alliance_set_open(bridge, player_slot, open),
+    );
+  }
+
+  late final _bw_bridge_alliance_set_openPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_alliance_set_open');
+  late final _bw_bridge_alliance_set_open = _bw_bridge_alliance_set_openPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int)>();
+
+  /// Invites `to` (and its alliance) to join `from`'s. If `to` already invited
+  /// `from`, this accepts that invitation instead.
+  bw_status bw_bridge_alliance_invite(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int from,
+    int to,
+  ) {
+    return bw_status.fromValue(_bw_bridge_alliance_invite(bridge, from, to));
+  }
+
+  late final _bw_bridge_alliance_invitePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_alliance_invite');
+  late final _bw_bridge_alliance_invite = _bw_bridge_alliance_invitePtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int)>();
+
+  bw_status bw_bridge_alliance_respond(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int player_slot,
+    int from,
+    int accept,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_alliance_respond(bridge, player_slot, from, accept),
+    );
+  }
+
+  late final _bw_bridge_alliance_respondPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_alliance_respond');
+  late final _bw_bridge_alliance_respond = _bw_bridge_alliance_respondPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int, int)>();
+
+  /// Leaves the alliance, taking an equal share of its treasury.
+  bw_status bw_bridge_alliance_leave(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int player_slot,
+  ) {
+    return bw_status.fromValue(_bw_bridge_alliance_leave(bridge, player_slot));
+  }
+
+  late final _bw_bridge_alliance_leavePtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int)>
+      >('bw_bridge_alliance_leave');
+  late final _bw_bridge_alliance_leave = _bw_bridge_alliance_leavePtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int)>();
+
+  /// Drains alliance events (oldest first). Returns the count written.
+  int bw_bridge_poll_alliance_events(
+    ffi.Pointer<bw_bridge_t> bridge,
+    ffi.Pointer<bw_alliance_event> out,
+    int max_count,
+  ) {
+    return _bw_bridge_poll_alliance_events(bridge, out, max_count);
+  }
+
+  late final _bw_bridge_poll_alliance_eventsPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Pointer<bw_alliance_event>,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_poll_alliance_events');
+  late final _bw_bridge_poll_alliance_events =
+      _bw_bridge_poll_alliance_eventsPtr
+          .asFunction<
+            int Function(
+              ffi.Pointer<bw_bridge_t>,
+              ffi.Pointer<bw_alliance_event>,
+              int,
+            )
+          >();
+
   /// Whose eyes the draw list, unit list and unit picking use: other players'
   /// units are left out unless that player can see them, neutral ones unless
   /// their ground is explored. -1 (the default) shows everything.
@@ -1820,6 +1950,94 @@ final class bw_game_setup extends ffi.Struct {
   external int seed;
 }
 
+/// --- Alliances ------------------------------------------------------------------
+///
+/// In-game diplomacy (engine/bridge/src/bw_alliances.h). Players in the same
+/// alliance share one treasury (minerals and gas), their researched techs
+/// and upgrades, and their points; each may command the others' units (every
+/// command function here accepts allied units in the selection). Teams chosen
+/// at setup start as alliances. An alliance can never include every player
+/// still in the game. All of this is logged for saved games.
+final class bw_alliance_player extends ffi.Struct {
+  /// part of this game
+  @ffi.Int32()
+  external int playing;
+
+  /// still in it (not defeated)
+  @ffi.Int32()
+  external int active;
+
+  /// alliance id: equal ids are allied
+  @ffi.Int32()
+  external int group;
+
+  /// accepts invitations
+  @ffi.Int32()
+  external int open;
+
+  /// bit mask of slots whose invitation is waiting for this player's answer
+  @ffi.Int32()
+  external int invited_by;
+
+  /// player color index (bw_bridge_get_player_colors)
+  @ffi.Int32()
+  external int color;
+
+  /// 0 zerg, 1 terran, 2 protoss
+  @ffi.Int32()
+  external int race;
+
+  @ffi.Int32()
+  external int minerals_mined;
+
+  @ffi.Int32()
+  external int gas_mined;
+
+  /// Brood War's unit + building score of what it built
+  @ffi.Int32()
+  external int production_score;
+
+  /// enemy units destroyed
+  @ffi.Int32()
+  external int units_killed;
+
+  /// enemy buildings destroyed
+  @ffi.Int32()
+  external int buildings_razed;
+
+  @ffi.Int32()
+  external int units_lost;
+
+  @ffi.Int32()
+  external int reserved;
+
+  /// mining: everything mined by its alliance while it was a member, plus its own
+  @ffi.Int64()
+  external int points;
+
+  /// mined by this player's own workers
+  @ffi.Int64()
+  external int own_points;
+
+  /// destroy_score of everything it destroyed
+  @ffi.Int64()
+  external int kill_score;
+}
+
+final class bw_alliance_event extends ffi.Struct {
+  @ffi.Int32()
+  external int frame;
+
+  @ffi.Int32()
+  external int kind;
+
+  @ffi.Int32()
+  external int a;
+
+  @ffi.Int32()
+  external int b;
+}
+
 final class bw_draw_item extends ffi.Struct {
   /// BW_DRAW_IMAGE or BW_DRAW_SELECTION_CIRCLE
   @ffi.Int32()
@@ -2128,13 +2346,25 @@ final class bw_sound_info extends ffi.Struct {
   external ffi.Array<ffi.Char> filename;
 }
 
-const int BW_BRIDGE_ABI_VERSION = 12;
+const int BW_BRIDGE_ABI_VERSION = 14;
 
 const int BW_MAX_PLAYERS = 8;
 
 const int BW_PLAYER_HUMAN = 1;
 
 const int BW_PLAYER_COMPUTER = 2;
+
+const int BW_ALLIANCE_INVITED = 1;
+
+const int BW_ALLIANCE_DECLINED = 2;
+
+const int BW_ALLIANCE_FORMED = 3;
+
+const int BW_ALLIANCE_LEFT = 4;
+
+const int BW_ALLIANCE_OPEN = 5;
+
+const int BW_ALLIANCE_CLOSED = 6;
 
 const int BW_DRAW_IMAGE = 0;
 

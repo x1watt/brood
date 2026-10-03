@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 12
+#define BW_BRIDGE_ABI_VERSION 14
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -83,6 +83,63 @@ bw_status bw_bridge_step(bw_bridge_t* bridge, int n_frames);
 
 // 0 playing, 1 dropped, 2 defeated, 3 or more victorious.
 int bw_bridge_victory_state(bw_bridge_t* bridge, int player_slot);
+
+// --- Alliances ------------------------------------------------------------------
+//
+// In-game diplomacy (engine/bridge/src/bw_alliances.h). Players in the same
+// alliance share one treasury (minerals and gas), their researched techs
+// and upgrades, and their points; each may command the others' units (every
+// command function here accepts allied units in the selection). Teams chosen
+// at setup start as alliances. An alliance can never include every player
+// still in the game. All of this is logged for saved games.
+
+typedef struct bw_alliance_player {
+	int32_t playing;    // part of this game
+	int32_t active;     // still in it (not defeated)
+	int32_t group;      // alliance id: equal ids are allied
+	int32_t open;       // accepts invitations
+	int32_t invited_by; // bit mask of slots whose invitation is waiting for this player's answer
+	int32_t color;      // player color index (bw_bridge_get_player_colors)
+	int32_t race;       // 0 zerg, 1 terran, 2 protoss
+	int32_t minerals_mined;
+	int32_t gas_mined;
+	int32_t production_score; // Brood War's unit + building score of what it built
+	int32_t units_killed;     // enemy units destroyed
+	int32_t buildings_razed;  // enemy buildings destroyed
+	int32_t units_lost;
+	int32_t reserved;
+	int64_t points;     // mining: everything mined by its alliance while it was a member, plus its own
+	int64_t own_points; // mined by this player's own workers
+	int64_t kill_score; // destroy_score of everything it destroyed
+} bw_alliance_player;
+
+// Fills one entry per slot 0-7. Returns 8, or -1 without a game.
+int bw_bridge_alliances(bw_bridge_t* bridge, bw_alliance_player* out, int max_count);
+
+bw_status bw_bridge_alliance_set_open(bw_bridge_t* bridge, int player_slot, int open);
+// Invites `to` (and its alliance) to join `from`'s. If `to` already invited
+// `from`, this accepts that invitation instead.
+bw_status bw_bridge_alliance_invite(bw_bridge_t* bridge, int from, int to);
+bw_status bw_bridge_alliance_respond(bw_bridge_t* bridge, int player_slot, int from, int accept);
+// Leaves the alliance, taking an equal share of its treasury.
+bw_status bw_bridge_alliance_leave(bw_bridge_t* bridge, int player_slot);
+
+#define BW_ALLIANCE_INVITED 1  // a invited b
+#define BW_ALLIANCE_DECLINED 2 // b declined a's invitation
+#define BW_ALLIANCE_FORMED 3   // b joined a's alliance
+#define BW_ALLIANCE_LEFT 4     // a left its alliance
+#define BW_ALLIANCE_OPEN 5     // a accepts invitations now
+#define BW_ALLIANCE_CLOSED 6   // a no longer does
+
+typedef struct bw_alliance_event {
+	int32_t frame;
+	int32_t kind;
+	int32_t a;
+	int32_t b;
+} bw_alliance_event;
+
+// Drains alliance events (oldest first). Returns the count written.
+int bw_bridge_poll_alliance_events(bw_bridge_t* bridge, bw_alliance_event* out, int max_count);
 
 // --- Fog of war ----------------------------------------------------------------
 
