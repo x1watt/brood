@@ -47,6 +47,21 @@ original icons from unit\cmdbtns\cmdicons.grp colored through ticon.pcx
 (an uncompressed GRP, decoded separately from OpenBW's compressed reader).
 Rally points are read from the building and drawn when it is selected.
 
+Pylon power fields: OpenBW keeps each pylon's psi_field_sprite hidden. While
+the player places a building that requires power, or has one own Pylon
+selected, the controller calls bw_bridge_show_psi_fields(owner) and the draw
+list includes those sprites (glow modifier through the light tables). The
+bridge places the four quarter images geometrically around the pylon because
+OpenBW's position for the flipped (left) quarters is off.
+
+Preferences live in lib/game/settings.dart ($XDG_DATA_HOME/brood/
+settings.json): volume (top bar slider), mute and fullscreen. Windowed mode
+on GNOME/X11 is always composited by mutter (only fullscreen or screen-sized
+windows are unredirected), which adds latency; the runner sets
+__GL_MaxFramesAllowed=1 to keep NVIDIA's frame queue short, fullscreen is
+remembered, and F12 toggles a frame timing overlay (BROOD_PERF_LOG=1 logs
+it to stderr).
+
 Terrain is kept as palette indices and colored by shaders/terrain.frag
 through a palette whose ranges 1-6 and 7-13 rotate every 8 game frames,
 which animates water like the original's palette cycling (ranges confirmed

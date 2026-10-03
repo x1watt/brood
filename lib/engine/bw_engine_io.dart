@@ -95,6 +95,9 @@ class BwEngine {
   // --- scalars ---
 
   int get currentFrame => _b.bw_bridge_current_frame(_h);
+
+  /// Show [owner]'s pylon psi fields in the draw list (-1 hides them).
+  void showPsiFields(int owner) => _b.bw_bridge_show_psi_fields(_h, owner);
   int minerals(int player) => _b.bw_bridge_minerals(_h, player);
   int gas(int player) => _b.bw_bridge_gas(_h, player);
 
@@ -282,6 +285,7 @@ class BwEngine {
           isAddon: t.is_addon != 0,
           race: t.race,
           name: String.fromCharCodes(chars),
+          requiresPower: t.requires_power != 0,
           readySound: t.ready_sound,
           whatFirst: t.what_first,
           whatLast: t.what_last,

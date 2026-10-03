@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 10
+#define BW_BRIDGE_ABI_VERSION 11
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -113,6 +113,11 @@ int bw_bridge_get_draw_list(bw_bridge_t* bridge, int selected_owner,
 
 int bw_bridge_get_tileset_index(bw_bridge_t* bridge);
 
+// Shows (owner 0-11) or hides (-1) the psi fields of that player's pylons
+// in the draw list. They exist all the time but stay hidden, and the
+// original shows them while placing a building that needs power.
+void bw_bridge_show_psi_fields(bw_bridge_t* bridge, int owner);
+
 // 256 RGBA8888 entries (1024 bytes).
 bw_status bw_bridge_get_palette(bw_bridge_t* bridge, uint8_t* out_rgba, int out_cap);
 
@@ -199,6 +204,7 @@ typedef struct bw_unit_type_info {
 	int32_t is_building;
 	int32_t is_addon;
 	int32_t race;                // 0 zerg, 1 terran, 2 protoss, 3 other
+	int32_t requires_power;      // Protoss building that must be placed in a pylon's psi field
 	char name[48];               // from rez/stat_txt.tbl, UTF-8-safe ASCII
 	// Voice lines (sound ids, inclusive ranges; first > last means none),
 	// played by the host on selection (what), command (yes), repeated

@@ -43,9 +43,25 @@ class SoundSystem {
   final math.Random _rng = math.Random();
   bool _ready = false;
 
-  /// 0-1, applied on top of each sound's own volume.
-  double volume = 0.7;
-  bool muted = false;
+  double _volume = 0.7;
+  bool _muted = false;
+
+  /// Master volume 0-1 (also affects sounds already playing).
+  double get volume => _volume;
+  set volume(double v) {
+    _volume = v.clamp(0.0, 1.0);
+    _applyGlobal();
+  }
+
+  bool get muted => _muted;
+  set muted(bool m) {
+    _muted = m;
+    _applyGlobal();
+  }
+
+  void _applyGlobal() {
+    if (_ready) SoLoud.instance.setGlobalVolume(_muted ? 0 : _volume);
+  }
 
   SoundSystem(this._engine);
 
@@ -57,10 +73,11 @@ class SoundSystem {
       'alsa' => LinuxAudioBackend.alsa,
       _ => LinuxAudioBackend.auto,
     };
-    muted = Platform.environment['BROOD_MUTE'] == '1';
+    if (Platform.environment['BROOD_MUTE'] == '1') _muted = true;
     try {
       await SoLoud.instance.init(linuxAudioBackend: backend);
       _ready = true;
+      _applyGlobal();
     } catch (e) {
       debugPrint('Sound disabled: $e');
     }
@@ -93,7 +110,7 @@ class SoundSystem {
   /// at full volume; non-positional engine sounds use their min_volume, as
   /// in the reference UI.
   void play(int id, {Offset? position, Rect? screen, int unitTypeId = -1, bool ui = false}) {
-    if (!_ready || muted || id < 0) return;
+    if (!_ready || _muted || id < 0) return;
     final info = _info(id);
     if (info == null || info.filename.isEmpty) return;
 
@@ -160,7 +177,7 @@ class SoundSystem {
       if (old != null) unawaited(SoLoud.instance.stop(old));
     }
 
-    channel.handle = SoLoud.instance.play(source, volume: volume * vol / 100);
+    channel.handle = SoLoud.instance.play(source, volume: vol / 100);
     channel.soundId = id;
     channel.priority = info.priority;
     channel.flags = info.flags;

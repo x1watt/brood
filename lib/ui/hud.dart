@@ -24,13 +24,24 @@ class TopBar extends StatelessWidget {
   final bool fullscreen;
   final VoidCallback onToggleFullscreen;
   final VoidCallback onToggleMute;
+  final ValueChanged<double> onVolume;
+  final ValueChanged<double> onVolumeDone;
   const TopBar({
     super.key,
     required this.c,
     required this.fullscreen,
     required this.onToggleFullscreen,
     required this.onToggleMute,
+    required this.onVolume,
+    required this.onVolumeDone,
   });
+
+  static IconData _volumeIcon(GameController c) {
+    final sound = c.sound;
+    if (sound == null || sound.muted) return Icons.volume_off;
+    if (sound.volume < 0.4) return Icons.volume_down;
+    return Icons.volume_up;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -85,7 +96,28 @@ class TopBar extends StatelessWidget {
             visualDensity: VisualDensity.compact,
             color: _textColor,
             onPressed: onToggleMute,
-            icon: Icon((c.sound?.muted ?? false) ? Icons.volume_off : Icons.volume_up),
+            icon: Icon(_volumeIcon(c)),
+          ),
+          SizedBox(
+            width: 120,
+            child: Tooltip(
+              message: 'Volume ${((c.sound?.volume ?? 0) * 100).round()}%',
+              child: SliderTheme(
+                data: SliderThemeData(
+                  trackHeight: 3,
+                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                  activeTrackColor: (c.sound?.muted ?? false) ? _dimText : _mineralColor,
+                  inactiveTrackColor: const Color(0xFF2E3A44),
+                  thumbColor: (c.sound?.muted ?? false) ? _dimText : _mineralColor,
+                ),
+                child: Slider(
+                  value: c.sound?.volume ?? 0,
+                  onChanged: c.sound == null ? null : onVolume,
+                  onChangeEnd: onVolumeDone,
+                ),
+              ),
+            ),
           ),
           IconButton(
             tooltip: fullscreen ? 'Exit fullscreen (F11)' : 'Fullscreen (F11)',
@@ -530,4 +562,43 @@ class _Tile extends StatelessWidget {
       child: Padding(padding: const EdgeInsets.all(3), child: Center(child: child)),
     ),
   );
+}
+
+/// F12: frame rate and where frame time goes, to tell a slow frame from a
+/// slow desktop compositor.
+class PerfOverlay extends StatelessWidget {
+  final GameController c;
+  final List<ui.FrameTiming> timings;
+  const PerfOverlay({super.key, required this.c, required this.timings});
+
+  static double _ms(Iterable<int> micros, {bool worst = false}) {
+    if (micros.isEmpty) return 0;
+    final list = micros.toList();
+    return (worst ? list.reduce((a, b) => a > b ? a : b) : list.reduce((a, b) => a + b) / list.length) / 1000;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = timings;
+    double fps = 0;
+    if (t.length > 1) {
+      final span = t.last.timestampInMicroseconds(ui.FramePhase.vsyncStart) - t.first.timestampInMicroseconds(ui.FramePhase.vsyncStart);
+      if (span > 0) fps = (t.length - 1) * 1e6 / span;
+    }
+    final build = t.map((f) => f.buildDuration.inMicroseconds);
+    final raster = t.map((f) => f.rasterDuration.inMicroseconds);
+    final total = t.map((f) => f.totalSpan.inMicroseconds);
+    final lines = [
+      '${fps.toStringAsFixed(1)} fps',
+      'tick   ${_ms(c.tickMicros).toStringAsFixed(1)} ms  (worst ${_ms(c.tickMicros, worst: true).toStringAsFixed(1)})',
+      'build  ${_ms(build).toStringAsFixed(1)} ms  (worst ${_ms(build, worst: true).toStringAsFixed(1)})',
+      'raster ${_ms(raster).toStringAsFixed(1)} ms  (worst ${_ms(raster, worst: true).toStringAsFixed(1)})',
+      'frame  ${_ms(total).toStringAsFixed(1)} ms  (worst ${_ms(total, worst: true).toStringAsFixed(1)})',
+    ];
+    return Container(
+      padding: const EdgeInsets.all(8),
+      color: const Color(0xCC000000),
+      child: Text(lines.join('\n'), style: const TextStyle(color: Color(0xFF3CFF3C), fontFamily: 'monospace', fontSize: 12)),
+    );
+  }
 }

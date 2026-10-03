@@ -108,6 +108,7 @@ struct bw_bridge {
 
 	action_state action_st;
 	sound_queue sounds;
+	int psi_owner = -1;
 	std::unique_ptr<sim_functions> sim;
 	// Always bind the result with `auto`: assigning it to an
 	// action_functions would slice off the sound hook.
@@ -344,6 +345,16 @@ int bw_bridge_get_draw_list(bw_bridge_t* bridge, int selected_owner,
 			}
 		}
 
+		// Pylon psi fields: always present, normally hidden.
+		std::unordered_map<const sprite_t*, bool> psi_fields;
+		if (b->psi_owner >= 0 && b->psi_owner < 12) {
+			for (unit_t* u : ptr(st.player_units.at(b->psi_owner))) {
+				if (f.unit_is(u, UnitTypes::Protoss_Pylon) && u->building.pylon.psi_field_sprite) {
+					psi_fields[u->building.pylon.psi_field_sprite] = true;
+				}
+			}
+		}
+
 		std::unordered_map<const sprite_t*, const unit_t*> selected_sprites;
 		if (selected_owner >= 0 && (size_t)selected_owner < b->action_st.selection.size()) {
 			for (unit_t* u : b->action_st.selection.at(selected_owner)) {
@@ -363,8 +374,9 @@ int bw_bridge_get_draw_list(bw_bridge_t* bridge, int selected_owner,
 		a_vector<std::pair<uint32_t, const sprite_t*>> sorted;
 		for (int y = from_y; y < to_y; ++y) {
 			for (const sprite_t* sprite : ptr(st.sprites_on_tile_line.at((size_t)y))) {
-				if (f.s_hidden(sprite)) continue;
-				if (sprite->position.x < min_x || sprite->position.x > max_x) continue;
+				bool psi = !psi_fields.empty() && psi_fields.count(sprite);
+				if (f.s_hidden(sprite) && !psi) continue;
+				if (sprite->position.x < min_x - (psi ? 256 : 0) || sprite->position.x > max_x + (psi ? 256 : 0)) continue;
 				sorted.emplace_back(sprite_depth_order(sprite), sprite);
 			}
 		}
@@ -384,8 +396,9 @@ int bw_bridge_get_draw_list(bw_bridge_t* bridge, int selected_owner,
 
 			// ui.h draw_sprite(): images back to front; the selection circle
 			// goes right before the first non-shadow image.
+			bool psi_sprite = !psi_fields.empty() && psi_fields.count(sprite);
 			for (const image_t* image : ptr(reverse(sprite->images))) {
-				if (image->flags & image_t::flag_hidden) continue;
+				if ((image->flags & image_t::flag_hidden) && !psi_sprite) continue;
 				if (!image->grp) continue;
 
 				if (draw_selection_u && image->modifier != 10) {
@@ -418,6 +431,18 @@ int bw_bridge_get_draw_list(bw_bridge_t* bridge, int selected_owner,
 
 				if (n >= max_count) return n;
 				xy pos = f.get_image_map_position(image);
+				if (psi_sprite) {
+					// OpenBW never displays psi fields itself and positions the
+					// mirrored (left) quarters on the right. The field is four
+					// quarter-ellipses around the pylon: Psi_Field*_Right_Upper
+					// above, *_Lower below, flipped ones on the left.
+					auto& frame = image->grp->frames.at(image->frame_index);
+					int id = (int)image->image_type->id;
+					bool upper = id == (int)ImageTypes::IMAGEID_Psi_Field1_Right_Upper || id == (int)ImageTypes::IMAGEID_Psi_Field2_Right_Upper;
+					bool left = (image->flags & image_t::flag_horizontally_flipped) != 0;
+					pos.x = left ? sprite->position.x - (int)frame.size.x : sprite->position.x;
+					pos.y = upper ? sprite->position.y - (int)frame.size.y : sprite->position.y;
+				}
 				bw_draw_item& item = out_items[n++];
 				item.kind = BW_DRAW_IMAGE;
 				item.x = pos.x;
@@ -750,6 +775,7 @@ bw_status bw_bridge_get_unit_type_info(bw_bridge_t* bridge, int unit_type_id, bw
 		else if (ut->group_flags & 2) race = 1;
 		else if (ut->group_flags & 4) race = 2;
 		out_info->race = race;
+		out_info->requires_power = f.ut_requires_psionic_matrix(ut) ? 1 : 0;
 
 		b->ensure_unit_names();
 		std::string name = (size_t)unit_type_id < b->unit_names.size() ? b->unit_names[(size_t)unit_type_id] : std::string();
@@ -1371,4 +1397,9 @@ bw_status bw_bridge_cancel_queue_slot(bw_bridge_t* bridge, int owner, int slot) 
 	} catch (...) {
 		return BW_ERR_UNKNOWN;
 	}
+}
+
+void bw_bridge_show_psi_fields(bw_bridge_t* bridge, int owner) {
+	if (!bridge) return;
+	B(bridge)->psi_owner = owner;
 }

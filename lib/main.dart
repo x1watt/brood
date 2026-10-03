@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui' show AppExitResponse;
+import 'dart:ui' show AppExitResponse, FramePhase, FrameTiming;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import 'game/game_controller.dart';
 import 'game/play_stats.dart';
+import 'game/settings.dart';
 import 'ui/game_viewport.dart';
 import 'ui/hud.dart';
 import 'ui/minimap_view.dart';
@@ -47,6 +48,14 @@ class WindowControl {
       return false;
     }
   }
+
+  static Future<bool> setFullscreen(bool on) async {
+    try {
+      return await _channel.invokeMethod<bool>('setFullscreen', on) ?? false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
 }
 
 class StartScreen extends StatefulWidget {
@@ -62,6 +71,7 @@ class _StartScreenState extends State<StartScreen> {
   List<File> _maps = const [];
   File? _map;
   final PlayStats _stats = PlayStats.load();
+  final Settings _settings = Settings.load();
 
   static String mapKey(File f) => f.path.startsWith(_dataDir) ? f.path.substring(_dataDir.length + 1) : f.path;
 
@@ -96,7 +106,7 @@ class _StartScreenState extends State<StartScreen> {
     final map = _map;
     if (map == null) return;
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => GameScreen(mapFile: map.path, mapKey: mapKey(map), race: _race, stats: _stats)),
+      MaterialPageRoute(builder: (_) => GameScreen(mapFile: map.path, mapKey: mapKey(map), race: _race, stats: _stats, settings: _settings)),
     );
   }
 
@@ -201,7 +211,15 @@ class GameScreen extends StatefulWidget {
   final String mapKey;
   final int race;
   final PlayStats stats;
-  const GameScreen({super.key, required this.mapFile, required this.mapKey, required this.race, required this.stats});
+  final Settings settings;
+  const GameScreen({
+    super.key,
+    required this.mapFile,
+    required this.mapKey,
+    required this.race,
+    required this.stats,
+    required this.settings,
+  });
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -215,6 +233,14 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
   bool _fullscreen = false;
   Timer? _statsTimer;
   int _countedFrames = 0;
+  bool _showPerf = false;
+  final List<FrameTiming> _timings = [];
+  Timer? _perfLogTimer;
+
+  void _onTimings(List<FrameTiming> t) {
+    _timings.addAll(t);
+    if (_timings.length > 120) _timings.removeRange(0, _timings.length - 120);
+  }
 
   // Play time is game time (frames at the original's 42 ms each), saved
   // every 30 s, when leaving the game and when the window closes.
@@ -238,8 +264,34 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
         return AppExitResponse.exit;
       },
     );
+    SchedulerBinding.instance.addTimingsCallback(_onTimings);
+    if (Platform.environment['BROOD_PERF_LOG'] == '1') {
+      // For measuring: print the overlay's numbers every 5 s.
+      _perfLogTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+        final t = List<FrameTiming>.of(_timings);
+        if (t.length < 2) return;
+        final span = t.last.timestampInMicroseconds(FramePhase.vsyncStart) - t.first.timestampInMicroseconds(FramePhase.vsyncStart);
+        double avg(Iterable<int> v) => v.isEmpty ? 0 : v.reduce((a, b) => a + b) / v.length / 1000;
+        int worst(Iterable<int> v) => v.isEmpty ? 0 : v.reduce((a, b) => a > b ? a : b);
+        stderr.writeln('perf fps=${((t.length - 1) * 1e6 / span).toStringAsFixed(1)} '
+            'tick=${avg(_c.tickMicros).toStringAsFixed(2)}ms(worst ${(worst(_c.tickMicros) / 1000).toStringAsFixed(1)}) '
+            'build=${avg(t.map((f) => f.buildDuration.inMicroseconds)).toStringAsFixed(2)}ms '
+            'raster=${avg(t.map((f) => f.rasterDuration.inMicroseconds)).toStringAsFixed(2)}ms '
+            'frame=${avg(t.map((f) => f.totalSpan.inMicroseconds)).toStringAsFixed(2)}ms(worst ${(worst(t.map((f) => f.totalSpan.inMicroseconds)) / 1000).toStringAsFixed(1)})');
+      });
+    }
     _c.start(dataDir: _dataDir, mapFile: widget.mapFile, race: widget.race).then((_) {
       if (!mounted) return;
+      final s = _c.sound;
+      if (s != null) {
+        s.volume = widget.settings.volume;
+        if (widget.settings.muted) s.muted = true;
+      }
+      if (widget.settings.fullscreen) {
+        WindowControl.setFullscreen(true).then((on) {
+          if (mounted) setState(() => _fullscreen = on);
+        });
+      }
       if (_c.ready) {
         widget.stats.gameStarted(widget.mapKey);
         _countedFrames = _c.frame;
@@ -251,6 +303,8 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
 
   @override
   void dispose() {
+    SchedulerBinding.instance.removeTimingsCallback(_onTimings);
+    _perfLogTimer?.cancel();
     _statsTimer?.cancel();
     _flushPlayTime();
     _lifecycle.dispose();
@@ -262,6 +316,9 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
 
   Future<void> _toggleFullscreen() async {
     final on = await WindowControl.toggleFullscreen();
+    widget.settings
+      ..fullscreen = on
+      ..save();
     if (mounted) setState(() => _fullscreen = on);
     _focus.requestFocus();
   }
@@ -270,7 +327,26 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
     final s = _c.sound;
     if (s == null) return;
     s.muted = !s.muted;
+    widget.settings
+      ..muted = s.muted
+      ..save();
     _c.hud.fire();
+  }
+
+  void _setVolume(double v) {
+    final s = _c.sound;
+    if (s == null) return;
+    s.volume = v;
+    if (s.muted && v > 0) s.muted = false;
+    _c.hud.fire();
+  }
+
+  void _volumeDone(double v) {
+    widget.settings
+      ..volume = v
+      ..muted = _c.sound?.muted ?? false
+      ..save();
+    _focus.requestFocus();
   }
 
   static final _arrows = {
@@ -304,6 +380,10 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
     final key = e.logicalKey;
     if (key == LogicalKeyboardKey.f11) {
       _toggleFullscreen();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.f12) {
+      setState(() => _showPerf = !_showPerf);
       return KeyEventResult.handled;
     }
     if (!_c.ready) return KeyEventResult.ignored;
@@ -374,9 +454,28 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                     fullscreen: _fullscreen,
                     onToggleFullscreen: _toggleFullscreen,
                     onToggleMute: _toggleMute,
+                    onVolume: _setVolume,
+                    onVolumeDone: _volumeDone,
                   ),
                 ),
-                Expanded(child: GameViewport(controller: _c)),
+                Expanded(
+                  child: Stack(
+                    children: [
+                      Positioned.fill(child: GameViewport(controller: _c)),
+                      if (_showPerf)
+                        Positioned(
+                          right: 8,
+                          top: 8,
+                          child: IgnorePointer(
+                            child: ListenableBuilder(
+                              listenable: _c.hud,
+                              builder: (_, _) => PerfOverlay(c: _c, timings: _timings),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
                 SizedBox(
                   height: 200,
                   child: ListenableBuilder(

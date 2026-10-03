@@ -103,6 +103,24 @@ static void test_protoss(const char* dd, const char* mf) {
 	}
 	bw_unit_info py;
 	bw_bridge_get_unit(b, pylon, &py);
+	{
+		/* Psi field: hidden normally, drawn when asked for (placing a powered building).
+		 * The pylon creates it with its first order after completing. */
+		bw_bridge_step(b, 24);
+		int psi_off = 0, psi_on = 0, mod = -1, img = -1;
+		int n = bw_bridge_get_draw_list(b, me, py.x - 320, py.y - 240, 640, 480, items, 16384);
+		for (int i = 0; i != n; ++i) if (items[i].image_type_id >= 584 && items[i].image_type_id <= 587) ++psi_off;
+		bw_bridge_show_psi_fields(b, me);
+		n = bw_bridge_get_draw_list(b, me, py.x - 320, py.y - 240, 640, 480, items, 16384);
+		for (int i = 0; i != n; ++i) if (items[i].image_type_id >= 584 && items[i].image_type_id <= 587) {
+			++psi_on; mod = items[i].modifier; img = items[i].image_type_id;
+			/* Quarters surround the pylon: two left of it, two right. */
+			CHECK(items[i].flipped ? items[i].x < py.x : items[i].x >= py.x, "psi quarter %d on the wrong side", items[i].image_type_id);
+		}
+		bw_bridge_show_psi_fields(b, -1);
+		printf("bridge_smoke_test: psi field images hidden=%d shown=%d (image %d, modifier %d)\n", psi_off, psi_on, img, mod);
+		CHECK(psi_off == 0 && psi_on > 0, "psi field visibility");
+	}
 	bw_bridge_step(b, 24 * 20);
 	bw_bridge_select_units(b, me, &probes[1], 1);
 	CHECK(nearest_place(b, me, GATEWAY, py.x, py.y, 2, &tx, &ty) && bw_bridge_build(b, me, GATEWAY, tx, ty) == BW_OK, "place gateway (needs pylon power)");

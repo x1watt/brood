@@ -271,6 +271,20 @@ class BwBridgeBindings {
   late final _bw_bridge_get_tileset_index = _bw_bridge_get_tileset_indexPtr
       .asFunction<int Function(ffi.Pointer<bw_bridge_t>)>();
 
+  /// Shows (owner 0-11) or hides (-1) the psi fields of that player's pylons
+  /// in the draw list. They exist all the time but stay hidden, and the
+  /// original shows them while placing a building that needs power.
+  void bw_bridge_show_psi_fields(ffi.Pointer<bw_bridge_t> bridge, int owner) {
+    return _bw_bridge_show_psi_fields(bridge, owner);
+  }
+
+  late final _bw_bridge_show_psi_fieldsPtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Void Function(ffi.Pointer<bw_bridge_t>, ffi.Int)>
+      >('bw_bridge_show_psi_fields');
+  late final _bw_bridge_show_psi_fields = _bw_bridge_show_psi_fieldsPtr
+      .asFunction<void Function(ffi.Pointer<bw_bridge_t>, int)>();
+
   /// 256 RGBA8888 entries (1024 bytes).
   bw_status bw_bridge_get_palette(
     ffi.Pointer<bw_bridge_t> bridge,
@@ -1807,6 +1821,10 @@ final class bw_unit_type_info extends ffi.Struct {
   @ffi.Int32()
   external int race;
 
+  /// Protoss building that must be placed in a pylon's psi field
+  @ffi.Int32()
+  external int requires_power;
+
   /// from rez/stat_txt.tbl, UTF-8-safe ASCII
   @ffi.Array.multi([48])
   external ffi.Array<ffi.Char> name;
@@ -1937,7 +1955,7 @@ final class bw_sound_info extends ffi.Struct {
   external ffi.Array<ffi.Char> filename;
 }
 
-const int BW_BRIDGE_ABI_VERSION = 10;
+const int BW_BRIDGE_ABI_VERSION = 11;
 
 const int BW_DRAW_IMAGE = 0;
 

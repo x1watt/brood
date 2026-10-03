@@ -127,6 +127,10 @@ class GameController {
 
   Duration? _lastTick;
   int _accMicros = 0;
+
+  /// Time spent in tick() (sim steps + draw list/unit queries), for the
+  /// F12 performance overlay.
+  final List<int> tickMicros = [];
   int _lastHudMs = 0;
 
   Set<int> _buildable = const {};
@@ -222,6 +226,13 @@ class GameController {
   /// something changed (markers count as a change while animating).
   void tick(Duration elapsed) {
     if (!ready) return;
+    final sw = Stopwatch()..start();
+    _tick(elapsed);
+    tickMicros.add(sw.elapsedMicroseconds);
+    if (tickMicros.length > 120) tickMicros.removeAt(0);
+  }
+
+  void _tick(Duration elapsed) {
     final last = _lastTick ?? elapsed;
     _lastTick = elapsed;
     final dtMicros = (elapsed - last).inMicroseconds.clamp(0, 250000);
@@ -279,8 +290,17 @@ class GameController {
     }
   }
 
+  // The original shows pylons' power fields while placing a building that
+  // needs power; also shown while a pylon is selected.
+  bool get showsPsiFields {
+    if (mode == CommandMode.build && buildTypeId != null) return engine.unitType(buildTypeId!).requiresPower;
+    final sel = selectedUnits;
+    return sel.length == 1 && sel.first.owner == myPlayer && sel.first.typeId == 156;
+  }
+
   void _refreshView() {
     if (viewport.isEmpty) return;
+    engine.showPsiFields(showsPsiFields ? myPlayer : -1);
     drawItems = engine.getDrawList(myPlayer, camX.floor(), camY.floor(), viewport.width.ceil(), viewport.height.ceil());
   }
 

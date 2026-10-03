@@ -126,6 +126,7 @@ class UnitTypeInfo {
   final bool isAddon;
   final int race;
   final String name;
+  final bool requiresPower;
   final int readySound;
   final int whatFirst, whatLast;
   final int pissedFirst, pissedLast;
@@ -143,6 +144,7 @@ class UnitTypeInfo {
     required this.isAddon,
     required this.race,
     required this.name,
+    required this.requiresPower,
     required this.readySound,
     required this.whatFirst,
     required this.whatLast,
