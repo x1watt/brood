@@ -1,6 +1,6 @@
 // lib/ui/start_screen.dart
 //
-// Before a game: pick a map (most played first), set up the players (you
+// Before a game: pick a map (most played first, with a search box), set up the players (you
 // plus computer opponents, their races and alliances), or load a saved
 // game.
 
@@ -33,6 +33,8 @@ class _StartScreenState extends State<StartScreen> {
   GameMap? _map;
   List<SaveSession> _saves = const [];
   bool _loadTab = false;
+  final _mapSearch = TextEditingController();
+  final _saveSearch = TextEditingController();
 
   // Setup being edited: index 0 is you, the rest computer opponents.
   int _myRace = 1;
@@ -57,6 +59,49 @@ class _StartScreenState extends State<StartScreen> {
     _saves = SaveSession.list();
     _restoreLastSetup();
   }
+
+  @override
+  void dispose() {
+    _mapSearch.dispose();
+    _saveSearch.dispose();
+    super.dispose();
+  }
+
+  /// Every word typed must appear somewhere in [text] (any case, any order).
+  static bool _matches(String query, String text) {
+    final t = text.toLowerCase();
+    return query.toLowerCase().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).every(t.contains);
+  }
+
+  Widget _searchField(TextEditingController controller, String hint) => Padding(
+    padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+    child: TextField(
+      controller: controller,
+      onChanged: (_) => setState(() {}),
+      textInputAction: TextInputAction.search,
+      style: const TextStyle(fontSize: 14),
+      decoration: InputDecoration(
+        isDense: true,
+        hintText: hint,
+        hintStyle: const TextStyle(color: _faint),
+        prefixIcon: const Icon(Icons.search, size: 18, color: _dim),
+        suffixIcon: controller.text.isEmpty
+            ? null
+            : IconButton(
+                tooltip: 'Clear',
+                icon: const Icon(Icons.close, size: 16, color: _dim),
+                onPressed: () => setState(controller.clear),
+              ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: _line)),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: _line)),
+      ),
+    ),
+  );
+
+  Widget _noMatch(String text) => Padding(
+    padding: const EdgeInsets.all(16),
+    child: Text(text, style: const TextStyle(color: _dim)),
+  );
 
   void _restoreLastSetup() {
     final j = _settings.lastSetup;
@@ -195,15 +240,26 @@ class _StartScreenState extends State<StartScreen> {
     if (_maps.isEmpty) {
       return _box(child: const Center(child: Text('No maps found in the game data folder.', style: TextStyle(color: Color(0xFFFF6B5E)))));
     }
-    final played = _maps.where((m) => _seconds(m) > 0).toList();
-    final rest = _maps.where((m) => _seconds(m) == 0).toList();
+    final query = _mapSearch.text;
+    final shown = _maps.where((m) => _matches(query, '${m.name} ${m.folder}')).toList();
+    final played = shown.where((m) => _seconds(m) > 0).toList();
+    final rest = shown.where((m) => _seconds(m) == 0).toList();
     return _box(
-      child: ListView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (played.isNotEmpty) _heading('Most played'),
-          for (final m in played) _mapTile(m),
-          _heading(played.isNotEmpty ? 'All maps' : 'Maps'),
-          for (final m in rest) _mapTile(m),
+          _searchField(_mapSearch, 'Search ${_maps.length} maps'),
+          Expanded(
+            child: ListView(
+              children: [
+                if (shown.isEmpty) _noMatch('No map matches "$query".'),
+                if (played.isNotEmpty) _heading('Most played'),
+                for (final m in played) _mapTile(m),
+                if (rest.isNotEmpty) _heading(played.isNotEmpty ? 'All maps' : 'Maps'),
+                for (final m in rest) _mapTile(m),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -359,18 +415,29 @@ class _StartScreenState extends State<StartScreen> {
   // time: continue from the latest or pick an earlier one.
   Widget _savedGames() {
     if (_saves.isEmpty) return _box(child: const Center(child: Text('No saved games yet.', style: TextStyle(color: _dim))));
+    final query = _saveSearch.text;
     final byMap = <String, List<SaveSession>>{};
     for (final s in _saves) {
+      if (!_matches(query, '${s.name} ${s.mapName} ${s.origin}')) continue;
       byMap.putIfAbsent(s.mapKey, () => []).add(s);
     }
     return _box(
-      child: ListView(
-        padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          for (final entry in byMap.entries) ...[
-            _heading(entry.value.first.mapName),
-            for (final s in entry.value) _sessionTile(s),
-          ],
+          _searchField(_saveSearch, 'Search ${_saves.length} saved games'),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.only(bottom: 12),
+              children: [
+                if (byMap.isEmpty) _noMatch('No saved game matches "$query".'),
+                for (final entry in byMap.entries) ...[
+                  _heading(entry.value.first.mapName),
+                  for (final s in entry.value) _sessionTile(s),
+                ],
+              ],
+            ),
+          ),
         ],
       ),
     );

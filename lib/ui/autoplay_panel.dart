@@ -53,30 +53,34 @@ class AutoplayButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final on = c.autoplay != 0;
-    return Tooltip(
-      message: 'Auto-play (F8)',
-      child: InkWell(
-        borderRadius: BorderRadius.circular(6),
-        onTap: onPressed,
-        child: Container(
-          height: 26,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: on ? _accent.withValues(alpha: 0.8) : (open ? const Color(0xFF555555) : _line)),
-            color: on ? _accent.withValues(alpha: 0.12) : (open ? const Color(0xFF1A1A1A) : null),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.smart_toy_outlined, size: 16, color: on ? _accent : _text),
-              if (!compact) ...[
-                const SizedBox(width: 6),
-                Text(on ? 'Auto-play: ${autoplaySummary(c.autoplay)}' : 'Auto-play', style: TextStyle(color: on ? _accent : _text, fontSize: 12)),
-                const SizedBox(width: 2),
-                Icon(open ? Icons.expand_less : Icons.expand_more, size: 16, color: _dim),
+    // Same tap group as the panel: tapping the button isn't a tap outside.
+    return TapRegion(
+      groupId: AutoplayPanel.tapGroup,
+      child: Tooltip(
+        message: 'Auto-play (F8)',
+        child: InkWell(
+          borderRadius: BorderRadius.circular(6),
+          onTap: onPressed,
+          child: Container(
+            height: 26,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: on ? _accent.withValues(alpha: 0.8) : (open ? const Color(0xFF555555) : _line)),
+              color: on ? _accent.withValues(alpha: 0.12) : (open ? const Color(0xFF1A1A1A) : null),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.smart_toy_outlined, size: 16, color: on ? _accent : _text),
+                if (!compact) ...[
+                  const SizedBox(width: 6),
+                  Text(on ? 'Auto-play: ${autoplaySummary(c.autoplay)}' : 'Auto-play', style: TextStyle(color: on ? _accent : _text, fontSize: 12)),
+                  const SizedBox(width: 2),
+                  Icon(open ? Icons.expand_less : Icons.expand_more, size: 16, color: _dim),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -90,6 +94,9 @@ class AutoplayPanel extends StatelessWidget {
   final ValueChanged<int> onChoose;
   final VoidCallback onClose;
   const AutoplayPanel({super.key, required this.c, required this.chosen, required this.onChoose, required this.onClose});
+
+  /// The panel and its top bar button: a tap anywhere else closes the panel.
+  static const Object tapGroup = AutoplayPanel;
 
   bool get _on => c.autoplay != 0;
   int get _modes => _on ? c.autoplay : chosen;
@@ -115,62 +122,66 @@ class AutoplayPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final modes = _modes;
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        width: 380,
-        decoration: BoxDecoration(
-          color: const Color(0xF2080808),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: _on ? _accent.withValues(alpha: 0.5) : const Color(0xFF333333)),
-          boxShadow: const [BoxShadow(color: Color(0xAA000000), blurRadius: 24)],
-        ),
-        padding: const EdgeInsets.fromLTRB(14, 10, 8, 12),
-        // On a phone the panel is taller than the screen: it scrolls.
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.smart_toy_outlined, color: _on ? _accent : _text, size: 20),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'Auto-play',
-                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white),
+    return TapRegion(
+      groupId: tapGroup,
+      onTapOutside: (_) => onClose(),
+      child: Material(
+        color: Colors.transparent,
+        child: Container(
+          width: 380,
+          decoration: BoxDecoration(
+            color: const Color(0xF2080808),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: _on ? _accent.withValues(alpha: 0.5) : const Color(0xFF333333)),
+            boxShadow: const [BoxShadow(color: Color(0xAA000000), blurRadius: 24)],
+          ),
+          padding: const EdgeInsets.fromLTRB(14, 10, 8, 12),
+          // On a phone the panel is taller than the screen: it scrolls.
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.smart_toy_outlined, color: _on ? _accent : _text, size: 20),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'Auto-play',
+                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white),
+                      ),
                     ),
-                  ),
-                  Switch(
-                    value: _on,
-                    onChanged: _toggle,
-                    thumbColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? Colors.black : _dim),
-                    trackColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? _accent : const Color(0xFF1E1E1E)),
-                    trackOutlineColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? _accent : const Color(0xFF444444)),
-                  ),
-                  IconButton(
-                    tooltip: 'Close',
-                    onPressed: onClose,
-                    icon: const Icon(Icons.close, size: 18, color: _dim),
-                  ),
-                ],
-              ),
-              const Padding(
-                padding: EdgeInsets.only(right: 6, bottom: 8),
-                child: Text(
-                  'The computer plays your side with you. Units you command or keep in a control group stay yours, '
-                  'and defending your base always comes first.',
-                  style: TextStyle(fontSize: 12, color: _dim, height: 1.35),
+                    Switch(
+                      value: _on,
+                      onChanged: _toggle,
+                      thumbColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? Colors.black : _dim),
+                      trackColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? _accent : const Color(0xFF1E1E1E)),
+                      trackOutlineColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? _accent : const Color(0xFF444444)),
+                    ),
+                    IconButton(
+                      tooltip: 'Close',
+                      onPressed: onClose,
+                      icon: const Icon(Icons.close, size: 18, color: _dim),
+                    ),
+                  ],
                 ),
-              ),
-              _tile(_auto, modes == AutoplayMode.all, included: false),
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 4),
-                child: Divider(height: 1, color: _line),
-              ),
-              for (final o in _options) _tile(o, modes & o.bits != 0, included: modes == AutoplayMode.all),
-            ],
+                const Padding(
+                  padding: EdgeInsets.only(right: 6, bottom: 8),
+                  child: Text(
+                    'The computer plays your side with you. Units you command or keep in a control group stay yours, '
+                    'and defending your base always comes first.',
+                    style: TextStyle(fontSize: 12, color: _dim, height: 1.35),
+                  ),
+                ),
+                _tile(_auto, modes == AutoplayMode.all, included: false),
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 4),
+                  child: Divider(height: 1, color: _line),
+                ),
+                for (final o in _options) _tile(o, modes & o.bits != 0, included: modes == AutoplayMode.all),
+              ],
+            ),
           ),
         ),
       ),

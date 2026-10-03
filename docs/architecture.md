@@ -209,6 +209,11 @@ panel isn't built while closed.
 --dart-define=BROOD_TOUCH_LOG=true prints touch handling, for testing over
 adb.
 
+The app icon (a slit-pupil eye in a gold hive cell, original artwork, not
+the game's) is drawn in code by tool/icons/make_icons_test.dart, which
+writes the Android (legacy, adaptive and themed), web and Linux window
+icons: run it with flutter test after changing the design.
+
 Still missing: creep drawing, lift off/land and nukes.
 
 ## Layers

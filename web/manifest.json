@@ -1,12 +1,12 @@
 {
-    "name": "brood",
-    "short_name": "brood",
+    "name": "Brood",
+    "short_name": "Brood",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
+    "background_color": "#000000",
+    "theme_color": "#000000",
+    "description": "StarCraft: Brood War on the OpenBW engine, with your own game files.",
+    "orientation": "any",
     "prefer_related_applications": false,
     "icons": [
         {
