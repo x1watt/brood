@@ -81,17 +81,14 @@ void main() {
     );
     expect(tester.takeException(), isNull);
     // Scoreboard: totals are mined + built + destroyed.
-    expect(find.text('Score'), findsOneWidget);
+    expect(find.textContaining('#1'), findsWidgets);
     expect(find.text('5,900'), findsWidgets); // Computer 2: 2,600 + 2,100 + 1,200
-    // Computer 1 invited me: Accept on its card; the alliance of 2 and 3
-    // can be invited to join.
-    expect(find.text('Accept'), findsOneWidget);
+    // Computer 1 invited me: its card offers to accept; the alliance of
+    // Computers 2 and 3 (named, at war) can be invited.
+    expect(find.text('Accept alliance'), findsOneWidget);
     expect(find.text('Iron Dawn'), findsOneWidget); // name code 1
-    expect(find.text('Enemy alliance of 2'), findsOneWidget);
-    expect(find.text('Invite to join'), findsOneWidget);
-    expect(find.text('You, on your own'), findsOneWidget);
-    // Computers 2 and 3 are fighting Computer 1: their card comes first,
-    // marked as fighting; the army total combines both members.
+    expect(find.text('Invite'), findsWidgets);
+    expect(find.text('You'), findsWidgets); // my own card, no tag needed
     expect(find.textContaining('Fighting Computer 1'), findsWidgets);
   });
 

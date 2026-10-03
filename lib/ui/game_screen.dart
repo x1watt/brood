@@ -6,7 +6,7 @@
 
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui' show AppExitResponse, FramePhase, FrameTiming;
+import 'dart:ui' show AppExitResponse, AppExitType, FramePhase, FrameTiming;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -16,6 +16,7 @@ import '../game/game_controller.dart';
 import '../game/game_data.dart';
 import '../game/game_setup.dart';
 import '../game/play_stats.dart';
+import '../game/saved_games.dart';
 import '../game/settings.dart';
 import 'alliance_panel.dart';
 import 'game_viewport.dart';
@@ -72,6 +73,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       onInactive: _c.stopAllScrolling,
       onHide: _c.stopAllScrolling,
       onExitRequested: () async {
+        await _autosave(force: true);
         _flushPlayTime();
         return AppExitResponse.exit;
       },
@@ -111,6 +113,9 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
         if (widget.launch.saved == null) widget.stats.gameStarted(widget.launch.mapKey);
         _countedFrames = _c.frame;
         _statsTimer = Timer.periodic(const Duration(seconds: 30), (_) => _flushPlayTime());
+        // A loaded game's starting point is already saved.
+        if (widget.launch.saved != null) _lastSavedFrame = _c.frame;
+        _autosaveTimer = Timer.periodic(const Duration(seconds: 10), (_) => _autosave());
       }
       setState(() {});
     });
@@ -129,6 +134,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
     SchedulerBinding.instance.removeTimingsCallback(_onTimings);
     _perfLogTimer?.cancel();
     _statsTimer?.cancel();
+    _autosaveTimer?.cancel();
     _flushPlayTime();
     _lifecycle.dispose();
     _ticker.dispose();
@@ -205,24 +211,79 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
     _focus.requestFocus();
   }
 
-  Future<void> _saveGame() async {
-    final seconds = _c.frame * GameController.frameMicros ~/ 1000000;
+  // --- saving: sessions of points in time (lib/game/saved_games.dart) ---
+
+  // Auto-save spacing by game time: every minute in the first hour, every
+  // ten minutes up to ten hours, then every hour.
+  static const int _minuteFrames = 1000 * 60 ~/ 42; // frames per game minute
+  int get _autosaveFrames {
+    final minutes = _c.frame ~/ _minuteFrames;
+    if (minutes < 60) return _minuteFrames;
+    if (minutes < 600) return _minuteFrames * 10;
+    return _minuteFrames * 60;
+  }
+  SaveSession? _session; // created with the first save of this stretch of play
+  int _lastSavedFrame = -1;
+  bool _saving = false;
+  Timer? _autosaveTimer;
+
+  String get _now {
     final now = DateTime.now();
     String two(int v) => v.toString().padLeft(2, '0');
-    final suggested =
-        '${widget.launch.mapName} ${seconds ~/ 60}:${two(seconds % 60)} (${now.year}-${two(now.month)}-${two(now.day)} ${two(now.hour)}:${two(now.minute)})';
+    return '${now.year}-${two(now.month)}-${two(now.day)} ${two(now.hour)}:${two(now.minute)}';
+  }
+
+  SaveSession _newSession(String name, {String origin = ''}) {
+    final l = widget.launch;
+    return SaveSession.create(name: name, mapFile: l.mapFile, mapKey: l.mapKey, mapName: l.mapName, setup: l.setup, origin: origin);
+  }
+
+  Future<void> _autosave({bool force = false}) async {
+    if (!_c.ready || _saving || !widget.settings.autosave) return;
+    if (!force && _c.frame - _lastSavedFrame < _autosaveFrames) return;
+    if (_c.frame <= _lastSavedFrame + 24) return; // nothing new
+    _saving = true;
+    try {
+      // A loaded game carries on in a new session, so the old timeline stays.
+      _session ??= _newSession('${widget.launch.mapName} $_now', origin: widget.launch.continues);
+      final data = _c.snapshot();
+      await _session!.addPoint(data);
+      _lastSavedFrame = data.frame;
+    } catch (e) {
+      debugPrint('autosave failed: $e');
+    } finally {
+      _saving = false;
+    }
+  }
+
+  Future<void> _saveGame() async {
+    final seconds = _c.frame * GameController.frameMicros ~/ 1000000;
+    String two(int v) => v.toString().padLeft(2, '0');
+    final suggested = '${widget.launch.mapName} ${seconds ~/ 60}:${two(seconds % 60)} ($_now)';
     final controller = TextEditingController(text: suggested)..selection = TextSelection(baseOffset: 0, extentOffset: suggested.length);
     final name = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Save game'),
         content: SizedBox(
-          width: 420,
-          child: TextField(
-            controller: controller,
-            autofocus: true,
-            decoration: const InputDecoration(labelText: 'Name'),
-            onSubmitted: (v) => Navigator.pop(ctx, v),
+          width: 440,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Name'),
+                onSubmitted: (v) => Navigator.pop(ctx, v),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Saving starts a new session under this name; auto-saves carry on there. '
+                'The earlier session keeps its own points in time.',
+                style: TextStyle(fontSize: 12, color: Color(0xFF8C8C8C)),
+              ),
+            ],
           ),
         ),
         actions: [
@@ -233,21 +294,32 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
     );
     controller.dispose();
     if (name == null || !mounted) return;
+    final title = name.trim().isEmpty ? suggested : name.trim();
     try {
-      _c.saveGame(name.trim().isEmpty ? suggested : name.trim());
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Game saved.'), duration: Duration(seconds: 2)));
+      final previous = _session;
+      final session = _newSession(title, origin: previous != null ? previous.name : widget.launch.continues);
+      final data = _c.snapshot();
+      await session.addPoint(data, manual: true, name: title);
+      _session = session;
+      _lastSavedFrame = data.frame;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Saved. New session: $title'), duration: const Duration(seconds: 3)),
+        );
+      }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not save the game: $e')));
     }
   }
 
   Future<void> _exitToMenu({bool confirm = true}) async {
-    if (confirm) {
+    final autosave = widget.settings.autosave;
+    if (confirm && !autosave) {
       final ok = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('Exit to main menu?'),
-          content: const Text('Progress since your last save will be lost.'),
+          content: const Text('Auto-save is off: progress since your last save will be lost.'),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
             FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Exit')),
@@ -256,8 +328,37 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       );
       if (ok != true || !mounted) return;
     }
+    await _autosave(force: true);
     _flushPlayTime();
+    if (!mounted) return;
     Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const StartScreen()));
+  }
+
+  Future<void> _quit() async {
+    if (!widget.settings.autosave) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Quit Brood?'),
+          content: const Text('Auto-save is off: progress since your last save will be lost.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Quit')),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
+    await _autosave(force: true);
+    _flushPlayTime();
+    await ServicesBinding.instance.exitApplication(AppExitType.required);
+  }
+
+  void _setAutosave(bool on) {
+    widget.settings
+      ..autosave = on
+      ..save();
+    setState(() {});
   }
 
   void _keepWatching() {
@@ -475,7 +576,16 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                 ),
               ),
             ),
-            if (_menuOpen) _GameMenu(onResume: _closeMenu, onSave: _saveGame, onExit: _exitToMenu, c: _c),
+            if (_menuOpen)
+              _GameMenu(
+                onResume: _closeMenu,
+                onSave: _saveGame,
+                onExit: _exitToMenu,
+                onQuit: _quit,
+                autosave: widget.settings.autosave,
+                onAutosave: _setAutosave,
+                c: _c,
+              ),
             if (_outcomeVisible) _OutcomeScreen(outcome: _c.outcome!, onWatch: _keepWatching, onExit: () => _exitToMenu(confirm: false)),
           ],
         ),
@@ -523,8 +633,19 @@ class _GameMenu extends StatelessWidget {
   final VoidCallback onResume;
   final VoidCallback onSave;
   final VoidCallback onExit;
+  final VoidCallback onQuit;
+  final bool autosave;
+  final ValueChanged<bool> onAutosave;
   final GameController c;
-  const _GameMenu({required this.onResume, required this.onSave, required this.onExit, required this.c});
+  const _GameMenu({
+    required this.onResume,
+    required this.onSave,
+    required this.onExit,
+    required this.onQuit,
+    required this.autosave,
+    required this.onAutosave,
+    required this.c,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -596,7 +717,23 @@ class _GameMenu extends StatelessWidget {
             onPressed: onExit,
             child: const Text('Exit to main menu'),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(minimumSize: button, foregroundColor: const Color(0xFFFF6B5E)),
+            onPressed: onQuit,
+            icon: const Icon(Icons.power_settings_new, size: 18),
+            label: const Text('Quit Brood'),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Expanded(
+                child: Text('Auto-save (every minute; every 10 after an hour)', style: TextStyle(fontSize: 13, color: Color(0xFFBDBDBD))),
+              ),
+              Switch(value: autosave, onChanged: onAutosave),
+            ],
+          ),
+          const SizedBox(height: 4),
           const Text(
             'F10 opens this menu, Esc closes it.',
             textAlign: TextAlign.center,

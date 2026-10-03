@@ -133,10 +133,17 @@ tile image stretched over the map and minimap. Switched off for now
 (GameController.fogOfWar = false): the whole map is shown.
 
 Saved games ($XDG_DATA_HOME/brood/saves/, lib/game/saved_games.dart) are
-the resolved setup plus the bridge's command log (every command entering
-the API, with its frame). Loading starts the same game and replays the log
-on a background isolate; bridge_smoke_test checks the replayed state hash
-matches. The game menu (top-left button or F10) pauses, saves and exits.
+kept in sessions: one folder per continuous stretch of play, holding points
+in time. A point is the bridge's command log (every command entering the
+API, with its frame); the session holds the map and resolved setup.
+Auto-save (on by default) adds a point every game minute, every ten minutes
+after the first hour and every hour after ten; leaving or quitting saves
+too. A manual save, or carrying on from a loaded point, starts a new
+session, so earlier timelines are never overwritten. Loading starts the
+same game and replays the log on a background isolate; bridge_smoke_test
+checks the replayed state hash matches. Saves from before sessions are
+turned into one-point sessions. The game menu (top-left button or F10)
+pauses, saves, exits and quits; the start screen has a quit button too.
 
 Still missing: creep drawing, lift off/land and nukes, and the web/Android
 targets.

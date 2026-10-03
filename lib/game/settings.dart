@@ -15,8 +15,9 @@ class Settings {
   bool fullscreen;
   Map<String, dynamic>? lastSetup; // GameSetup.toJson() of the last new game
   bool alliancePanelLeft; // dock the alliance panel on the left
+  bool autosave; // save a point in time every few minutes of play
 
-  Settings._(this.file, {this.volume = 0.7, this.muted = false, this.fullscreen = false, this.lastSetup, this.alliancePanelLeft = false});
+  Settings._(this.file, {this.volume = 0.7, this.muted = false, this.fullscreen = false, this.lastSetup, this.alliancePanelLeft = false, this.autosave = true});
 
   static File defaultFile() {
     final env = Platform.environment;
@@ -38,6 +39,7 @@ class Settings {
           fullscreen: j['fullscreen'] == true,
           lastSetup: j['lastSetup'] is Map<String, dynamic> ? j['lastSetup'] as Map<String, dynamic> : null,
           alliancePanelLeft: j['alliancePanelLeft'] == true,
+          autosave: j['autosave'] != false,
         );
       }
     } catch (_) {
@@ -56,6 +58,7 @@ class Settings {
         'fullscreen': fullscreen,
         if (lastSetup != null) 'lastSetup': lastSetup,
         'alliancePanelLeft': alliancePanelLeft,
+        'autosave': autosave,
       }));
       tmp.renameSync(file.path);
     } catch (_) {

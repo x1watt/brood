@@ -1,9 +1,19 @@
 // lib/game/saved_games.dart
 //
-// Saved games in $XDG_DATA_HOME/brood/saves/ (BROOD_SAVES_DIR overrides),
-// one JSON file each: the map, the resolved setup and the engine's command
-// log. Loading starts the same game and replays the log; the simulation is
-// deterministic, so it arrives at the same moment of play.
+// Saved games, organised in sessions: $XDG_DATA_HOME/brood/saves/
+// (BROOD_SAVES_DIR overrides) holds one folder per session, a continuous
+// stretch of play on one map. A session keeps points in time (auto-saves
+// every few minutes, and manual saves); any of them can be loaded. Saving
+// manually, or carrying on from a loaded point, starts a new session, so
+// earlier timelines are never overwritten. Auto-saves come every game
+// minute, every ten minutes after the first hour and every hour after ten.
+//
+//   saves/<session folder>/session.json   name, map, setup, list of points
+//   saves/<session folder>/t<frame>.json  one point: the engine's command log
+//
+// A point is the resolved setup plus the command log; loading starts the
+// same game and replays the log, and the deterministic simulation arrives
+// at the same moment of play.
 
 import 'dart:convert';
 import 'dart:io';
@@ -11,30 +21,54 @@ import 'dart:typed_data';
 
 import 'game_setup.dart';
 
-class SavedGame {
-  static const int formatVersion = 1;
-
-  final File file;
-  final String name;
+class SavePoint {
+  final String file; // inside the session folder
+  final int frame;
   final DateTime saved;
+  final bool manual;
+  final String name; // manual saves only
+
+  const SavePoint({required this.file, required this.frame, required this.saved, required this.manual, this.name = ''});
+
+  /// Game time, as the original's clock shows it.
+  String get gameTime {
+    final seconds = frame * 42 ~/ 1000;
+    return '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
+  }
+
+  Map<String, dynamic> toJson() => {'file': file, 'frame': frame, 'saved': saved.toIso8601String(), 'manual': manual, if (name.isNotEmpty) 'name': name};
+
+  static SavePoint fromJson(Map<String, dynamic> j) => SavePoint(
+    file: j['file'] as String,
+    frame: (j['frame'] as num).toInt(),
+    saved: DateTime.tryParse(j['saved'] as String? ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0),
+    manual: j['manual'] == true,
+    name: j['name'] as String? ?? '',
+  );
+}
+
+class SaveSession {
+  static const int formatVersion = 2;
+  // Enough for the auto-save schedule (minutes, then tens of minutes,
+  // then hours) over a very long game; the oldest go first beyond that.
+  static const int maxAutoPoints = 240;
+
+  final Directory dir;
+  final String name;
+  final DateTime created;
   final String mapFile;
   final String mapKey;
   final String mapName;
   final GameSetup setup;
-  final SavedGameData data;
+  final String origin; // where it branched from, '' for a new game
+  final List<SavePoint> points;
 
-  const SavedGame({
-    required this.file,
-    required this.name,
-    required this.saved,
-    required this.mapFile,
-    required this.mapKey,
-    required this.mapName,
-    required this.setup,
-    required this.data,
-  });
+  SaveSession._(this.dir, this.name, this.created, this.mapFile, this.mapKey, this.mapName, this.setup, this.origin, this.points);
 
-  static Directory directory() {
+  static Directory? rootOverride; // tests
+
+  static Directory root() {
+    if (rootOverride != null) return rootOverride!;
     final env = Platform.environment;
     final override = env['BROOD_SAVES_DIR'];
     if (override != null && override.isNotEmpty) return Directory(override);
@@ -42,12 +76,49 @@ class SavedGame {
     return Directory('$base/brood/saves');
   }
 
-  GameLaunch toLaunch() => GameLaunch(mapFile: mapFile, mapKey: mapKey, mapName: mapName, setup: setup, saved: data);
+  DateTime get lastSaved => points.isEmpty ? created : points.map((p) => p.saved).reduce((a, b) => a.isAfter(b) ? a : b);
+  SavePoint? get latest => points.isEmpty ? null : points.reduce((a, b) => a.frame >= b.frame ? a : b);
 
-  /// Game time at the save, as the original's clock shows it.
-  String get gameTime {
-    final seconds = data.frame * 42 ~/ 1000;
-    return '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
+  static String _two(int v) => v.toString().padLeft(2, '0');
+
+  static SaveSession create({
+    required String name,
+    required String mapFile,
+    required String mapKey,
+    required String mapName,
+    required GameSetup setup,
+    String origin = '',
+  }) {
+    final now = DateTime.now();
+    final slug = mapName.replaceAll(RegExp(r'[^A-Za-z0-9]+'), '-').replaceAll(RegExp(r'^-+|-+$'), '');
+    final stamp = '${now.year}${_two(now.month)}${_two(now.day)}-${_two(now.hour)}${_two(now.minute)}${_two(now.second)}';
+    var dir = Directory('${root().path}/$stamp-$slug');
+    for (int i = 2; dir.existsSync(); ++i) {
+      dir = Directory('${root().path}/$stamp-$slug-$i');
+    }
+    dir.createSync(recursive: true);
+    final s = SaveSession._(dir, name, now, mapFile, mapKey, mapName, setup, origin, []);
+    s._writeIndex();
+    return s;
+  }
+
+  Map<String, dynamic> _indexJson() => {
+    'version': formatVersion,
+    'name': name,
+    'created': created.toIso8601String(),
+    'mapFile': mapFile,
+    'mapKey': mapKey,
+    'mapName': mapName,
+    'setup': setup.toJson(),
+    if (origin.isNotEmpty) 'origin': origin,
+    'points': [for (final p in points) p.toJson()],
+  };
+
+  void _writeIndex() {
+    final f = File('${dir.path}/session.json');
+    final tmp = File('${f.path}.tmp');
+    tmp.writeAsStringSync(jsonEncode(_indexJson()));
+    tmp.renameSync(f.path);
   }
 
   static String _encodeLog(List<int> log) {
@@ -63,78 +134,104 @@ class SavedGame {
     return List<int>.generate(bytes.lengthInBytes ~/ 4, (i) => bytes.getInt32(i * 4, Endian.little), growable: false);
   }
 
-  static SavedGame write({
-    required String name,
-    required String mapFile,
-    required String mapKey,
-    required String mapName,
-    required GameSetup setup,
-    required SavedGameData data,
-  }) {
-    final dir = directory()..createSync(recursive: true);
-    final now = DateTime.now();
-    final file = File('${dir.path}/save_${now.millisecondsSinceEpoch}.json');
-    final json = {
-      'version': formatVersion,
-      'name': name,
-      'saved': now.toIso8601String(),
-      'mapFile': mapFile,
-      'mapKey': mapKey,
-      'mapName': mapName,
-      'setup': setup.toJson(),
-      'frame': data.frame,
-      'camX': data.camX,
-      'camY': data.camY,
-      'log': _encodeLog(data.commandLog),
-    };
-    final tmp = File('${file.path}.tmp');
-    tmp.writeAsStringSync(jsonEncode(json));
-    tmp.renameSync(file.path);
-    return SavedGame(file: file, name: name, saved: now, mapFile: mapFile, mapKey: mapKey, mapName: mapName, setup: setup, data: data);
+  /// Writes a point in time (the file asynchronously, so the game doesn't
+  /// stall on a long command log).
+  Future<SavePoint> addPoint(SavedGameData data, {bool manual = false, String name = ''}) async {
+    final file = 't${data.frame.toString().padLeft(8, '0')}${manual ? '-manual' : ''}.json';
+    final json = jsonEncode({'frame': data.frame, 'camX': data.camX, 'camY': data.camY, 'log': _encodeLog(data.commandLog)});
+    final f = File('${dir.path}/$file');
+    final tmp = File('${f.path}.tmp');
+    await tmp.writeAsString(json, flush: true);
+    await tmp.rename(f.path);
+    final point = SavePoint(file: file, frame: data.frame, saved: DateTime.now(), manual: manual, name: name);
+    points.removeWhere((p) => p.file == file);
+    points.add(point);
+    points.sort((a, b) => a.frame.compareTo(b.frame));
+    // Old auto-saves make room (the first point and manual saves stay).
+    final autos = points.where((p) => !p.manual).toList();
+    while (autos.length > maxAutoPoints) {
+      final drop = autos.removeAt(1);
+      points.remove(drop);
+      try {
+        File('${dir.path}/${drop.file}').deleteSync();
+      } catch (_) {}
+    }
+    _writeIndex();
+    return point;
   }
 
-  static SavedGame? read(File f) {
+  SavedGameData readPoint(SavePoint p) {
+    final j = jsonDecode(File('${dir.path}/${p.file}').readAsStringSync()) as Map<String, dynamic>;
+    return SavedGameData(
+      commandLog: _decodeLog(j['log'] as String),
+      frame: (j['frame'] as num).toInt(),
+      camX: (j['camX'] as num?)?.toDouble() ?? 0,
+      camY: (j['camY'] as num?)?.toDouble() ?? 0,
+    );
+  }
+
+  GameLaunch launch(SavePoint p) =>
+      GameLaunch(mapFile: mapFile, mapKey: mapKey, mapName: mapName, setup: setup, saved: readPoint(p), continues: '$name at ${p.gameTime}');
+
+  static SaveSession? read(Directory d) {
     try {
-      final j = jsonDecode(f.readAsStringSync()) as Map<String, dynamic>;
+      final j = jsonDecode(File('${d.path}/session.json').readAsStringSync()) as Map<String, dynamic>;
       if ((j['version'] as num?)?.toInt() != formatVersion) return null;
-      return SavedGame(
-        file: f,
-        name: j['name'] as String? ?? 'Saved game',
-        saved: DateTime.tryParse(j['saved'] as String? ?? '') ?? f.lastModifiedSync(),
-        mapFile: j['mapFile'] as String,
-        mapKey: j['mapKey'] as String? ?? j['mapFile'] as String,
-        mapName: j['mapName'] as String? ?? '',
-        setup: GameSetup.fromJson(j['setup'] as Map<String, dynamic>),
-        data: SavedGameData(
-          commandLog: _decodeLog(j['log'] as String),
-          frame: (j['frame'] as num).toInt(),
-          camX: (j['camX'] as num?)?.toDouble() ?? 0,
-          camY: (j['camY'] as num?)?.toDouble() ?? 0,
-        ),
+      return SaveSession._(
+        d,
+        j['name'] as String? ?? 'Session',
+        DateTime.tryParse(j['created'] as String? ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0),
+        j['mapFile'] as String,
+        j['mapKey'] as String? ?? j['mapFile'] as String,
+        j['mapName'] as String? ?? '',
+        GameSetup.fromJson(j['setup'] as Map<String, dynamic>),
+        j['origin'] as String? ?? '',
+        [for (final p in j['points'] as List? ?? const []) SavePoint.fromJson(p as Map<String, dynamic>)]..sort((a, b) => a.frame.compareTo(b.frame)),
       );
     } catch (_) {
-      return null; // unreadable or from another version: not listed
+      return null;
     }
   }
 
-  /// Newest first.
-  static List<SavedGame> list() {
-    final dir = directory();
-    if (!dir.existsSync()) return const [];
-    final saves = dir
-        .listSync()
-        .whereType<File>()
-        .where((f) => f.path.endsWith('.json'))
-        .map(read)
-        .whereType<SavedGame>()
-        .toList();
-    saves.sort((a, b) => b.saved.compareTo(a.saved));
-    return saves;
+  /// Every session with at least one point, most recently saved first.
+  static List<SaveSession> list() {
+    final r = root();
+    if (!r.existsSync()) return const [];
+    _migrateFlatSaves(r);
+    final sessions = r.listSync().whereType<Directory>().map(read).whereType<SaveSession>().where((s) => s.points.isNotEmpty).toList();
+    sessions.sort((a, b) => b.lastSaved.compareTo(a.lastSaved));
+    return sessions;
+  }
+
+  // Saves from before sessions (one JSON file each) become one-point sessions.
+  static void _migrateFlatSaves(Directory r) {
+    for (final f in r.listSync().whereType<File>().where((f) => f.path.endsWith('.json'))) {
+      try {
+        final j = jsonDecode(f.readAsStringSync()) as Map<String, dynamic>;
+        if ((j['version'] as num?)?.toInt() != 1 || j['log'] is! String) continue;
+        final saved = DateTime.tryParse(j['saved'] as String? ?? '') ?? f.lastModifiedSync();
+        final frame = (j['frame'] as num).toInt();
+        final s = SaveSession.create(
+          name: j['name'] as String? ?? 'Saved game',
+          mapFile: j['mapFile'] as String,
+          mapKey: j['mapKey'] as String? ?? j['mapFile'] as String,
+          mapName: j['mapName'] as String? ?? '',
+          setup: GameSetup.fromJson(j['setup'] as Map<String, dynamic>),
+        );
+        final file = 't${frame.toString().padLeft(8, '0')}-manual.json';
+        File('${s.dir.path}/$file').writeAsStringSync(jsonEncode({'frame': frame, 'camX': j['camX'], 'camY': j['camY'], 'log': j['log']}));
+        s.points.add(SavePoint(file: file, frame: frame, saved: saved, manual: true, name: s.name));
+        s._writeIndex();
+        f.deleteSync();
+      } catch (_) {
+        // Leave anything unexpected alone.
+      }
+    }
   }
 
   void delete() {
     try {
-      file.deleteSync();
+      dir.deleteSync(recursive: true);
     } catch (_) {}
   }
 }

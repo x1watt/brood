@@ -97,8 +97,9 @@ class GameLaunch {
   final String mapName;
   final GameSetup setup; // resolved
   final SavedGameData? saved;
+  final String continues; // for a loaded game: which session and point it carries on from
 
-  const GameLaunch({required this.mapFile, required this.mapKey, required this.mapName, required this.setup, this.saved});
+  const GameLaunch({required this.mapFile, required this.mapKey, required this.mapName, required this.setup, this.saved, this.continues = ''});
 }
 
 /// The parts of a saved game the engine replays.

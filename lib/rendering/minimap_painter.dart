@@ -2,13 +2,17 @@
 //
 // Whole map scaled into the minimap box: terrain, fog of war, a dot per
 // unit the player can see (own green, allies yellow, neutral resources
-// cyan, enemies red) and the camera's view rectangle.
+// cyan, enemies red), rings around allies' town halls and the camera's
+// view rectangle.
 
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
 import '../game/game_controller.dart';
+
+// Command Center, Nexus, Hatchery, Lair, Hive.
+const _townHalls = {106, 154, 131, 132, 133};
 
 class MinimapPainter extends CustomPainter {
   final GameController c;
@@ -63,6 +67,23 @@ class MinimapPainter extends CustomPainter {
         Relation.enemy => enemy,
       };
       canvas.drawRect(Rect.fromCenter(center: p, width: w, height: h), paint);
+    }
+
+    // Allies' town halls: a ring in the ally's color, so you can see at a
+    // glance who your allies are and where they live.
+    final pulse = 0.5 + 0.5 * math.sin(DateTime.now().millisecondsSinceEpoch / 260);
+    for (final u in c.units) {
+      if (!_townHalls.contains(u.typeId) || c.relation(u.owner) != Relation.ally) continue;
+      final p = origin + Offset(u.x * scale, u.y * scale);
+      final color = c.colorOf(u.owner);
+      canvas.drawCircle(p, 7 + pulse, Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..color = const Color(0xFFFFE14D));
+      canvas.drawCircle(p, 5, Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..color = color);
     }
 
     final view = Rect.fromLTWH(

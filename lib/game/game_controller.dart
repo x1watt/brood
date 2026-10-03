@@ -24,7 +24,6 @@ import '../rendering/terrain_layer.dart';
 import 'alliance_names.dart';
 import 'command_cards.dart';
 import 'game_setup.dart';
-import 'saved_games.dart';
 
 enum CommandMode { none, move, attack, patrol, gather, repair, build, cast, rally }
 
@@ -218,6 +217,8 @@ class GameController {
         await e.replayCommands(saved.commandLog, saved.frame);
         loadingSave = false;
       } else {
+        // You start open to alliances (a logged command, so saves replay it).
+        if (setup.players.length > 1) e.setAllianceOpen(myPlayer, true);
         e.step(1);
       }
       e.setViewer(fogOfWar ? myPlayer : -1);
@@ -444,22 +445,15 @@ class GameController {
     if (outcome != null) setPaused(true);
   }
 
-  SavedGame saveGame(String name) {
-    final l = launch!;
-    return SavedGame.write(
-      name: name,
-      mapFile: l.mapFile,
-      mapKey: l.mapKey,
-      mapName: l.mapName,
-      setup: l.setup,
-      data: SavedGameData(
-        commandLog: engine.commandLog(),
-        frame: engine.currentFrame,
-        camX: camX + viewport.width / 2,
-        camY: camY + viewport.height / 2,
-      ),
-    );
-  }
+  /// What a save point needs: the command log so far, the frame and where
+  /// the camera looks.
+  SavedGameData snapshot() => SavedGameData(
+    commandLog: engine.commandLog(),
+    frame: engine.currentFrame,
+    camX: camX + viewport.width / 2,
+    camY: camY + viewport.height / 2,
+  );
+
 
   // --- fog of war ---
 
