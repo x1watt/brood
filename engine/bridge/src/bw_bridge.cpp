@@ -1361,6 +1361,9 @@ int bw_bridge_get_buildable(bw_bridge_t* bridge, int owner, int32_t* out_unit_ty
 		int n = 0;
 		for (int id = 0; id < (int)UnitTypes::None && n < max_count; ++id) {
 			const unit_type_t* ut = f.get_unit_type((UnitTypes)id);
+			// Interceptors and scarabs are made by the carrier's and reaver's
+			// own command (BW_ACT_TRAIN_FIGHTER), not listed as production.
+			if (id == (int)UnitTypes::Protoss_Interceptor || id == (int)UnitTypes::Protoss_Scarab) continue;
 			if (f.unit_can_build(u, ut)) out_unit_type_ids[n++] = id;
 		}
 		return n;
@@ -1396,6 +1399,12 @@ static bw_status train_as(bw_bridge_t* bridge, int owner, int unit_type_id) {
 			ok = f.action_morph(owner, ut);
 		} else if (f.unit_is_zerg_building(u) && f.unit_is_zerg_building(ut)) {
 			ok = f.action_morph_building(owner, ut);
+		} else if (ut->id == UnitTypes::Protoss_Interceptor || ut->id == UnitTypes::Protoss_Scarab) {
+			// Carriers and reavers build these with their own order: the
+			// plain Train order runs a factory animation they don't have,
+			// and the simulation stops with "iscript: program counter is
+			// null". Saves that logged such a train replay through here too.
+			ok = f.action_train_fighter(owner);
 		} else {
 			ok = f.action_train(owner, ut);
 		}

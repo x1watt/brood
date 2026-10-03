@@ -1182,6 +1182,7 @@ class GameController {
     if (!b.enabled) {
       final needs = b.kind == CmdKind.produce ? requirementText[b.typeId] : null;
       showMessage(needs != null ? '${b.label} requires $needs.' : 'Requirements not met for ${b.label}.');
+      _leaveBuildMenu();
       return;
     }
     switch (b.kind) {
@@ -1249,6 +1250,13 @@ class GameController {
     }
     final cancel = commandCard().where((b) => b.kind == CmdKind.cancel);
     if (cancel.isNotEmpty) activate(cancel.first);
+  }
+
+  // A building that can't be started (money, requirements) closes the
+  // worker's build menu, so the next B and letter starts from the top as
+  // players expect, instead of the letter landing in the open menu.
+  void _leaveBuildMenu() {
+    if (cardMenu != CardMenu.main) _setMenu(CardMenu.main);
   }
 
   void _setMenu(CardMenu menu) {
@@ -1541,7 +1549,10 @@ class GameController {
     final t = engine.unitType(typeId);
     final builder = selectedUnits.first;
     final placesBuilding = t.isBuilding && !t.isAddon && builder.isWorker;
-    if (!_canAfford(t, checkSupply: !t.isBuilding)) return;
+    if (!_canAfford(t, checkSupply: !t.isBuilding)) {
+      _leaveBuildMenu();
+      return;
+    }
     if (placesBuilding) {
       if (selection.length != 1) select([builder.unitId], voice: false);
       mode = CommandMode.build;
