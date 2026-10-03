@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define CHECK(cond, ...) do { if (!(cond)) { printf("bridge_smoke_test: FAIL - " __VA_ARGS__); printf("\n"); exit(1); } } while (0)
 
@@ -166,6 +167,172 @@ static void test_zerg(const char* dd, const char* mf) {
 	CHECK(started, "spawning pool never started");
 	printf("bridge_smoke_test: zerg larva -> drone, drone -> spawning pool OK\n");
 	bw_bridge_destroy(b);
+}
+
+
+/* Hash of everything the player can observe, to compare two runs. */
+static unsigned long long state_hash(bw_bridge_t* b) {
+	bw_bridge_set_viewer(b, -1);
+	int n = bw_bridge_get_units(b, units, 4096);
+	unsigned long long h = 1469598103934665603ull;
+#define MIX(v) (h = (h ^ (unsigned long long)(unsigned)(v)) * 1099511628211ull)
+	for (int i = 0; i != n; ++i) {
+		MIX(units[i].unit_type_id); MIX(units[i].owner); MIX(units[i].x); MIX(units[i].y); MIX(units[i].hp);
+	}
+	for (int p = 0; p != 8; ++p) { MIX(bw_bridge_minerals(b, p)); MIX(bw_bridge_gas(b, p)); }
+	MIX(bw_bridge_current_frame(b));
+#undef MIX
+	return h;
+}
+
+static int count_owned(bw_bridge_t* b, int owner, int* workers, int* buildings, int* army) {
+	int n = bw_bridge_get_units(b, units, 4096), total = 0;
+	*workers = *buildings = *army = 0;
+	for (int i = 0; i != n; ++i) {
+		if (units[i].owner != owner) continue;
+		++total;
+		int t = units[i].unit_type_id;
+		if (t == TERRAN_SCV || t == 64 || t == 41) ++*workers;
+		else if (units[i].flags & BW_UNIT_FLAG_BUILDING) ++*buildings;
+		else if (t != 35 && t != 42 && t != 36) ++*army; /* not larva, overlord, egg */
+	}
+	return total;
+}
+
+/* Computer opponents play one game: `teams` gives each player's team
+ * (human first). Returns the minute the game was decided, or -1. */
+static int play_ai_game(const char* dd, const char* mf, const int* teams, uint32_t seed, int max_minutes, int* out_states) {
+	bw_bridge_t* b = bw_bridge_create();
+	CHECK(b && bw_bridge_load_assets(b, dd) == BW_OK, "ai: load");
+	bw_game_setup setup;
+	memset(&setup, 0, sizeof(setup));
+	setup.player_count = 4;
+	setup.controller[0] = BW_PLAYER_HUMAN; setup.race[0] = 1;
+	for (int i = 1; i != 4; ++i) { setup.controller[i] = BW_PLAYER_COMPUTER; setup.race[i] = i - 1; }
+	for (int i = 0; i != 4; ++i) setup.team[i] = teams[i];
+	setup.seed = seed;
+	int32_t slots[8];
+	CHECK(bw_bridge_new_game(b, mf, &setup, slots) == BW_OK, "ai: new_game");
+	for (int i = 0; i != 4; ++i) CHECK(slots[i] >= 0 && slots[i] < 8, "ai: player %d got no slot", i);
+	int decided = -1;
+	clock_t t0 = clock();
+	for (int minute = 1; minute <= max_minutes && decided < 0; ++minute) {
+		bw_bridge_step(b, 24 * 60);
+		int alive_sides = 0, last_team = -1, any_win = 0;
+		for (int i = 0; i != 4; ++i) {
+			int st = bw_bridge_victory_state(b, slots[i]);
+			if (st >= 3) any_win = 1;
+			if (st == 0 && (teams[i] == 0 || teams[i] != last_team)) { ++alive_sides; last_team = teams[i]; }
+		}
+		if (minute % 4 == 0 || any_win) {
+			printf("bridge_smoke_test: ai: minute %2d:", minute);
+			for (int i = 0; i != 4; ++i) {
+				int w, bl, a, used = 0, avail = 0;
+				count_owned(b, slots[i], &w, &bl, &a);
+				bw_bridge_supply(b, slots[i], setup.race[i], &used, &avail);
+				printf(" [%s w%d b%d a%d %d/%d m%d s%d]", i == 0 ? "you" : i == 1 ? "Z" : i == 2 ? "T" : "P", w, bl, a, used / 2, avail / 2,
+				       bw_bridge_minerals(b, slots[i]), bw_bridge_victory_state(b, slots[i]));
+			}
+			printf("\n");
+		}
+		if (minute == 8) {
+			for (int i = 1; i != 4; ++i) {
+				int w, bl, a;
+				count_owned(b, slots[i], &w, &bl, &a);
+				if (bw_bridge_victory_state(b, slots[i]) == 0)
+					CHECK(w >= 12 && bl >= 4, "ai: player %d (race %d) did not build up by 8 min (workers %d buildings %d)", i, setup.race[i], w, bl);
+			}
+		}
+		if (any_win) decided = minute;
+	}
+	for (int i = 0; i != 4; ++i) out_states[i] = bw_bridge_victory_state(b, slots[i]);
+	printf("bridge_smoke_test: ai: decided at minute %d (%.1fs cpu)\n", decided, (double)(clock() - t0) / CLOCKS_PER_SEC);
+	bw_bridge_destroy(b);
+	return decided;
+}
+
+/* Three computer players against an idle human ("all against you") must
+ * win; three in a free for all must finish the game too. */
+static void test_ai(const char* dd, const char* mf) {
+	int states[4];
+	const int all_vs_you[4] = {1, 2, 2, 2};
+	int m = play_ai_game(dd, mf, all_vs_you, 12345, 30, states);
+	CHECK(m > 0 && states[0] == 2, "ai: computers never defeated the idle human");
+	for (int i = 1; i != 4; ++i) CHECK(states[i] >= 3, "ai: allied computer %d not victorious (%d)", i, states[i]);
+	const int ffa[4] = {0, 0, 0, 0};
+	m = play_ai_game(dd, mf, ffa, 999, 60, states);
+	CHECK(m > 0, "ai: free for all never finished");
+}
+
+/* Saved games: the command log replayed on a fresh game reaches the same
+ * state, computer player included. */
+static void test_save_replay(const char* dd, const char* mf) {
+	bw_game_setup setup;
+	memset(&setup, 0, sizeof(setup));
+	setup.player_count = 2;
+	setup.controller[0] = BW_PLAYER_HUMAN; setup.race[0] = 2;
+	setup.controller[1] = BW_PLAYER_COMPUTER; setup.race[1] = 0;
+	setup.seed = 777;
+	int32_t slots[8];
+	bw_bridge_t* a = bw_bridge_create();
+	CHECK(a && bw_bridge_load_assets(a, dd) == BW_OK && bw_bridge_new_game(a, mf, &setup, slots) == BW_OK, "save: game a");
+	int me = slots[0];
+	bw_bridge_step(a, 1);
+	send_workers_mining(a, me, 64);
+	bw_bridge_step(a, 24 * 60);
+	int32_t nexus[1];
+	CHECK(find_units(a, me, 154, nexus, 1) == 1, "save: nexus");
+	for (int i = 0; i != 3; ++i) {
+		bw_bridge_select_units(a, me, nexus, 1);
+		bw_bridge_train(a, me, 64);
+		bw_bridge_step(a, 24 * 15);
+	}
+	bw_bridge_step(a, 24 * 60 * 3);
+	/* Fog of war from the human's eyes. */
+	{
+		int w, h;
+		bw_bridge_get_map_tile_size(a, &w, &h);
+		uint8_t* fog = (uint8_t*)malloc((size_t)(w * h));
+		CHECK(bw_bridge_get_fog(a, me, fog, w * h) == BW_OK, "fog");
+		int seen = 0, explored = 0, black = 0;
+		for (int i = 0; i != w * h; ++i) { if (fog[i] == 2) ++seen; else if (fog[i] == 1) ++explored; else ++black; }
+		printf("bridge_smoke_test: fog: %d visible, %d explored, %d unexplored tiles\n", seen, explored, black);
+		CHECK(seen > 50 && black > w * h / 2, "fog looks wrong");
+		free(fog);
+		int all = bw_bridge_get_units(a, units, 4096);
+		bw_bridge_set_viewer(a, me);
+		int visible = bw_bridge_get_units(a, units, 4096);
+		int enemy_seen = 0;
+		for (int i = 0; i != visible; ++i) if (units[i].owner == slots[1]) ++enemy_seen;
+		printf("bridge_smoke_test: fog: %d of %d units visible to the human, %d enemy\n", visible, all, enemy_seen);
+		CHECK(visible < all && enemy_seen == 0, "fog: hidden units leak into the unit list");
+		bw_bridge_set_viewer(a, -1);
+	}
+	int end_frame = bw_bridge_current_frame(a);
+	unsigned long long ha = state_hash(a);
+	int len = bw_bridge_command_log(a, NULL, 0);
+	CHECK(len > 0, "save: empty command log");
+	int32_t* log = (int32_t*)malloc((size_t)len * sizeof(int32_t));
+	CHECK(bw_bridge_command_log(a, log, len) == len, "save: copy log");
+
+	bw_bridge_t* c = bw_bridge_create();
+	int32_t slots2[8];
+	CHECK(c && bw_bridge_load_assets(c, dd) == BW_OK && bw_bridge_new_game(c, mf, &setup, slots2) == BW_OK, "save: game c");
+	CHECK(slots2[0] == slots[0] && slots2[1] == slots[1], "save: slots differ");
+	clock_t t0 = clock();
+	CHECK(bw_bridge_replay_commands(c, log, len, end_frame) == BW_OK, "save: replay");
+	double secs = (double)(clock() - t0) / CLOCKS_PER_SEC;
+	unsigned long long hc = state_hash(c);
+	printf("bridge_smoke_test: save: %d log values, replayed %d frames in %.2fs, hash %llx vs %llx\n", len, end_frame, secs, ha, hc);
+	CHECK(ha == hc, "save: replayed state differs");
+	CHECK(bw_bridge_command_log(c, NULL, 0) == len, "save: replayed log length differs");
+	/* Both keep going identically. */
+	bw_bridge_step(a, 24 * 60 * 2);
+	bw_bridge_step(c, 24 * 60 * 2);
+	CHECK(state_hash(a) == state_hash(c), "save: games diverge after replay");
+	free(log);
+	bw_bridge_destroy(a);
+	bw_bridge_destroy(c);
 }
 
 int main(int argc, char** argv) {
@@ -476,6 +643,8 @@ int main(int argc, char** argv) {
 	bw_bridge_destroy(b);
 	test_protoss(dd, mf);
 	test_zerg(dd, mf);
+	test_save_replay(dd, mf);
+	test_ai(dd, mf);
 	printf("bridge_smoke_test: OK\n");
 	return 0;
 }

@@ -1,8 +1,9 @@
 // lib/game/settings.dart
 //
 // Player preferences kept between runs in $XDG_DATA_HOME/brood/settings.json
-// (next to play_stats.json): sound volume and mute, and whether the game
-// runs fullscreen. BROOD_SETTINGS_FILE overrides the location (tests).
+// (next to play_stats.json): sound volume and mute, whether the game runs
+// fullscreen, and the last game setup chosen on the start screen.
+// BROOD_SETTINGS_FILE overrides the location (tests).
 
 import 'dart:convert';
 import 'dart:io';
@@ -12,8 +13,9 @@ class Settings {
   double volume;
   bool muted;
   bool fullscreen;
+  Map<String, dynamic>? lastSetup; // GameSetup.toJson() of the last new game
 
-  Settings._(this.file, {this.volume = 0.7, this.muted = false, this.fullscreen = false});
+  Settings._(this.file, {this.volume = 0.7, this.muted = false, this.fullscreen = false, this.lastSetup});
 
   static File defaultFile() {
     final env = Platform.environment;
@@ -33,6 +35,7 @@ class Settings {
           volume: ((j['volume'] as num?)?.toDouble() ?? 0.7).clamp(0.0, 1.0),
           muted: j['muted'] == true,
           fullscreen: j['fullscreen'] == true,
+          lastSetup: j['lastSetup'] is Map<String, dynamic> ? j['lastSetup'] as Map<String, dynamic> : null,
         );
       }
     } catch (_) {
@@ -49,6 +52,7 @@ class Settings {
         'volume': volume,
         'muted': muted,
         'fullscreen': fullscreen,
+        if (lastSetup != null) 'lastSetup': lastSetup,
       }));
       tmp.renameSync(file.path);
     } catch (_) {

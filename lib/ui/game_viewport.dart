@@ -88,7 +88,7 @@ class _GameViewportState extends State<GameViewport> {
     final map = c.screenToMap(e.localPosition);
     final picked = c.engine.pickUnitAt(map.dx.round(), map.dy.round());
     final unit = c.unitsById[picked];
-    if (picked != 0 && picked == _lastClickUnit && now - _lastClickMs < 350 && unit != null && unit.owner == GameController.myPlayer) {
+    if (picked != 0 && picked == _lastClickUnit && now - _lastClickMs < 350 && unit != null && unit.owner == c.myPlayer) {
       c.selectAllOfTypeOnScreen(unit.typeId);
     } else {
       c.clickSelect(e.localPosition, add: _shift);

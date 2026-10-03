@@ -7,6 +7,7 @@
 
 import 'dart:ffi' as ffi;
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -27,6 +28,7 @@ class BwEngine {
 
   final BwBridgeBindings _b;
   final ffi.Pointer<bw_bridge_t> _h;
+  final String _libraryPath;
   final ffi.Pointer<bw_draw_item> _drawBuf = calloc<bw_draw_item>(_maxDrawItems);
   final ffi.Pointer<bw_unit_info> _unitBuf = calloc<bw_unit_info>(_maxUnits);
   final ffi.Pointer<bw_unit_info> _oneUnit = calloc<bw_unit_info>();
@@ -38,10 +40,11 @@ class BwEngine {
   final Map<int, UnitTypeInfo> _typeInfoCache = {};
   bool _disposed = false;
 
-  BwEngine._(this._b, this._h);
+  BwEngine._(this._b, this._h, this._libraryPath);
 
   factory BwEngine.open({String? libraryPath}) {
-    final dylib = ffi.DynamicLibrary.open(libraryPath ?? _defaultLibraryPath());
+    final path = libraryPath ?? _defaultLibraryPath();
+    final dylib = ffi.DynamicLibrary.open(path);
     final bindings = BwBridgeBindings(dylib);
     final abi = bindings.bw_bridge_abi_version();
     if (abi != BW_BRIDGE_ABI_VERSION) {
@@ -52,7 +55,7 @@ class BwEngine {
     }
     final handle = bindings.bw_bridge_create();
     if (handle == ffi.nullptr) throw BwBridgeException('bw_bridge_create returned null');
-    return BwEngine._(bindings, handle);
+    return BwEngine._(bindings, handle, path);
   }
 
   // Next to the executable when bundled (linux/CMakeLists.txt installs it
@@ -90,7 +93,90 @@ class BwEngine {
     }
   }
 
+  /// Starts a game. [players]: exactly one human; races 0-2 (no random);
+  /// equal non-zero teams are allied. Returns each player's slot (the player
+  /// id for every other call), -1 for players the map has no start
+  /// location for.
+  List<int> newGame(String mapFile, List<({bool human, int race, int team})> players, int seed) {
+    final p = mapFile.toNativeUtf8();
+    final s = calloc<bw_game_setup>();
+    final slots = calloc<ffi.Int32>(BW_MAX_PLAYERS);
+    try {
+      final n = players.length.clamp(1, BW_MAX_PLAYERS);
+      s.ref.player_count = n;
+      for (int i = 0; i < n; ++i) {
+        final pl = players[i];
+        s.ref.controller[i] = pl.human ? BW_PLAYER_HUMAN : BW_PLAYER_COMPUTER;
+        s.ref.race[i] = pl.race;
+        s.ref.team[i] = pl.team;
+      }
+      s.ref.seed = seed;
+      _check(_b.bw_bridge_new_game(_h, p.cast(), s, slots), 'newGame($mapFile)');
+      return List<int>.generate(n, (i) => slots[i], growable: false);
+    } finally {
+      calloc.free(p);
+      calloc.free(s);
+      calloc.free(slots);
+    }
+  }
+
   void step(int frames) => _check(_b.bw_bridge_step(_h, frames), 'step');
+
+  /// 0 playing, 1 dropped, 2 defeated, 3 or more victorious.
+  int victoryState(int slot) => _b.bw_bridge_victory_state(_h, slot);
+
+  /// Fog of war: draw list, unit list and picking as [slot] sees them
+  /// (-1 shows everything).
+  void setViewer(int slot) => _b.bw_bridge_set_viewer(_h, slot);
+
+  ffi.Pointer<ffi.Uint8>? _fogBuf;
+  int _fogCap = 0;
+
+  /// One byte per tile: 0 unexplored, 1 explored, 2 in sight.
+  Uint8List getFog(int slot, int tiles) {
+    if (_fogCap < tiles) {
+      if (_fogBuf != null) calloc.free(_fogBuf!);
+      _fogBuf = calloc<ffi.Uint8>(tiles);
+      _fogCap = tiles;
+    }
+    _check(_b.bw_bridge_get_fog(_h, slot, _fogBuf!, tiles), 'getFog');
+    return Uint8List.fromList(_fogBuf!.asTypedList(tiles));
+  }
+
+  /// Every command given so far, for saving the game.
+  List<int> commandLog() {
+    final n = _b.bw_bridge_command_log(_h, ffi.nullptr, 0);
+    if (n <= 0) return const [];
+    final buf = calloc<ffi.Int32>(n);
+    try {
+      if (_b.bw_bridge_command_log(_h, buf, n) != n) throw BwBridgeException('commandLog failed');
+      return List<int>.of(buf.asTypedList(n), growable: false);
+    } finally {
+      calloc.free(buf);
+    }
+  }
+
+  /// Replays a saved command log up to [endFrame] on a background isolate
+  /// (it simulates the whole game so far). Nothing else may use the engine
+  /// until it completes.
+  Future<void> replayCommands(List<int> log, int endFrame) async {
+    final path = _libraryPath;
+    final address = _h.address;
+    final data = Int32List.fromList(log);
+    final status = await Isolate.run(() => _replay(path, address, data, endFrame));
+    if (status != bw_status.BW_OK.value) throw BwBridgeException('replayCommands failed: $status');
+  }
+
+  static int _replay(String path, int address, Int32List log, int endFrame) {
+    final b = BwBridgeBindings(ffi.DynamicLibrary.open(path));
+    final buf = calloc<ffi.Int32>(log.isEmpty ? 1 : log.length);
+    try {
+      buf.asTypedList(log.length).setAll(0, log);
+      return b.bw_bridge_replay_commands(ffi.Pointer<bw_bridge_t>.fromAddress(address), buf, log.length, endFrame).value;
+    } finally {
+      calloc.free(buf);
+    }
+  }
 
   // --- scalars ---
 
@@ -506,5 +592,6 @@ class BwEngine {
     calloc.free(_int2);
     calloc.free(_int3);
     calloc.free(_soundBuf);
+    if (_fogBuf != null) calloc.free(_fogBuf!);
   }
 }

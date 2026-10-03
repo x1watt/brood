@@ -106,7 +106,46 @@ class BwBridgeBindings {
         int Function(ffi.Pointer<bw_bridge_t>, ffi.Pointer<ffi.Char>, int, int)
       >();
 
-  /// Advances the simulation by n_frames (synchronous).
+  /// Starts a melee game with the original melee rules (a player who loses all
+  /// buildings is defeated; the last side standing wins). Players are given the
+  /// map's start locations in a seed-shuffled order: out_slots[i] receives
+  /// player i's slot (0-7), the player id every other call uses, or -1 when the
+  /// map has fewer start locations than players. With one player the map's own
+  /// settings apply instead (no victory check).
+  bw_status bw_bridge_new_game(
+    ffi.Pointer<bw_bridge_t> bridge,
+    ffi.Pointer<ffi.Char> map_file,
+    ffi.Pointer<bw_game_setup> setup,
+    ffi.Pointer<ffi.Int32> out_slots,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_new_game(bridge, map_file, setup, out_slots),
+    );
+  }
+
+  late final _bw_bridge_new_gamePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<bw_game_setup>,
+            ffi.Pointer<ffi.Int32>,
+          )
+        >
+      >('bw_bridge_new_game');
+  late final _bw_bridge_new_game = _bw_bridge_new_gamePtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<bw_bridge_t>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<bw_game_setup>,
+          ffi.Pointer<ffi.Int32>,
+        )
+      >();
+
+  /// Advances the simulation by n_frames (synchronous). Computer players
+  /// decide inside this call, before each frame.
   bw_status bw_bridge_step(ffi.Pointer<bw_bridge_t> bridge, int n_frames) {
     return bw_status.fromValue(_bw_bridge_step(bridge, n_frames));
   }
@@ -117,6 +156,118 @@ class BwBridgeBindings {
       >('bw_bridge_step');
   late final _bw_bridge_step = _bw_bridge_stepPtr
       .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int)>();
+
+  /// 0 playing, 1 dropped, 2 defeated, 3 or more victorious.
+  int bw_bridge_victory_state(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int player_slot,
+  ) {
+    return _bw_bridge_victory_state(bridge, player_slot);
+  }
+
+  late final _bw_bridge_victory_statePtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int)>
+      >('bw_bridge_victory_state');
+  late final _bw_bridge_victory_state = _bw_bridge_victory_statePtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int)>();
+
+  /// Whose eyes the draw list, unit list and unit picking use: other players'
+  /// units are left out unless that player can see them, neutral ones unless
+  /// their ground is explored. -1 (the default) shows everything.
+  void bw_bridge_set_viewer(ffi.Pointer<bw_bridge_t> bridge, int player_slot) {
+    return _bw_bridge_set_viewer(bridge, player_slot);
+  }
+
+  late final _bw_bridge_set_viewerPtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Void Function(ffi.Pointer<bw_bridge_t>, ffi.Int)>
+      >('bw_bridge_set_viewer');
+  late final _bw_bridge_set_viewer = _bw_bridge_set_viewerPtr
+      .asFunction<void Function(ffi.Pointer<bw_bridge_t>, int)>();
+
+  /// One byte per map tile, row by row: 0 never explored, 1 explored but out of
+  /// sight, 2 in sight. out_cap must be at least width * height tiles.
+  bw_status bw_bridge_get_fog(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int player_slot,
+    ffi.Pointer<ffi.Uint8> out_tiles,
+    int out_cap,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_get_fog(bridge, player_slot, out_tiles, out_cap),
+    );
+  }
+
+  late final _bw_bridge_get_fogPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Pointer<ffi.Uint8>,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_get_fog');
+  late final _bw_bridge_get_fog = _bw_bridge_get_fogPtr
+      .asFunction<
+        int Function(ffi.Pointer<bw_bridge_t>, int, ffi.Pointer<ffi.Uint8>, int)
+      >();
+
+  /// Copies the command log into out (pass NULL to just get its length).
+  /// Returns the length in int32 values, or -1 without a game.
+  int bw_bridge_command_log(
+    ffi.Pointer<bw_bridge_t> bridge,
+    ffi.Pointer<ffi.Int32> out,
+    int out_cap,
+  ) {
+    return _bw_bridge_command_log(bridge, out, out_cap);
+  }
+
+  late final _bw_bridge_command_logPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Pointer<ffi.Int32>,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_command_log');
+  late final _bw_bridge_command_log = _bw_bridge_command_logPtr
+      .asFunction<
+        int Function(ffi.Pointer<bw_bridge_t>, ffi.Pointer<ffi.Int32>, int)
+      >();
+
+  /// Replays a command log on a freshly started game (same map and setup)
+  /// until end_frame. Synchronous; runs about as fast as the simulation allows.
+  bw_status bw_bridge_replay_commands(
+    ffi.Pointer<bw_bridge_t> bridge,
+    ffi.Pointer<ffi.Int32> log,
+    int len,
+    int end_frame,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_replay_commands(bridge, log, len, end_frame),
+    );
+  }
+
+  late final _bw_bridge_replay_commandsPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Pointer<ffi.Int32>,
+            ffi.Int,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_replay_commands');
+  late final _bw_bridge_replay_commands = _bw_bridge_replay_commandsPtr
+      .asFunction<
+        int Function(ffi.Pointer<bw_bridge_t>, ffi.Pointer<ffi.Int32>, int, int)
+      >();
 
   /// --- Scalar queries --------------------------------------------------------
   int bw_bridge_current_frame(ffi.Pointer<bw_bridge_t> bridge) {
@@ -1647,6 +1798,28 @@ enum bw_status {
   };
 }
 
+final class bw_game_setup extends ffi.Struct {
+  /// entries used below (1-8)
+  @ffi.Int32()
+  external int player_count;
+
+  /// BW_PLAYER_HUMAN or BW_PLAYER_COMPUTER
+  @ffi.Array.multi([8])
+  external ffi.Array<ffi.Int32> controller;
+
+  /// 0=zerg, 1=terran, 2=protoss (random already resolved)
+  @ffi.Array.multi([8])
+  external ffi.Array<ffi.Int32> race;
+
+  /// equal non-zero teams are allied (shared vision, allied victory); 0 = alone
+  @ffi.Array.multi([8])
+  external ffi.Array<ffi.Int32> team;
+
+  /// start positions and computer decisions
+  @ffi.Uint32()
+  external int seed;
+}
+
 final class bw_draw_item extends ffi.Struct {
   /// BW_DRAW_IMAGE or BW_DRAW_SELECTION_CIRCLE
   @ffi.Int32()
@@ -1955,7 +2128,13 @@ final class bw_sound_info extends ffi.Struct {
   external ffi.Array<ffi.Char> filename;
 }
 
-const int BW_BRIDGE_ABI_VERSION = 11;
+const int BW_BRIDGE_ABI_VERSION = 12;
+
+const int BW_MAX_PLAYERS = 8;
+
+const int BW_PLAYER_HUMAN = 1;
+
+const int BW_PLAYER_COMPUTER = 2;
 
 const int BW_DRAW_IMAGE = 0;
 

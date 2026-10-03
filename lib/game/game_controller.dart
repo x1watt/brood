@@ -10,6 +10,7 @@
 // away on selection/mode changes, and drives the panels.
 
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
@@ -21,6 +22,8 @@ import '../rendering/icon_atlas.dart';
 import '../rendering/sprite_atlas.dart';
 import '../rendering/terrain_layer.dart';
 import 'command_cards.dart';
+import 'game_setup.dart';
+import 'saved_games.dart';
 
 enum CommandMode { none, move, attack, patrol, gather, repair, build, cast, rally }
 
@@ -67,9 +70,23 @@ class CommandMarker {
 
 enum _Edge { none, top, bottom, left, right }
 
+enum GameOutcome { victory, defeat }
+
+enum Relation { own, ally, enemy, neutral }
+
+class GamePlayer {
+  final int slot; // the engine's player id
+  final int race;
+  final int team;
+  final bool human;
+  final String name;
+  const GamePlayer({required this.slot, required this.race, required this.team, required this.human, required this.name});
+}
+
 class GameController {
-  static const int myPlayer = 0;
   static const int neutralPlayer = 11;
+  // How often (in game frames) the fog of war picture is refreshed.
+  static const int fogInterval = 8;
   // Brood War's "Fastest" game speed: one simulation frame every 42 ms.
   static const int frameMicros = 42000;
   static const double edgeScrollMargin = 8;
@@ -85,7 +102,18 @@ class GameController {
   TerrainLayer? terrain;
   SoundSystem? sound;
   String? error;
+  int myPlayer = 0; // the human's slot, assigned by the engine
   int myRace = 1; // 0 zerg, 1 terran, 2 protoss
+  GameLaunch? launch;
+  List<GamePlayer> players = const [];
+  bool loadingSave = false; // replaying a saved game's commands
+  bool paused = false;
+  GameOutcome? outcome;
+  ui.Image? fogImage; // one pixel per tile, black with fog alpha
+  int _fogFrame = -1000;
+  bool _fogBusy = false;
+  bool _disposed = false;
+  bool revealed = false; // whole map shown (after a defeat)
   bool get ready => _engine != null && terrain != null && atlas != null;
   BwEngine get engine => _engine!;
 
@@ -145,13 +173,40 @@ class GameController {
 
   // --- startup ---
 
-  Future<void> start({required String dataDir, required String mapFile, required int race}) async {
-    myRace = race;
+  Future<void> start({required String dataDir, required GameLaunch launch}) async {
+    this.launch = launch;
     try {
       final e = BwEngine.open();
       e.loadAssets(dataDir);
-      e.newMeleeGame(mapFile, playerSlot: myPlayer, race: race);
-      e.step(1);
+      final setup = launch.setup;
+      final slots = e.newGame(
+        launch.mapFile,
+        [for (final p in setup.players) (human: p.human, race: p.race, team: p.team)],
+        setup.seed,
+      );
+      var computers = 0;
+      final placed = <GamePlayer>[];
+      for (int i = 0; i < setup.players.length; ++i) {
+        final p = setup.players[i];
+        if (!p.human) ++computers;
+        if (slots[i] < 0) continue;
+        placed.add(GamePlayer(slot: slots[i], race: p.race, team: p.team, human: p.human, name: p.human ? 'You' : 'Computer $computers'));
+      }
+      final me = placed.where((p) => p.human).firstOrNull;
+      if (me == null) throw StateError('the map has no start location for you');
+      players = placed;
+      myPlayer = me.slot;
+      myRace = me.race;
+      final saved = launch.saved;
+      if (saved != null) {
+        loadingSave = true;
+        _notifyHud(force: true);
+        await e.replayCommands(saved.commandLog, saved.frame);
+        loadingSave = false;
+      } else {
+        e.step(1);
+      }
+      e.setViewer(myPlayer);
       _engine = e;
       atlas = SpriteAtlas(e);
       icons = IconAtlas(e)..onLoaded = () => _notifyHud(force: true);
@@ -163,10 +218,17 @@ class GameController {
       for (final u in units) {
         if (u.owner == myPlayer && u.isCompleted) _completedSeen.add(u.unitId);
       }
-      _startWorkersMining();
+      if (saved == null) _startWorkersMining();
       engine.pollSounds(); // drop sounds from setup
-      _centerOnHome();
+      if (saved != null) {
+        _centerAt(Offset(saved.camX, saved.camY));
+      } else {
+        _centerOnHome();
+      }
+      _updateFog();
       _refreshView();
+      final left = setup.players.length - placed.length;
+      if (left > 0) showMessageQuiet('This map has room for ${placed.length} players: $left opponent${left == 1 ? ' was' : 's were'} left out.');
     } catch (err, st) {
       error = '$err';
       debugPrint('GameController.start failed: $err\n$st');
@@ -175,7 +237,104 @@ class GameController {
     repaint.fire();
   }
 
+  // --- players, alliances, outcome ---
+
+  GamePlayer? playerAt(int slot) => players.where((p) => p.slot == slot).firstOrNull;
+
+  Relation relation(int owner) {
+    if (owner == myPlayer) return Relation.own;
+    final o = playerAt(owner);
+    if (o == null) return Relation.neutral;
+    final me = playerAt(myPlayer);
+    if (me != null && me.team != 0 && me.team == o.team) return Relation.ally;
+    return Relation.enemy;
+  }
+
+  void setPaused(bool on) {
+    if (paused == on) return;
+    paused = on;
+    _accMicros = 0;
+    if (on) cancelMode();
+    // An overlay covering the game reports the pointer as leaving it,
+    // which must not read as pushing against the window edge.
+    stopAllScrolling();
+    _notifyHud(force: true);
+  }
+
+  /// After the result screen: keep watching. A defeated player has no
+  /// units left to see with, so the whole map is revealed.
+  void continueAfterOutcome() {
+    if (outcome == GameOutcome.defeat) {
+      engine.setViewer(-1);
+      revealed = true;
+      fogImage?.dispose();
+      fogImage = null;
+    }
+    setPaused(false);
+    _changed();
+  }
+
+  void _checkOutcome() {
+    if (outcome != null) return;
+    final v = engine.victoryState(myPlayer);
+    if (v == 1 || v == 2) {
+      outcome = GameOutcome.defeat;
+    } else if (v >= 3) {
+      outcome = GameOutcome.victory;
+    }
+    if (outcome != null) setPaused(true);
+  }
+
+  SavedGame saveGame(String name) {
+    final l = launch!;
+    return SavedGame.write(
+      name: name,
+      mapFile: l.mapFile,
+      mapKey: l.mapKey,
+      mapName: l.mapName,
+      setup: l.setup,
+      data: SavedGameData(
+        commandLog: engine.commandLog(),
+        frame: engine.currentFrame,
+        camX: camX + viewport.width / 2,
+        camY: camY + viewport.height / 2,
+      ),
+    );
+  }
+
+  // --- fog of war ---
+
+  void _updateFog() {
+    final t = terrain;
+    if (_fogBusy || revealed || t == null || _engine == null) return;
+    _fogBusy = true;
+    _fogFrame = frame;
+    final w = t.widthPx ~/ 32, h = t.heightPx ~/ 32;
+    final tiles = engine.getFog(myPlayer, w * h);
+    final rgba = Uint8List(w * h * 4);
+    for (int i = 0; i < tiles.length; ++i) {
+      rgba[i * 4 + 3] = switch (tiles[i]) {
+        2 => 0,
+        1 => 0x88,
+        _ => 0xFF,
+      };
+    }
+    ui.decodeImageFromPixels(rgba, w, h, ui.PixelFormat.rgba8888, (img) {
+      _fogBusy = false;
+      if (_disposed || revealed) {
+        img.dispose();
+        return;
+      }
+      fogImage?.dispose();
+      fogImage = img;
+      repaint.fire();
+    });
+  }
+
   void dispose() {
+    _disposed = true;
+    fogImage?.dispose();
+    fogImage = null;
     sound?.dispose();
     _engine?.dispose();
     repaint.dispose();
@@ -212,10 +371,14 @@ class GameController {
     final own = units.where((u) => u.owner == myPlayer).toList();
     if (own.isEmpty) return;
     final home = own.firstWhere((u) => u.isBuilding, orElse: () => own.first);
+    _centerAt(Offset(home.x.toDouble(), home.y.toDouble()));
+  }
+
+  void _centerAt(Offset mapPos) {
     if (viewport.isEmpty) {
-      _pendingCenter = Offset(home.x.toDouble(), home.y.toDouble());
+      _pendingCenter = mapPos;
     } else {
-      centerOn(home.x.toDouble(), home.y.toDouble());
+      centerOn(mapPos.dx, mapPos.dy);
     }
   }
 
@@ -239,7 +402,7 @@ class GameController {
 
     var changed = _applyScroll(dtMicros / 1e6);
 
-    _accMicros += dtMicros;
+    if (!paused) _accMicros += dtMicros;
     var steps = _accMicros ~/ frameMicros;
     if (steps > 0) {
       if (steps > 6) steps = 6; // don't spiral after a stall
@@ -249,6 +412,8 @@ class GameController {
       _refreshUnits();
       sound?.drainEngine(screenRect);
       _announceCompletedUnits();
+      if (frame - _fogFrame >= fogInterval) _updateFog();
+      _checkOutcome();
       changed = true;
     }
 
@@ -412,6 +577,7 @@ class GameController {
   }
 
   bool _applyScroll(double dt) {
+    if (paused) return false;
     double dx = 0, dy = 0;
     for (final s in _keyScroll) {
       dx += s.dx;

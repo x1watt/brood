@@ -1,7 +1,8 @@
 // lib/rendering/minimap_painter.dart
 //
-// Whole map scaled into the minimap box: terrain, a dot per unit (own
-// green, neutral resources cyan, others red) and the camera's view rectangle.
+// Whole map scaled into the minimap box: terrain, fog of war, a dot per
+// unit the player can see (own green, allies yellow, neutral resources
+// cyan, enemies red) and the camera's view rectangle.
 
 import 'dart:math' as math;
 
@@ -37,19 +38,30 @@ class MinimapPainter extends CustomPainter {
       mapRect,
       Paint()..filterQuality = FilterQuality.medium,
     );
+    final fog = c.fogImage;
+    if (fog != null) {
+      canvas.drawImageRect(
+        fog,
+        Rect.fromLTWH(0, 0, fog.width.toDouble(), fog.height.toDouble()),
+        mapRect,
+        Paint()..filterQuality = FilterQuality.medium,
+      );
+    }
 
     final own = Paint()..color = const Color(0xFF3CFF3C);
     final neutral = Paint()..color = const Color(0xFF6FD3FF);
     final enemy = Paint()..color = const Color(0xFFFF3B30);
+    final ally = Paint()..color = const Color(0xFFFFE14D);
     for (final u in c.units) {
       final p = origin + Offset(u.x * scale, u.y * scale);
       final w = math.max(2.0, u.width * scale);
       final h = math.max(2.0, u.height * scale);
-      final paint = u.owner == GameController.myPlayer
-          ? own
-          : u.owner == GameController.neutralPlayer
-          ? neutral
-          : enemy;
+      final paint = switch (c.relation(u.owner)) {
+        Relation.own => own,
+        Relation.ally => ally,
+        Relation.neutral => neutral,
+        Relation.enemy => enemy,
+      };
       canvas.drawRect(Rect.fromCenter(center: p, width: w, height: h), paint);
     }
 

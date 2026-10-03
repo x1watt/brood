@@ -55,7 +55,8 @@ bridge places the four quarter images geometrically around the pylon because
 OpenBW's position for the flipped (left) quarters is off.
 
 Preferences live in lib/game/settings.dart ($XDG_DATA_HOME/brood/
-settings.json): volume (top bar slider), mute and fullscreen. Windowed mode
+settings.json): volume (top bar slider), mute, fullscreen and the last game
+setup. Windowed mode
 on GNOME/X11 is always composited by mutter (only fullscreen or screen-sized
 windows are unredirected), which adds latency; the runner sets
 __GL_MaxFramesAllowed=1 to keep NVIDIA's frame queue short, fullscreen is
@@ -74,8 +75,34 @@ icons (click to cancel, via action_cancel_build_queue). Greyed buttons name
 their missing requirement. Play time per map (game time) is kept in
 $XDG_DATA_HOME/brood/play_stats.json and orders the start screen.
 
-Still missing: an AI opponent (OpenBW has none), fog-of-war, creep, lift
-off/land and nukes, and the web/Android targets.
+Games are set up on the start screen (lib/ui/start_screen.dart): 2 to 8
+players (capped by the map), free for all, all against you or random
+teams, a race or random per player. bw_bridge_new_game gives players the
+map's start locations in a seed-shuffled order, sets alliances and shared
+vision for teams, and loads OpenBW's Melee.trg so losing all buildings is a
+defeat and the last side standing wins (the bridge remembers each outcome,
+since OpenBW's trigger pass resets removed players' state to 0).
+
+Computer opponents (engine/bridge/src/bw_ai.h) are a rule-based player
+written for this project, since OpenBW has no AI: mining and gas, supply
+ahead of use, a short build order and upgrades per race, army waves that
+grow after each attack, base defense and expansions. It issues commands
+through OpenBW's action functions inside bw_bridge_step and is
+deterministic (no pointer ordering, its own seeded random numbers).
+
+Fog of war: bw_bridge_set_viewer filters the draw list, unit list and
+picking to what the player sees (neutral resources stay on explored
+ground); bw_bridge_get_fog gives per-tile state, drawn as a one-texel-per-
+tile image stretched over the map and minimap.
+
+Saved games ($XDG_DATA_HOME/brood/saves/, lib/game/saved_games.dart) are
+the resolved setup plus the bridge's command log (every command entering
+the API, with its frame). Loading starts the same game and replays the log
+on a background isolate; bridge_smoke_test checks the replayed state hash
+matches. The game menu (top-left button or F10) pauses, saves and exits.
+
+Still missing: creep drawing, lift off/land and nukes, and the web/Android
+targets.
 
 ## Layers
 

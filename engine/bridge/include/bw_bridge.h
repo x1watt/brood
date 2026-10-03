@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 11
+#define BW_BRIDGE_ABI_VERSION 12
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -55,8 +55,60 @@ bw_status bw_bridge_load_assets(bw_bridge_t* bridge, const char* data_dir);
 bw_status bw_bridge_new_melee_game(bw_bridge_t* bridge, const char* map_file,
                                     int my_player_slot, int my_race);
 
-// Advances the simulation by n_frames (synchronous).
+// --- Game setup ------------------------------------------------------------
+
+#define BW_MAX_PLAYERS 8
+#define BW_PLAYER_HUMAN 1    // the local player (exactly one)
+#define BW_PLAYER_COMPUTER 2 // played by the bridge's computer opponent
+
+typedef struct bw_game_setup {
+	int32_t player_count;               // entries used below (1-8)
+	int32_t controller[BW_MAX_PLAYERS]; // BW_PLAYER_HUMAN or BW_PLAYER_COMPUTER
+	int32_t race[BW_MAX_PLAYERS];       // 0=zerg, 1=terran, 2=protoss (random already resolved)
+	int32_t team[BW_MAX_PLAYERS];       // equal non-zero teams are allied (shared vision, allied victory); 0 = alone
+	uint32_t seed;                      // start positions and computer decisions
+} bw_game_setup;
+
+// Starts a melee game with the original melee rules (a player who loses all
+// buildings is defeated; the last side standing wins). Players are given the
+// map's start locations in a seed-shuffled order: out_slots[i] receives
+// player i's slot (0-7), the player id every other call uses, or -1 when the
+// map has fewer start locations than players. With one player the map's own
+// settings apply instead (no victory check).
+bw_status bw_bridge_new_game(bw_bridge_t* bridge, const char* map_file, const bw_game_setup* setup, int32_t* out_slots);
+
+// Advances the simulation by n_frames (synchronous). Computer players
+// decide inside this call, before each frame.
 bw_status bw_bridge_step(bw_bridge_t* bridge, int n_frames);
+
+// 0 playing, 1 dropped, 2 defeated, 3 or more victorious.
+int bw_bridge_victory_state(bw_bridge_t* bridge, int player_slot);
+
+// --- Fog of war ----------------------------------------------------------------
+
+// Whose eyes the draw list, unit list and unit picking use: other players'
+// units are left out unless that player can see them, neutral ones unless
+// their ground is explored. -1 (the default) shows everything.
+void bw_bridge_set_viewer(bw_bridge_t* bridge, int player_slot);
+
+// One byte per map tile, row by row: 0 never explored, 1 explored but out of
+// sight, 2 in sight. out_cap must be at least width * height tiles.
+bw_status bw_bridge_get_fog(bw_bridge_t* bridge, int player_slot, uint8_t* out_tiles, int out_cap);
+
+// --- Saved games -----------------------------------------------------------------
+//
+// Every command entering through this API is logged with its frame. A saved
+// game is the setup plus that log: loading starts the same game and replays
+// the log, and the deterministic simulation (and computer players) arrive at
+// the same state.
+
+// Copies the command log into out (pass NULL to just get its length).
+// Returns the length in int32 values, or -1 without a game.
+int bw_bridge_command_log(bw_bridge_t* bridge, int32_t* out, int out_cap);
+
+// Replays a command log on a freshly started game (same map and setup)
+// until end_frame. Synchronous; runs about as fast as the simulation allows.
+bw_status bw_bridge_replay_commands(bw_bridge_t* bridge, const int32_t* log, int len, int end_frame);
 
 // --- Scalar queries --------------------------------------------------------
 

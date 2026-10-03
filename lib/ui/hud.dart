@@ -12,12 +12,12 @@ import '../game/command_cards.dart';
 import '../game/game_controller.dart';
 import '../rendering/icon_atlas.dart';
 
-const _panelColor = Color(0xFF14181C);
-const _borderColor = Color(0xFF2E3A44);
+const _panelColor = Color(0xFF000000);
+const _borderColor = Color(0xFF2A2A2A);
 const _mineralColor = Color(0xFF6FD3FF);
 const _gasColor = Color(0xFF4CE07A);
-const _textColor = Color(0xFFE6E6E6);
-const _dimText = Color(0xFF8A96A0);
+const _textColor = Color(0xFFE8E8E8);
+const _dimText = Color(0xFF8C8C8C);
 
 class TopBar extends StatelessWidget {
   final GameController c;
@@ -26,9 +26,11 @@ class TopBar extends StatelessWidget {
   final VoidCallback onToggleMute;
   final ValueChanged<double> onVolume;
   final ValueChanged<double> onVolumeDone;
+  final VoidCallback onMenu;
   const TopBar({
     super.key,
     required this.c,
+    required this.onMenu,
     required this.fullscreen,
     required this.onToggleFullscreen,
     required this.onToggleMute,
@@ -52,7 +54,7 @@ class TopBar extends StatelessWidget {
     if (c.mode == CommandMode.build && c.buildTypeId != null) {
       hint = 'Place ${c.engine.unitType(c.buildTypeId!).shortName}: left click to build, right click or Esc to cancel';
     } else if (c.mode == CommandMode.cast && c.castAbility != null) {
-      final t = c.castAbility!.tech >= 0 ? c.engine.techInfo(GameController.myPlayer, c.castAbility!.tech) : null;
+      final t = c.castAbility!.tech >= 0 ? c.engine.techInfo(c.myPlayer, c.castAbility!.tech) : null;
       hint = '${t?.name ?? 'Ability'}: left click a target, right click or Esc to cancel';
     } else if (c.mode == CommandMode.rally) {
       hint = 'Set rally point: left click a spot or unit, right click or Esc to cancel';
@@ -61,13 +63,22 @@ class TopBar extends StatelessWidget {
     }
     return Container(
       height: 34,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.only(left: 2, right: 12),
       decoration: const BoxDecoration(
         color: _panelColor,
         border: Border(bottom: BorderSide(color: _borderColor)),
       ),
       child: Row(
         children: [
+          IconButton(
+            tooltip: 'Menu (F10)',
+            iconSize: 20,
+            visualDensity: VisualDensity.compact,
+            color: _textColor,
+            onPressed: onMenu,
+            icon: const Icon(Icons.menu),
+          ),
+          const SizedBox(width: 6),
           // The original's own icons (game\icons.grp): minerals, then the
           // race's gas and supply icons.
           _resource(c.icons?.resource(0), _mineralColor, '${c.minerals}', 'Minerals'),
@@ -107,9 +118,9 @@ class TopBar extends StatelessWidget {
                   trackHeight: 3,
                   thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
                   overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
-                  activeTrackColor: (c.sound?.muted ?? false) ? _dimText : _mineralColor,
-                  inactiveTrackColor: const Color(0xFF2E3A44),
-                  thumbColor: (c.sound?.muted ?? false) ? _dimText : _mineralColor,
+                  activeTrackColor: (c.sound?.muted ?? false) ? _dimText : _textColor,
+                  inactiveTrackColor: const Color(0xFF2A2A2A),
+                  thumbColor: (c.sound?.muted ?? false) ? _dimText : _textColor,
                 ),
                 child: Slider(
                   value: c.sound?.volume ?? 0,
@@ -171,11 +182,13 @@ class SelectionPanel extends StatelessWidget {
 
   Widget _single(UnitInfo u) {
     final t = c.engine.unitType(u.typeId);
-    final owner = u.owner == GameController.myPlayer
-        ? 'You'
-        : u.owner == GameController.neutralPlayer
-        ? 'Neutral'
-        : 'Player ${u.owner + 1}';
+    final player = c.playerAt(u.owner);
+    final owner = switch (c.relation(u.owner)) {
+      Relation.own => 'You',
+      Relation.neutral => 'Neutral',
+      Relation.ally => '${player?.name ?? 'Player ${u.owner + 1}'} (ally)',
+      Relation.enemy => '${player?.name ?? 'Player ${u.owner + 1}'} (enemy)',
+    };
     final lines = <Widget>[
       Row(
         children: [
@@ -201,9 +214,9 @@ class SelectionPanel extends StatelessWidget {
       if (u.maxShields > 0) lines.add(_statBar('Shields', u.shields, u.maxShields, const Color(0xFF4FA3FF)));
       if (u.maxEnergy > 0) lines.add(_statBar('Energy', u.energy, u.maxEnergy, const Color(0xFFB57BFF)));
     }
-    if (u.isBusyResearching && u.researchProgressPermille >= 0 && u.owner == GameController.myPlayer) {
-      final tech = u.researchingTech >= 0 ? c.engine.techInfo(GameController.myPlayer, u.researchingTech) : null;
-      final upgrade = u.upgrading >= 0 ? c.engine.upgradeInfo(GameController.myPlayer, u.upgrading) : null;
+    if (u.isBusyResearching && u.researchProgressPermille >= 0 && u.owner == c.myPlayer) {
+      final tech = u.researchingTech >= 0 ? c.engine.techInfo(c.myPlayer, u.researchingTech) : null;
+      final upgrade = u.upgrading >= 0 ? c.engine.upgradeInfo(c.myPlayer, u.upgrading) : null;
       final name = tech?.name ?? upgrade?.name ?? '';
       final icon = tech?.icon ?? upgrade?.icon ?? -1;
       lines.add(const SizedBox(height: 8));
@@ -227,7 +240,7 @@ class SelectionPanel extends StatelessWidget {
     if (!u.isCompleted && u.progressPermille >= 0) {
       lines.add(const SizedBox(height: 6));
       lines.add(_progress('Under construction', u.progressPermille));
-    } else if (u.queue.isNotEmpty && u.owner == GameController.myPlayer && (u.isBuilding || u.typeId == 72 || u.typeId == 83 || u.typeId == 36)) {
+    } else if (u.queue.isNotEmpty && u.owner == c.myPlayer && (u.isBuilding || u.typeId == 72 || u.typeId == 83 || u.typeId == 36)) {
       // The original's five production slots: what's being made (with its
       // progress) and what's waiting, each a unit icon; click one to cancel it.
       final first = c.engine.unitType(u.queue.first).shortName;
@@ -354,8 +367,8 @@ class _QueueSlot extends StatelessWidget {
       width: 46,
       height: 46,
       decoration: BoxDecoration(
-        color: const Color(0xFF1E252B),
-        border: Border.all(color: onTap == null ? const Color(0xFF232B31) : _borderColor),
+        color: const Color(0xFF111111),
+        border: Border.all(color: onTap == null ? const Color(0xFF1A1A1A) : _borderColor),
         borderRadius: BorderRadius.circular(3),
       ),
       child: Stack(
@@ -435,7 +448,7 @@ class CommandCard extends StatelessWidget {
     final icon = b.icon >= 0 ? c.icons?.command(b.icon, state) : null;
     final hasCost = b.mineralCost > 0 || b.gasCost > 0;
     const short = Color(0xFFFF6B5E);
-    const greyed = Color(0xFF55606A);
+    const greyed = Color(0xFF5A5A5A);
     final costs = <String>[
       if (b.mineralCost > 0) '${b.mineralCost} minerals',
       if (b.gasCost > 0) '${b.gasCost} gas',
@@ -532,7 +545,7 @@ class _HotkeyLabel extends StatelessWidget {
         TextSpan(text: label.substring(0, i)),
         TextSpan(
           text: label.substring(i, i + 1),
-          style: TextStyle(color: color == const Color(0xFF55606A) ? color : const Color(0xFFFFD54F), fontWeight: FontWeight.w700),
+          style: TextStyle(color: color == const Color(0xFF5A5A5A) ? color : const Color(0xFFFFD54F), fontWeight: FontWeight.w700),
         ),
         TextSpan(text: label.substring(i + 1)),
       ]),
@@ -552,9 +565,9 @@ class _Tile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Material(
-    color: active ? const Color(0xFF26445A) : const Color(0xFF1E252B),
+    color: active ? const Color(0xFF2E2E2E) : const Color(0xFF111111),
     shape: RoundedRectangleBorder(
-      side: BorderSide(color: active ? const Color(0xFF6FD3FF) : _borderColor),
+      side: BorderSide(color: active ? const Color(0xFFFFFFFF) : _borderColor),
       borderRadius: BorderRadius.circular(3),
     ),
     child: InkWell(

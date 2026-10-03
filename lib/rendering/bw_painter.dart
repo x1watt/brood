@@ -44,11 +44,14 @@ class BwPainter extends CustomPainter {
         ..colorFilter = ColorFilter.mode(color, BlendMode.srcIn),
   };
 
-  static Color relationColor(int owner) => owner == GameController.myPlayer
-      ? ownColor
-      : owner == GameController.neutralPlayer
-      ? neutralColor
-      : enemyColor;
+  // Selection circles: green own, yellow allied or neutral, red enemy.
+  Color relationColor(int owner) => switch (c.relation(owner)) {
+    Relation.own => ownColor,
+    Relation.ally || Relation.neutral => neutralColor,
+    Relation.enemy => enemyColor,
+  };
+
+  static final Paint _fogPaint = Paint()..filterQuality = FilterQuality.medium;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -115,6 +118,18 @@ class BwPainter extends CustomPainter {
           final img = atlas.resolveColor(item.imageTypeId, item.frameIndex, item.flipped, item.colorIndex);
           if (img != null) canvas.drawImage(img, pos, _plain);
       }
+    }
+
+    // Fog of war: one texel per tile stretched over the map, so the
+    // bilinear filter softens its edges.
+    final fog = c.fogImage;
+    if (fog != null) {
+      canvas.drawImageRect(
+        fog,
+        Rect.fromLTWH(0, 0, fog.width.toDouble(), fog.height.toDouble()),
+        Rect.fromLTWH(-camX, -camY, fog.width * 32.0, fog.height * 32.0),
+        _fogPaint,
+      );
     }
 
     _drawRally(canvas, atlas, camX, camY);
@@ -203,7 +218,7 @@ class BwPainter extends CustomPainter {
     final sel = c.selectedUnits;
     if (sel.length != 1) return;
     final b = sel.first;
-    if (b.owner != GameController.myPlayer || !b.hasRally) return;
+    if (b.owner != c.myPlayer || !b.hasRally) return;
     final from = Offset(b.x - camX, b.y - camY);
     final to = Offset(b.rallyX - camX, b.rallyY - camY);
     final line = Paint()
