@@ -102,7 +102,8 @@ split the selection by owner and give each part in its owner's name
 those units alone for a minute. Computers never command the human's units.
 An alliance can never hold every player still in the game. Leaving, or
 switching sharing off, takes an equal share of the treasury. Setup teams
-start as alliances. "Defensive mode" is a human member's switch (logged):
+start as alliances. "Defensive mode" is a human member's switch (logged, on
+from the start of every new game):
 while it is on, the alliance's computer players send no attack waves, keep
 their armies home, fortify every base against ground and air (bw_ai.h
 fortify: bunkers and turrets, cannons, sunken and spore colonies, with

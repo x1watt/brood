@@ -249,10 +249,15 @@ class GameController {
         if (setup.legacyRules && !fogOfWar) e.exploreMap(myPlayer);
         loadingSave = false;
       } else {
-        // You start open to alliances, and without fog of war the map counts
+        // You start open to alliances and in defensive mode, and without fog of war the map counts
         // as explored so you can build anywhere (logged commands, so saves
         // replay them).
-        if (setup.players.length > 1) e.setAllianceOpen(myPlayer, true);
+        if (setup.players.length > 1) {
+          e.setAllianceOpen(myPlayer, true);
+          // Defensive mode on by default: computer allies fortify and guard
+          // rather than attack (the alliance card switches it off).
+          e.setAllianceDefensive(myPlayer, true);
+        }
         if (!fogOfWar) e.exploreMap(myPlayer);
         e.step(1);
       }
