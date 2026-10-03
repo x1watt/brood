@@ -3,20 +3,12 @@
 // extern "C" contract between the vendored OpenBW simulation core
 // (engine/vendor/openbw) and every host runtime: dart:ffi on Linux desktop
 // and Android, dart:js_interop (via Emscripten) on web. No C++ types cross
-// this boundary — only plain integers, pointers and fixed-width buffers.
+// this boundary, only plain integers, pointers and fixed-width buffers.
 //
 // This header is also what `ffigen` runs against to generate the Dart
-// bindings (lib/engine/bw_bridge_gen.dart) — keep it C, not C++, and keep
-// every struct layout explicit and stable; a change here is a breaking
+// bindings (lib/engine/bw_bridge_gen.dart). Keep it C, not C++, and keep
+// every struct layout explicit and stable: a change here is a breaking
 // change for every binding generated from it.
-//
-// v0 scope: lifecycle + stepping + a few scalar queries, enough to prove the
-// bridge boundary end-to-end (see engine/bridge/tests/bridge_smoke_test.c).
-// The structured per-frame draw-list (bw_bridge_get_frame_state) and command
-// submission (bw_bridge_submit_command) land in a later revision once the
-// sprite/GRP decode work (Phase 5) is further along — expect this header to
-// gain functions, not to have existing ones change shape without a version
-// bump.
 
 #ifndef BW_BRIDGE_H
 #define BW_BRIDGE_H
@@ -28,13 +20,12 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 6
+#define BW_BRIDGE_ABI_VERSION 7
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
-// Status codes returned by functions below. Never a C++ exception crosses
-// this boundary — every throwing OpenBW call is caught internally and
-// mapped to one of these.
+// Never a C++ exception crosses this boundary: every throwing OpenBW call is
+// caught internally and mapped to one of these.
 typedef enum bw_status {
 	BW_OK = 0,
 	BW_ERR_ALREADY_LOADED = -1,
@@ -43,161 +34,197 @@ typedef enum bw_status {
 	BW_ERR_MAP_LOAD_FAILED = -4,
 	BW_ERR_NO_GAME = -5,
 	BW_ERR_INVALID_ARGUMENT = -6,
+	BW_ERR_REJECTED = -7, // the engine refused the command (requirements, placement, resources...)
 	BW_ERR_UNKNOWN = -99,
 } bw_status;
 
 int bw_bridge_abi_version(void);
 
-// Create/destroy. One bw_bridge_t drives one simulation at a time.
+// --- Lifecycle -------------------------------------------------------------
+
 bw_bridge_t* bw_bridge_create(void);
 void bw_bridge_destroy(bw_bridge_t* bridge);
 
-// Loads StarDat.mpq/BrooDat.mpq/Patch_rt.mpq from data_dir (must end in a
-// path separator or not — both are accepted). This is the "bring your own
-// assets" entry point: data_dir must be a user-supplied location, never a
-// path inside the app bundle. See docs/third_party_licensing.md.
+// Loads StarDat.mpq/BrooDat.mpq/Patch_rt.mpq from data_dir. data_dir must be
+// a user-supplied location (their own copy), never a path inside the app
+// bundle. See docs/third_party_licensing.md.
 bw_status bw_bridge_load_assets(bw_bridge_t* bridge, const char* data_dir);
 
-// Starts a single-player melee game on the given map: `my_player` occupies
-// slot my_player_slot (0-11) with race my_race (0=zerg,1=terran,2=protoss,
-// per bwgame.h's race_t ordinal — kept as a plain int here, not an enum, so
-// this header has no dependency on OpenBW's own enum layout). All other
-// slots are inactive. This matches the minimal setup already proven by
-// engine/tools/sim_smoke_test; multiplayer/AI opponents are a later revision.
+// Starts a melee game on map_file with the local player in my_player_slot
+// (0-11) as my_race (0=zerg, 1=terran, 2=protoss). Other slots are inactive.
 bw_status bw_bridge_new_melee_game(bw_bridge_t* bridge, const char* map_file,
                                     int my_player_slot, int my_race);
 
-// Advances the simulation by n_frames (synchronous, blocking).
+// Advances the simulation by n_frames (synchronous).
 bw_status bw_bridge_step(bw_bridge_t* bridge, int n_frames);
 
-// Scalar queries, valid only after bw_bridge_new_melee_game succeeded.
+// --- Scalar queries --------------------------------------------------------
+
 int bw_bridge_current_frame(bw_bridge_t* bridge);
 int bw_bridge_unit_count(bw_bridge_t* bridge, int player_slot);
 int bw_bridge_minerals(bw_bridge_t* bridge, int player_slot);
 int bw_bridge_gas(bw_bridge_t* bridge, int player_slot);
 
-// Supply in BW's own half-unit fixed-point (divide by 2.0 for the usual
-// display value, e.g. raw 18 = 9 supply). race: 0=zerg,1=terran,2=protoss.
+// Supply in BW's half-unit fixed point (divide by 2 for display).
 bw_status bw_bridge_supply(bw_bridge_t* bridge, int player_slot, int race, int* out_used_raw, int* out_available_raw);
 
-// --- Rendering: the "parts list" the bridge hands to a host renderer -------
+// --- Rendering: the ordered "parts list" ------------------------------------
 //
-// Deliberately NOT a composited picture: every visible thing is described
-// by what it is (image_type_id + frame_index + flipped) and where it is, so
-// the host (Flutter) decides what pixels to draw for each one — which is
-// what makes swapping in custom/HD textures later possible without touching
-// this bridge. See docs/architecture.md.
+// Not a composited picture: every visible image is described by what it is
+// (image_type_id + frame_index + flipped) and where its top-left corner is,
+// so the host decides what pixels to draw for each one (which is what lets
+// textures be swapped later). The list is already in OpenBW's exact draw
+// order (sprite_depth_order, images back to front) and positions already
+// include each frame's offset inside its GRP, so the host must draw items in
+// order and must not re-sort or re-center them.
 
-// Fixed-layout struct shared across the FFI/WASM boundary — do not reorder
-// or change field widths without bumping BW_BRIDGE_ABI_VERSION.
-typedef struct bw_sprite_info {
-	int32_t x;               // map pixel position
+#define BW_DRAW_IMAGE 0
+#define BW_DRAW_SELECTION_CIRCLE 1
+
+// Image modifiers (image_t::modifier) a host needs to treat differently:
+#define BW_MOD_NORMAL 0
+#define BW_MOD_PLAYER_COLOR 1
+#define BW_MOD_SHADOW 10 // darken whatever is underneath, don't draw colors
+#define BW_MOD_GLOW 9    // additive light effect; pixel values index the light table given by color_shift
+
+typedef struct bw_draw_item {
+	int32_t kind;          // BW_DRAW_IMAGE or BW_DRAW_SELECTION_CIRCLE
+	int32_t x;             // top-left of the frame, map pixels
 	int32_t y;
-	int32_t image_type_id;   // identifies which GRP + recolor rules to use
+	int32_t image_type_id;
 	int32_t frame_index;
-	int32_t flipped;         // 0 or 1 (horizontal flip)
-	int32_t owner;           // player slot 0-11, for recoloring
-	int32_t elevation_level; // z-order
-	int32_t modifier;        // image->modifier (0/1 = normal/player-color; others are cloak/shadow/warp/etc, see bw_render_util.h — approximate or ignore these for now)
-	int32_t unit_id;         // stable handle for this sprite's owning unit (0 = none); pass to the command functions below
-} bw_sprite_info;
+	int32_t flipped;       // 0 or 1
+	int32_t color_index;   // player color (st.players[owner].color), row in bw_bridge_get_player_colors
+	int32_t owner;         // player slot 0-11 (11 is neutral: minerals, geysers, critters)
+	int32_t modifier;      // see BW_MOD_*; unknown values can be drawn as normal
+	int32_t color_shift;   // for BW_MOD_GLOW: 1-based light table index
+	int32_t unit_id;       // owning unit, 0 if the sprite isn't a unit (effects, bullets...)
+	int32_t hp_permille;   // selection circles only: hit points as 0-1000, -1 if not applicable
+	int32_t shield_permille; // selection circles only: shields as 0-1000, -1 if none
+} bw_draw_item;
 
-// Fills out_sprites (capacity max_count) with every currently visible
-// image across all players, returns the number written (which may be less
-// than the true total if max_count was too small — call again with a
-// larger buffer if the return value equals max_count).
-// v0 does not filter by fog-of-war/visibility for a specific viewer; that
-// is a known gap, not yet implemented.
-int bw_bridge_get_visible_sprites(bw_bridge_t* bridge, bw_sprite_info* out_sprites, int max_count);
+// Fills out_items with everything visible inside the map-pixel rectangle
+// (view_x, view_y, view_w, view_h), in draw order, with selection circles
+// for selected_owner's current selection inserted where OpenBW draws them.
+// Returns the number written, or -1 on error.
+int bw_bridge_get_draw_list(bw_bridge_t* bridge, int selected_owner,
+                            int view_x, int view_y, int view_w, int view_h,
+                            bw_draw_item* out_items, int max_count);
 
-// The tileset index (0-7) of the currently loaded map, used to pick which
-// Tileset/<name>.wpe palette and recolor table apply.
 int bw_bridge_get_tileset_index(bw_bridge_t* bridge);
 
-// 256 RGBA8888 entries (1024 bytes) — the one palette every decoded pixel
-// index below should be looked up against. out_cap must be >= 1024.
+// 256 RGBA8888 entries (1024 bytes).
 bw_status bw_bridge_get_palette(bw_bridge_t* bridge, uint8_t* out_rgba, int out_cap);
 
-// 16 players x 8 shades (128 bytes) — palette indices 8..15 in a decoded
-// sprite frame should be remapped through player_colors[owner] before
-// looking up the palette, to recolor a unit for its owner. out_cap must be
-// >= 128.
+// 16 colors x 8 shades (128 bytes): palette indices 8..15 in a decoded frame
+// are remapped through row color_index before the palette lookup.
 bw_status bw_bridge_get_player_colors(bw_bridge_t* bridge, uint8_t* out_colors, int out_cap);
 
-// Frame dimensions for a given image type's frame, needed to size the
-// buffer passed to bw_bridge_decode_image_frame.
-bw_status bw_bridge_get_image_frame_size(bw_bridge_t* bridge, int image_type_id, int frame_index, int* out_width, int* out_height);
+// Light (glow) table light_index (1-based, as in bw_draw_item.color_shift):
+// rows x 256 palette indices. A glow pixel with value v drawn over palette
+// color d becomes palette color table[(v - 1) * 256 + d]. out_cap must be
+// >= rows * 256; pass out_table NULL to just query *out_rows.
+bw_status bw_bridge_get_light_table(bw_bridge_t* bridge, int light_index, uint8_t* out_table, int out_cap, int* out_rows);
 
-// Number of animation frames a GRP has — lets the host batch-decode a
-// unit's whole frame set the first time it's seen, instead of decoding one
-// animation frame at a time as new ones appear during play (which pops the
-// sprite out for a tick on every still-undecoded frame — visible as
-// flicker on any animating unit).
+bw_status bw_bridge_get_image_frame_size(bw_bridge_t* bridge, int image_type_id, int frame_index, int* out_width, int* out_height);
 bw_status bw_bridge_get_image_frame_count(bw_bridge_t* bridge, int image_type_id, int* out_count);
 
-// Decodes one GRP frame into out_pixels as width*height palette-index bytes
-// (0-255, use bw_bridge_get_palette to turn these into colors; index 0 is
-// BW's transparent index). out_cap must be >= width*height from
-// bw_bridge_get_image_frame_size. Does not apply player-color recoloring —
-// that is a host-side lookup against bw_bridge_get_player_colors, since it
-// depends on which player owns the sprite being drawn, not the image data
-// itself.
+// width*height palette-index bytes, 0 = transparent. No player recoloring.
 bw_status bw_bridge_decode_image_frame(bw_bridge_t* bridge, int image_type_id, int frame_index, int flipped, uint8_t* out_pixels, int out_cap);
 
-// --- Terrain -----------------------------------------------------------
-//
-// The map is a grid of 32x32-pixel "megatiles". out_width/out_height below
-// are in tile units (multiply by 32 for pixels).
+// --- Terrain ---------------------------------------------------------------
 
 bw_status bw_bridge_get_map_tile_size(bw_bridge_t* bridge, int* out_width, int* out_height);
-
-// Fills out_megatiles (capacity map_width*map_height from
-// bw_bridge_get_map_tile_size) with one megatile index per tile position,
-// row-major. Pass each value to bw_bridge_decode_megatile.
 bw_status bw_bridge_get_tile_grid(bw_bridge_t* bridge, uint16_t* out_megatiles, int out_cap);
-
-// Decodes one 32x32 megatile into out_pixels (must hold 32*32 = 1024 bytes)
-// as palette-index bytes — apply bw_bridge_get_palette the same way as for
-// sprite frames (no player-color remap for terrain).
 bw_status bw_bridge_decode_megatile(bw_bridge_t* bridge, int megatile_index, uint8_t* out_pixels, int out_cap);
 
-// --- Commands ------------------------------------------------------------
+// --- Units -------------------------------------------------------------------
 //
-// Unit handles are opaque, stable 32-bit values (index+generation packed;
-// 0 means "no unit"); get them from bw_sprite_info.unit_id or
-// bw_bridge_pick_unit_at. They go stale once the unit dies — the command
-// functions below simply no-op (return BW_OK, nothing happens) if a handle
-// no longer resolves to a live unit, same as the original game silently
-// ignoring a stale order.
+// Unit handles are opaque, stable 32-bit values (0 = none). They go stale
+// when the unit dies; functions taking one then do nothing.
 
-// Finds a unit whose sprite covers map position (x, y), or 0 if none.
+#define BW_UNIT_FLAG_BUILDING  1
+#define BW_UNIT_FLAG_RESOURCE  2 // mineral field or vespene geyser (including refinery-covered ones)
+#define BW_UNIT_FLAG_WORKER    4
+#define BW_UNIT_FLAG_COMPLETED 8
+#define BW_UNIT_FLAG_FLYER     16
+#define BW_UNIT_FLAG_CAN_MOVE  32
+
+typedef struct bw_unit_info {
+	int32_t unit_id;
+	int32_t unit_type_id;
+	int32_t owner;
+	int32_t x;             // sprite center, map pixels
+	int32_t y;
+	int32_t flags;         // BW_UNIT_FLAG_*
+	int32_t hp;            // whole hit points
+	int32_t max_hp;
+	int32_t shields;
+	int32_t max_shields;
+	int32_t energy;
+	int32_t resources;     // remaining minerals/gas for resource units
+	int32_t width;         // unit_type dimensions (for selection boxes / minimap)
+	int32_t height;
+	int32_t queue_count;   // build/train queue length (0-5)
+	int32_t queue[5];      // unit type ids in the queue
+	int32_t progress_permille; // progress of the current build/train (or own construction), -1 if none
+} bw_unit_info;
+
+// All live units of every player. Returns count written, -1 on error.
+int bw_bridge_get_units(bw_bridge_t* bridge, bw_unit_info* out_units, int max_count);
+
+bw_status bw_bridge_get_unit(bw_bridge_t* bridge, int32_t unit_id, bw_unit_info* out_unit);
+
+// Finds the unit whose sprite covers map position (x, y), 0 if none.
 int32_t bw_bridge_pick_unit_at(bw_bridge_t* bridge, int x, int y);
 
-// Replaces player's current selection (same semantics as a fresh left-click
-// or a drag-box select — not shift-add). count is clamped to 12 (BW's own
-// selection limit) by the engine.
-bw_status bw_bridge_select_units(bw_bridge_t* bridge, int owner, const int32_t* unit_ids, int count);
+typedef struct bw_unit_type_info {
+	int32_t mineral_cost;
+	int32_t gas_cost;
+	int32_t supply_required_raw; // half units, like bw_bridge_supply
+	int32_t build_time;          // frames
+	int32_t placement_width;     // pixels (multiple of 32 for buildings)
+	int32_t placement_height;
+	int32_t is_building;
+	int32_t is_addon;
+	int32_t race;                // 0 zerg, 1 terran, 2 protoss, 3 other
+	char name[48];               // from rez/stat_txt.tbl, UTF-8-safe ASCII
+} bw_unit_type_info;
 
-// Fills out_unit_ids with the player's currently selected units, returns
-// the count written (BW's own cap is 12).
+bw_status bw_bridge_get_unit_type_info(bw_bridge_t* bridge, int unit_type_id, bw_unit_type_info* out_info);
+
+// --- Selection and commands -------------------------------------------------
+
+// Replaces the selection (max 12, as in the original game).
+bw_status bw_bridge_select_units(bw_bridge_t* bridge, int owner, const int32_t* unit_ids, int count);
 int bw_bridge_get_selected_units(bw_bridge_t* bridge, int owner, int32_t* out_unit_ids, int max_count);
 
-// Orders the current selection to move to (x, y).
-bw_status bw_bridge_order_move(bw_bridge_t* bridge, int owner, int x, int y, int queue);
+#define BW_ORDER_DEFAULT 0 // right click: OpenBW's own action_default_order (move/attack/gather/repair/rally...)
+#define BW_ORDER_MOVE    1
+#define BW_ORDER_ATTACK  2 // attack target unit, or attack-move to (x, y)
+#define BW_ORDER_STOP    3
+#define BW_ORDER_HOLD    4
+#define BW_ORDER_PATROL  5
 
-// Orders the current selection to act on whatever's at (x, y) — the same
-// "smart click" a right-click performs in the original game: attack if
-// target_unit_id is hostile, gather if it's a resource, follow if it's
-// friendly, otherwise just move there. Pass target_unit_id 0 (e.g. from
-// bw_bridge_pick_unit_at returning none) for a plain move.
-bw_status bw_bridge_order_right_click(bw_bridge_t* bridge, int owner, int x, int y, int32_t target_unit_id, int queue);
+// Issues an order to the current selection.
+bw_status bw_bridge_order(bw_bridge_t* bridge, int owner, int order, int x, int y, int32_t target_unit_id, int queue);
 
-// Stops the current selection.
-bw_status bw_bridge_order_stop(bw_bridge_t* bridge, int owner, int queue);
+// Unit types the single selected unit can build or train right now
+// (OpenBW's unit_can_build: tech requirements met; cost is not checked).
+int bw_bridge_get_buildable(bw_bridge_t* bridge, int owner, int32_t* out_unit_type_ids, int max_count);
 
-// Trains unit_type_id (a UnitTypes ordinal) from the current selection
-// (only has an effect on selected production buildings that can train it).
+// Trains (units) or builds (addons) unit_type_id from the selected unit.
 bw_status bw_bridge_train(bw_bridge_t* bridge, int owner, int unit_type_id);
+
+// Whether the selected builder could place building unit_type_id with its
+// top-left corner on tile (tile_x, tile_y).
+int bw_bridge_can_place(bw_bridge_t* bridge, int owner, int unit_type_id, int tile_x, int tile_y);
+
+// Orders the selected builder to construct unit_type_id at tile (tile_x, tile_y).
+bw_status bw_bridge_build(bw_bridge_t* bridge, int owner, int unit_type_id, int tile_x, int tile_y);
+
+// Cancels the last item of the selected building's queue (refunds it).
+bw_status bw_bridge_cancel_last(bw_bridge_t* bridge, int owner);
 
 #ifdef __cplusplus
 }

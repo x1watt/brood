@@ -1,9 +1,9 @@
 // lib/engine/bw_engine_io.dart
 //
 // Dart-friendly wrapper over the generated FFI bindings (bw_bridge_gen.dart)
-// for dart:ffi platforms: Linux desktop today, Android later (same bindings,
-// a different compiled .so). Not used on Flutter web — see bw_engine_web.dart
-// (Phase 4b) and the bw_engine.dart facade that picks between them.
+// for dart:ffi platforms (Linux desktop now, Android later with a different
+// .so). Per-frame queries reuse native buffers allocated once, so the game
+// loop doesn't allocate native memory every tick.
 
 import 'dart:ffi' as ffi;
 import 'dart:io';
@@ -12,7 +12,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 import 'bw_bridge_gen.dart';
-import 'sprite_info.dart';
+import 'models.dart';
 
 class BwBridgeException implements Exception {
   final String message;
@@ -22,277 +22,310 @@ class BwBridgeException implements Exception {
 }
 
 class BwEngine {
-  final BwBridgeBindings _bindings;
-  final ffi.Pointer<bw_bridge_t> _handle;
+  static const int _maxDrawItems = 16384;
+  static const int _maxUnits = 4096;
+
+  final BwBridgeBindings _b;
+  final ffi.Pointer<bw_bridge_t> _h;
+  final ffi.Pointer<bw_draw_item> _drawBuf = calloc<bw_draw_item>(_maxDrawItems);
+  final ffi.Pointer<bw_unit_info> _unitBuf = calloc<bw_unit_info>(_maxUnits);
+  final ffi.Pointer<bw_unit_info> _oneUnit = calloc<bw_unit_info>();
+  final ffi.Pointer<ffi.Int32> _idBuf = calloc<ffi.Int32>(256);
+  final ffi.Pointer<ffi.Int> _int1 = calloc<ffi.Int>();
+  final ffi.Pointer<ffi.Int> _int2 = calloc<ffi.Int>();
+  final Map<int, UnitTypeInfo> _typeInfoCache = {};
   bool _disposed = false;
 
-  BwEngine._(this._bindings, this._handle);
+  BwEngine._(this._b, this._h);
 
-  /// Opens libbwbridge.so from [libraryPath] (an explicit path — this is not
-  /// yet wired into the Linux Flutter bundle's normal library search path,
-  /// see engine/README.md) and creates a new bridge instance.
   factory BwEngine.open({String? libraryPath}) {
-    final path = libraryPath ?? _defaultLibraryPath();
-    final dylib = ffi.DynamicLibrary.open(path);
+    final dylib = ffi.DynamicLibrary.open(libraryPath ?? _defaultLibraryPath());
     final bindings = BwBridgeBindings(dylib);
-
     final abi = bindings.bw_bridge_abi_version();
     if (abi != BW_BRIDGE_ABI_VERSION) {
       throw BwBridgeException(
         'bridge ABI mismatch: bindings expect $BW_BRIDGE_ABI_VERSION, library reports $abi. '
-        'Re-run `dart run ffigen --config ffigen.yaml` after rebuilding the bridge.',
+        'Rebuild engine/bridge and re-run `dart run ffigen --config ffigen.yaml`.',
       );
     }
-
     final handle = bindings.bw_bridge_create();
-    if (handle == ffi.nullptr) {
-      throw BwBridgeException('bw_bridge_create returned null');
-    }
+    if (handle == ffi.nullptr) throw BwBridgeException('bw_bridge_create returned null');
     return BwEngine._(bindings, handle);
   }
 
+  // Next to the executable when bundled (linux/CMakeLists.txt installs it
+  // into the bundle's lib/), otherwise the bridge's own build output.
   static String _defaultLibraryPath() {
-    // Development default: the bridge's own CMake build output, built via
-    // `cd engine/bridge && mkdir -p build && cd build && cmake .. && make`.
-    // Not yet bundled with the Flutter app itself (Phase 3a follow-up).
-    final here = Directory.current.path;
-    return '$here/engine/bridge/build/libbwbridge.so';
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    final bundled = '$exeDir/lib/libbwbridge.so';
+    if (File(bundled).existsSync()) return bundled;
+    return '${Directory.current.path}/engine/bridge/build/libbwbridge.so';
   }
 
   void _check(bw_status status, String what) {
-    if (status != bw_status.BW_OK) {
-      throw BwBridgeException('$what failed: $status');
-    }
+    if (status != bw_status.BW_OK) throw BwBridgeException('$what failed: $status');
   }
 
+  bool _ok(bw_status status) => status == bw_status.BW_OK;
+
+  // --- lifecycle ---
+
   void loadAssets(String dataDir) {
-    final dataDirPtr = dataDir.toNativeUtf8();
+    final p = dataDir.toNativeUtf8();
     try {
-      _check(_bindings.bw_bridge_load_assets(_handle, dataDirPtr.cast()), 'loadAssets');
+      _check(_b.bw_bridge_load_assets(_h, p.cast()), 'loadAssets($dataDir)');
     } finally {
-      calloc.free(dataDirPtr);
+      calloc.free(p);
     }
   }
 
   void newMeleeGame(String mapFile, {int playerSlot = 0, int race = 1}) {
-    final mapFilePtr = mapFile.toNativeUtf8();
+    final p = mapFile.toNativeUtf8();
     try {
-      _check(
-        _bindings.bw_bridge_new_melee_game(_handle, mapFilePtr.cast(), playerSlot, race),
-        'newMeleeGame',
+      _check(_b.bw_bridge_new_melee_game(_h, p.cast(), playerSlot, race), 'newMeleeGame($mapFile)');
+    } finally {
+      calloc.free(p);
+    }
+  }
+
+  void step(int frames) => _check(_b.bw_bridge_step(_h, frames), 'step');
+
+  // --- scalars ---
+
+  int get currentFrame => _b.bw_bridge_current_frame(_h);
+  int minerals(int player) => _b.bw_bridge_minerals(_h, player);
+  int gas(int player) => _b.bw_bridge_gas(_h, player);
+
+  (double used, double available) supply(int player, int race) {
+    _check(_b.bw_bridge_supply(_h, player, race, _int1, _int2), 'supply');
+    return (_int1.value / 2.0, _int2.value / 2.0);
+  }
+
+  // --- rendering ---
+
+  List<DrawItem> getDrawList(int selectedOwner, int viewX, int viewY, int viewW, int viewH) {
+    final n = _b.bw_bridge_get_draw_list(_h, selectedOwner, viewX, viewY, viewW, viewH, _drawBuf, _maxDrawItems);
+    if (n < 0) throw BwBridgeException('getDrawList failed');
+    return List<DrawItem>.generate(n, (i) {
+      final d = _drawBuf[i];
+      return DrawItem(
+        kind: d.kind,
+        x: d.x,
+        y: d.y,
+        imageTypeId: d.image_type_id,
+        frameIndex: d.frame_index,
+        flipped: d.flipped != 0,
+        colorIndex: d.color_index,
+        owner: d.owner,
+        modifier: d.modifier,
+        colorShift: d.color_shift,
+        unitId: d.unit_id,
+        hpPermille: d.hp_permille,
+        shieldPermille: d.shield_permille,
       );
-    } finally {
-      calloc.free(mapFilePtr);
-    }
+    }, growable: false);
   }
 
-  void step(int frames) {
-    _check(_bindings.bw_bridge_step(_handle, frames), 'step');
-  }
-
-  int get currentFrame => _bindings.bw_bridge_current_frame(_handle);
-  int unitCount(int playerSlot) => _bindings.bw_bridge_unit_count(_handle, playerSlot);
-  int minerals(int playerSlot) => _bindings.bw_bridge_minerals(_handle, playerSlot);
-  int gas(int playerSlot) => _bindings.bw_bridge_gas(_handle, playerSlot);
-  int get tilesetIndex => _bindings.bw_bridge_get_tileset_index(_handle);
-
-  /// (used, available), both already divided down to normal display units.
-  (double used, double available) supply(int playerSlot, int race) {
-    final usedPtr = calloc<ffi.Int>();
-    final availPtr = calloc<ffi.Int>();
-    try {
-      _check(_bindings.bw_bridge_supply(_handle, playerSlot, race, usedPtr, availPtr), 'supply');
-      return (usedPtr.value / 2.0, availPtr.value / 2.0);
-    } finally {
-      calloc.free(usedPtr);
-      calloc.free(availPtr);
-    }
-  }
-
-  List<SpriteInfo> getVisibleSprites({int maxCount = 8192}) {
-    final buf = calloc<bw_sprite_info>(maxCount);
-    try {
-      final n = _bindings.bw_bridge_get_visible_sprites(_handle, buf, maxCount);
-      if (n < 0) throw BwBridgeException('getVisibleSprites failed');
-      return List<SpriteInfo>.generate(n, (i) {
-        final s = buf[i];
-        return SpriteInfo(
-          x: s.x,
-          y: s.y,
-          imageTypeId: s.image_type_id,
-          frameIndex: s.frame_index,
-          flipped: s.flipped != 0,
-          owner: s.owner,
-          elevationLevel: s.elevation_level,
-          modifier: s.modifier,
-          unitId: s.unit_id,
-        );
-      });
-    } finally {
-      calloc.free(buf);
-    }
-  }
-
-  /// 256 RGBA8888 entries (1024 bytes), the current tileset's palette.
   Uint8List getPalette() {
     final buf = calloc<ffi.Uint8>(1024);
     try {
-      _check(_bindings.bw_bridge_get_palette(_handle, buf, 1024), 'getPalette');
+      _check(_b.bw_bridge_get_palette(_h, buf, 1024), 'getPalette');
       return Uint8List.fromList(buf.asTypedList(1024));
     } finally {
       calloc.free(buf);
     }
   }
 
-  /// 16 players x 8 shades (128 bytes). playerColors[owner * 8 + i] is the
-  /// palette index a decoded pixel index (8+i) should be remapped to for
-  /// that owner.
   Uint8List getPlayerColors() {
     final buf = calloc<ffi.Uint8>(128);
     try {
-      _check(_bindings.bw_bridge_get_player_colors(_handle, buf, 128), 'getPlayerColors');
+      _check(_b.bw_bridge_get_player_colors(_h, buf, 128), 'getPlayerColors');
       return Uint8List.fromList(buf.asTypedList(128));
     } finally {
       calloc.free(buf);
     }
   }
 
-  int getImageFrameCount(int imageTypeId) {
-    final countPtr = calloc<ffi.Int>();
+  /// rows x 256 palette indices; see bw_bridge_get_light_table.
+  (Uint8List table, int rows) getLightTable(int lightIndex) {
+    _check(_b.bw_bridge_get_light_table(_h, lightIndex, ffi.nullptr, 0, _int1), 'getLightTable');
+    final rows = _int1.value;
+    final size = rows * 256;
+    final buf = calloc<ffi.Uint8>(size == 0 ? 1 : size);
     try {
-      _check(_bindings.bw_bridge_get_image_frame_count(_handle, imageTypeId, countPtr), 'getImageFrameCount');
-      return countPtr.value;
+      _check(_b.bw_bridge_get_light_table(_h, lightIndex, buf, size, _int1), 'getLightTable');
+      return (Uint8List.fromList(buf.asTypedList(size)), rows);
     } finally {
-      calloc.free(countPtr);
+      calloc.free(buf);
     }
+  }
+
+  int getImageFrameCount(int imageTypeId) {
+    _check(_b.bw_bridge_get_image_frame_count(_h, imageTypeId, _int1), 'getImageFrameCount');
+    return _int1.value;
   }
 
   (int width, int height) getImageFrameSize(int imageTypeId, int frameIndex) {
-    final wPtr = calloc<ffi.Int>();
-    final hPtr = calloc<ffi.Int>();
-    try {
-      _check(
-        _bindings.bw_bridge_get_image_frame_size(_handle, imageTypeId, frameIndex, wPtr, hPtr),
-        'getImageFrameSize',
-      );
-      return (wPtr.value, hPtr.value);
-    } finally {
-      calloc.free(wPtr);
-      calloc.free(hPtr);
-    }
+    _check(_b.bw_bridge_get_image_frame_size(_h, imageTypeId, frameIndex, _int1, _int2), 'getImageFrameSize');
+    return (_int1.value, _int2.value);
   }
 
-  /// width*height palette-index bytes (0-255; index 0 is transparent).
-  /// Caller applies the palette (and, for indices 8-15, the player-color
-  /// remap for the sprite's owner) — see sprite_atlas.dart.
   Uint8List decodeImageFrame(int imageTypeId, int frameIndex, bool flipped) {
-    final (width, height) = getImageFrameSize(imageTypeId, frameIndex);
-    final size = width * height;
-    final buf = calloc<ffi.Uint8>(size);
+    final (w, h) = getImageFrameSize(imageTypeId, frameIndex);
+    final size = w * h;
+    final buf = calloc<ffi.Uint8>(size == 0 ? 1 : size);
     try {
-      _check(
-        _bindings.bw_bridge_decode_image_frame(_handle, imageTypeId, frameIndex, flipped ? 1 : 0, buf, size),
-        'decodeImageFrame',
-      );
+      _check(_b.bw_bridge_decode_image_frame(_h, imageTypeId, frameIndex, flipped ? 1 : 0, buf, size), 'decodeImageFrame');
       return Uint8List.fromList(buf.asTypedList(size));
     } finally {
       calloc.free(buf);
     }
   }
 
+  // --- terrain ---
+
   (int widthTiles, int heightTiles) getMapTileSize() {
-    final wPtr = calloc<ffi.Int>();
-    final hPtr = calloc<ffi.Int>();
-    try {
-      _check(_bindings.bw_bridge_get_map_tile_size(_handle, wPtr, hPtr), 'getMapTileSize');
-      return (wPtr.value, hPtr.value);
-    } finally {
-      calloc.free(wPtr);
-      calloc.free(hPtr);
-    }
+    _check(_b.bw_bridge_get_map_tile_size(_h, _int1, _int2), 'getMapTileSize');
+    return (_int1.value, _int2.value);
   }
 
-  /// Row-major megatile index per tile position (widthTiles * heightTiles
-  /// entries); pass each value to decodeMegatile.
   Uint16List getTileGrid(int widthTiles, int heightTiles) {
     final n = widthTiles * heightTiles;
     final buf = calloc<ffi.Uint16>(n);
     try {
-      _check(_bindings.bw_bridge_get_tile_grid(_handle, buf, n), 'getTileGrid');
+      _check(_b.bw_bridge_get_tile_grid(_h, buf, n), 'getTileGrid');
       return Uint16List.fromList(buf.asTypedList(n));
     } finally {
       calloc.free(buf);
     }
   }
 
-  /// 32*32 = 1024 palette-index bytes for one megatile (no player-color
-  /// remap — terrain isn't owned by a player).
   Uint8List decodeMegatile(int megatileIndex) {
     const size = 32 * 32;
     final buf = calloc<ffi.Uint8>(size);
     try {
-      _check(_bindings.bw_bridge_decode_megatile(_handle, megatileIndex, buf, size), 'decodeMegatile');
+      _check(_b.bw_bridge_decode_megatile(_h, megatileIndex, buf, size), 'decodeMegatile');
       return Uint8List.fromList(buf.asTypedList(size));
     } finally {
       calloc.free(buf);
     }
   }
 
-  /// Finds a unit whose sprite covers map position (x, y), or 0 if none.
-  int pickUnitAt(int x, int y) => _bindings.bw_bridge_pick_unit_at(_handle, x, y);
+  // --- units ---
 
-  /// Replaces the player's selection (not a shift-add).
-  void selectUnits(int owner, List<int> unitIds) {
-    if (unitIds.isEmpty) {
-      _check(_bindings.bw_bridge_select_units(_handle, owner, ffi.nullptr, 0), 'selectUnits');
-      return;
-    }
-    final buf = calloc<ffi.Int32>(unitIds.length);
-    try {
-      for (int i = 0; i != unitIds.length; ++i) {
-        buf[i] = unitIds[i];
-      }
-      _check(_bindings.bw_bridge_select_units(_handle, owner, buf, unitIds.length), 'selectUnits');
-    } finally {
-      calloc.free(buf);
-    }
-  }
-
-  List<int> getSelectedUnits(int owner, {int maxCount = 12}) {
-    final buf = calloc<ffi.Int32>(maxCount);
-    try {
-      final n = _bindings.bw_bridge_get_selected_units(_handle, owner, buf, maxCount);
-      if (n < 0) throw BwBridgeException('getSelectedUnits failed');
-      return List<int>.generate(n, (i) => buf[i]);
-    } finally {
-      calloc.free(buf);
-    }
-  }
-
-  void orderMove(int owner, int x, int y, {bool queue = false}) {
-    _check(_bindings.bw_bridge_order_move(_handle, owner, x, y, queue ? 1 : 0), 'orderMove');
-  }
-
-  /// "Smart click": attack/gather/follow/move, resolved by the engine based
-  /// on what's at (x, y) — see bw_bridge.h.
-  void orderRightClick(int owner, int x, int y, {int targetUnitId = 0, bool queue = false}) {
-    _check(
-      _bindings.bw_bridge_order_right_click(_handle, owner, x, y, targetUnitId, queue ? 1 : 0),
-      'orderRightClick',
+  UnitInfo _readUnit(bw_unit_info u) {
+    final count = u.queue_count.clamp(0, 5);
+    return UnitInfo(
+      unitId: u.unit_id,
+      typeId: u.unit_type_id,
+      owner: u.owner,
+      x: u.x,
+      y: u.y,
+      flags: u.flags,
+      hp: u.hp,
+      maxHp: u.max_hp,
+      shields: u.shields,
+      maxShields: u.max_shields,
+      energy: u.energy,
+      resources: u.resources,
+      width: u.width,
+      height: u.height,
+      queue: List<int>.generate(count, (i) => u.queue[i], growable: false),
+      progressPermille: u.progress_permille,
     );
   }
 
-  void orderStop(int owner, {bool queue = false}) {
-    _check(_bindings.bw_bridge_order_stop(_handle, owner, queue ? 1 : 0), 'orderStop');
+  List<UnitInfo> getUnits() {
+    final n = _b.bw_bridge_get_units(_h, _unitBuf, _maxUnits);
+    if (n < 0) throw BwBridgeException('getUnits failed');
+    return List<UnitInfo>.generate(n, (i) => _readUnit(_unitBuf[i]), growable: false);
   }
 
-  void train(int owner, int unitTypeId) {
-    _check(_bindings.bw_bridge_train(_handle, owner, unitTypeId), 'train');
+  UnitInfo? getUnit(int unitId) {
+    if (!_ok(_b.bw_bridge_get_unit(_h, unitId, _oneUnit))) return null;
+    return _readUnit(_oneUnit.ref);
   }
+
+  int pickUnitAt(int x, int y) => _b.bw_bridge_pick_unit_at(_h, x, y);
+
+  UnitTypeInfo unitType(int typeId) {
+    return _typeInfoCache.putIfAbsent(typeId, () {
+      final p = calloc<bw_unit_type_info>();
+      try {
+        _check(_b.bw_bridge_get_unit_type_info(_h, typeId, p), 'unitType($typeId)');
+        final t = p.ref;
+        final chars = <int>[];
+        for (int i = 0; i < 48; ++i) {
+          final c = t.name[i];
+          if (c == 0) break;
+          chars.add(c);
+        }
+        return UnitTypeInfo(
+          typeId: typeId,
+          mineralCost: t.mineral_cost,
+          gasCost: t.gas_cost,
+          supplyRaw: t.supply_required_raw,
+          buildTime: t.build_time,
+          placementWidth: t.placement_width,
+          placementHeight: t.placement_height,
+          isBuilding: t.is_building != 0,
+          isAddon: t.is_addon != 0,
+          race: t.race,
+          name: String.fromCharCodes(chars),
+        );
+      } finally {
+        calloc.free(p);
+      }
+    });
+  }
+
+  // --- selection and commands ---
+
+  void selectUnits(int owner, List<int> unitIds) {
+    final n = unitIds.length > 256 ? 256 : unitIds.length;
+    for (int i = 0; i < n; ++i) {
+      _idBuf[i] = unitIds[i];
+    }
+    _check(_b.bw_bridge_select_units(_h, owner, _idBuf, n), 'selectUnits');
+  }
+
+  List<int> getSelectedUnits(int owner) {
+    final n = _b.bw_bridge_get_selected_units(_h, owner, _idBuf, 256);
+    if (n < 0) return const [];
+    return List<int>.generate(n, (i) => _idBuf[i], growable: false);
+  }
+
+  /// Returns false when the engine refused the order.
+  bool order(int owner, UnitOrder order, int x, int y, {int targetUnitId = 0, bool queue = false}) {
+    return _ok(_b.bw_bridge_order(_h, owner, order.index, x, y, targetUnitId, queue ? 1 : 0));
+  }
+
+  /// Unit types the single selected unit can build or train right now.
+  List<int> getBuildable(int owner) {
+    final n = _b.bw_bridge_get_buildable(_h, owner, _idBuf, 256);
+    if (n < 0) return const [];
+    return List<int>.generate(n, (i) => _idBuf[i], growable: false);
+  }
+
+  bool train(int owner, int unitTypeId) => _ok(_b.bw_bridge_train(_h, owner, unitTypeId));
+
+  bool canPlace(int owner, int unitTypeId, int tileX, int tileY) =>
+      _b.bw_bridge_can_place(_h, owner, unitTypeId, tileX, tileY) != 0;
+
+  bool build(int owner, int unitTypeId, int tileX, int tileY) =>
+      _ok(_b.bw_bridge_build(_h, owner, unitTypeId, tileX, tileY));
+
+  bool cancelLast(int owner) => _ok(_b.bw_bridge_cancel_last(_h, owner));
 
   void dispose() {
     if (_disposed) return;
-    _bindings.bw_bridge_destroy(_handle);
     _disposed = true;
+    _b.bw_bridge_destroy(_h);
+    calloc.free(_drawBuf);
+    calloc.free(_unitBuf);
+    calloc.free(_oneUnit);
+    calloc.free(_idBuf);
+    calloc.free(_int1);
+    calloc.free(_int2);
   }
 }

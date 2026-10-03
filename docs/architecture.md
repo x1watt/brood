@@ -9,9 +9,21 @@ real StarCraft: Brood War install, including real mouse-driven play
 Train SCV with correct mineral/supply deduction) in a live
 `flutter run -d linux` window.
 
-Still missing: fog-of-war, a real command card/build menu (only a single
-hardcoded "Train SCV" button exists), minimap, camera zoom/clamping, sound,
-and the web/Android targets. Updated as each phase lands.
+Rendering mirrors OpenBW's reference renderer (ui/ui.h): the bridge returns
+the draw list already in `sprite_depth_order` with images back to front and
+positions from `get_image_map_position`; shadows, glows and cloaked images
+get their own treatment. Commands go through OpenBW's own action functions
+(`action_default_order` for right click, `action_build`/`can_place_building`
+for placement, `unit_can_build` for the build menu).
+
+The Linux app has a resource bar, minimap, selection panel and command card
+(build menu, training queue, cancel), building placement, box/shift/double
+click selection, attack/move/patrol/hold/stop, and edge/arrow/middle-drag/
+minimap scrolling. engine/bridge/tests/bridge_smoke_test.c plays an opening
+(mine, train, depot, refinery + gas, barracks + marine) as a regression test.
+
+Still missing: an AI opponent (OpenBW has none), fog-of-war, creep, sound,
+command button icons, and the web/Android targets.
 
 ## Layers
 

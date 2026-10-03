@@ -16,13 +16,17 @@ target_include_directories(bwbridge PUBLIC
 target_include_directories(bwbridge PRIVATE
 	${OPENBW_DIR}
 )
+# OpenBW is header-only template code; unoptimized it is several times
+# slower, which shows up as stutter even in a debug app build.
+if(NOT MSVC)
+	target_compile_options(bwbridge PRIVATE -O2)
+endif()
 
-# Phase 1's sim_smoke_test proved the vendored core builds standalone against
-# real game data; this target is the only place that core is wrapped in a
-# plain-C API. See engine/bridge/tests/bridge_smoke_test.c for an end-to-end
-# check that the extern "C" boundary itself is genuinely C-callable (not just
-# C++ code that happens to compile under extern "C").
-add_executable(bridge_smoke_test tests/bridge_smoke_test.c)
-target_include_directories(bridge_smoke_test PRIVATE include)
-target_link_libraries(bridge_smoke_test PRIVATE bwbridge)
-set_target_properties(bridge_smoke_test PROPERTIES LINKER_LANGUAGE CXX)
+# The gameplay smoke test only builds when this directory is configured on
+# its own (cd engine/bridge && cmake ...), not as part of the app build.
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+	add_executable(bridge_smoke_test tests/bridge_smoke_test.c)
+	target_include_directories(bridge_smoke_test PRIVATE include)
+	target_link_libraries(bridge_smoke_test PRIVATE bwbridge)
+	set_target_properties(bridge_smoke_test PROPERTIES LINKER_LANGUAGE CXX)
+endif()
