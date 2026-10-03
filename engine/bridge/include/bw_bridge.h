@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 18
+#define BW_BRIDGE_ABI_VERSION 19
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -133,6 +133,12 @@ bw_status bw_bridge_alliance_set_open(bw_bridge_t* bridge, int player_slot, int 
 bw_status bw_bridge_alliance_set_share(bw_bridge_t* bridge, int player_slot, int on);
 // 1 sharing, 0 not, -1 bad slot.
 int bw_bridge_alliance_get_share(bw_bridge_t* bridge, int player_slot);
+// Defensive mode: while a member's switch is on, the alliance's computer
+// players send no attack waves, keep their armies home and fortify every
+// base against ground and air. Logged.
+bw_status bw_bridge_alliance_set_defensive(bw_bridge_t* bridge, int player_slot, int on);
+// That player's own switch: 1 on, 0 off, -1 bad slot.
+int bw_bridge_alliance_get_defensive(bw_bridge_t* bridge, int player_slot);
 bw_status bw_bridge_alliance_invite(bw_bridge_t* bridge, int from, int to);
 bw_status bw_bridge_alliance_respond(bw_bridge_t* bridge, int player_slot, int from, int accept);
 // Leaves the alliance, taking an equal share of its treasury (with its

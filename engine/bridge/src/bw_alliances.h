@@ -8,6 +8,8 @@
 //     it off): they see and spend the same minerals and gas, the others
 //     keep their own,
 //   - its technology: researched techs and upgrade levels,
+//   - defensive mode: when a human member switches it on, the alliance's
+//     computer players stop attacking and fortify their bases (bw_ai.h),
 //   - control: a member may command the others' units (see bw_bridge.cpp),
 //   - points: everything any free member mines is credited to every free
 //     member.
@@ -82,6 +84,7 @@ struct alliance_system {
 	uint32_t name_rng = 1;
 
 	std::array<bool, max_players> share{}; // pools money with the group's other sharers
+	std::array<bool, max_players> defensive{}; // this (human) player asks its allies to stay home
 	std::array<int, max_players> synced_minerals{};
 	std::array<int, max_players> synced_gas{};
 	std::array<int, max_players> gathered_seen{};
@@ -110,6 +113,7 @@ struct alliance_system {
 		for (int p = 0; p != max_players; ++p) {
 			group[p] = p;
 			share[p] = shares[p];
+			defensive[p] = false;
 			open[p] = false;
 			lord[p] = -1;
 			playing[p] = st.players[p].controller == player_t::controller_occupied;
@@ -249,6 +253,21 @@ struct alliance_system {
 			}
 			for (int q : mates) set_money(st, q, m, g);
 		}
+	}
+
+	bool set_defensive(state& st, int p, bool on) {
+		if (!active(st, p) || defensive[p] == on) return false;
+		defensive[p] = on;
+		return true;
+	}
+
+	// Whether p's alliance is in defensive mode: a member switched it on.
+	bool defensive_for(int p) const {
+		if (p < 0 || p >= max_players) return false;
+		for (int m : members(group[p])) {
+			if (defensive[m]) return true;
+		}
+		return false;
 	}
 
 	bool set_share(state& st, int p, bool on) {

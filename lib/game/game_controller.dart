@@ -310,6 +310,7 @@ class GameController {
 
   List<AlliancePlayer> alliance = const [];
   List<bool> shares = const []; // by slot: shares resources with its alliance
+  bool defensiveMode = false; // your switch: your computer allies stay home
   final List<AllianceNote> allianceFeed = [];
   List<Color> _colorTable = const [];
 
@@ -381,6 +382,7 @@ class GameController {
   void _refreshAlliance() {
     alliance = engine.alliances();
     shares = [for (int s = 0; s < alliance.length; ++s) engine.allianceShare(s)];
+    defensiveMode = engine.allianceDefensive(myPlayer);
     for (final e in engine.pollAllianceEvents()) {
       final text = _describe(e);
       if (text == null) continue;
@@ -427,6 +429,15 @@ class GameController {
     engine.setAllianceShare(myPlayer, on);
     _allianceChanged();
     showMessageQuiet(on ? 'Sharing resources with your alliance.' : 'Your minerals and gas are your own again.');
+  }
+
+  void setDefensiveMode(bool on) {
+    if (!ready) return;
+    engine.setAllianceDefensive(myPlayer, on);
+    _allianceChanged();
+    showMessageQuiet(on
+        ? 'Defensive mode: your computer allies stop attacking, fortify their bases and guard each other.'
+        : 'Defensive mode off: your computer allies attack again.');
   }
 
   void setOpenToAlliances(bool on) {

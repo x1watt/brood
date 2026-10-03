@@ -169,6 +169,7 @@ struct bw_bridge {
 		op_autoplay,
 		op_explore,
 		op_alliance_share,
+		op_alliance_defensive,
 	};
 	a_vector<int32_t> cmd_log;
 	void log(int32_t op, std::initializer_list<int32_t> args, const int32_t* extra = nullptr, int extra_n = 0) {
@@ -606,6 +607,7 @@ bw_status bw_bridge_replay_commands(bw_bridge_t* bridge, const int32_t* log, int
 			case bw_bridge::op_autoplay: bw_bridge_set_autoplay(bridge, arg(0), arg(1)); break;
 			case bw_bridge::op_explore: bw_bridge_explore_map(bridge, arg(0)); break;
 			case bw_bridge::op_alliance_share: bw_bridge_alliance_set_share(bridge, arg(0), arg(1)); break;
+			case bw_bridge::op_alliance_defensive: bw_bridge_alliance_set_defensive(bridge, arg(0), arg(1)); break;
 			default: return BW_ERR_INVALID_ARGUMENT;
 			}
 			i += 3 + (size_t)n;
@@ -2080,6 +2082,18 @@ bw_status bw_bridge_alliance_set_share(bw_bridge_t* bridge, int player_slot, int
 	bw_bridge* b = B(bridge);
 	b->log(bw_bridge::op_alliance_share, {player_slot, on});
 	return b->alliances.set_share(b->player->st(), player_slot, on != 0) ? BW_OK : BW_ERR_REJECTED;
+}
+
+bw_status bw_bridge_alliance_set_defensive(bw_bridge_t* bridge, int player_slot, int on) {
+	if (!bridge || !alliance_slot_ok(B(bridge), player_slot)) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	b->log(bw_bridge::op_alliance_defensive, {player_slot, on});
+	return b->alliances.set_defensive(b->player->st(), player_slot, on != 0) ? BW_OK : BW_ERR_REJECTED;
+}
+
+int bw_bridge_alliance_get_defensive(bw_bridge_t* bridge, int player_slot) {
+	if (!bridge || !alliance_slot_ok(B(bridge), player_slot)) return -1;
+	return B(bridge)->alliances.defensive[(size_t)player_slot] ? 1 : 0;
 }
 
 int bw_bridge_alliance_get_share(bw_bridge_t* bridge, int player_slot) {

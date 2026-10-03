@@ -566,6 +566,11 @@ class BwEngine {
   bool setAllianceShare(int slot, bool on) => _ok(_r.bw_bridge_alliance_set_share(_h, slot, on ? 1 : 0));
   bool allianceShare(int slot) => _r.bw_bridge_alliance_get_share(_h, slot) == 1;
 
+  /// Defensive mode: the alliance's computer players stay home, fortify and
+  /// guard each other (logged).
+  bool setAllianceDefensive(int slot, bool on) => _ok(_r.bw_bridge_alliance_set_defensive(_h, slot, on ? 1 : 0));
+  bool allianceDefensive(int slot) => _r.bw_bridge_alliance_get_defensive(_h, slot) == 1;
+
   /// The whole map counts as explored for [slot] (logged): with no fog of
   /// war you see everything and may build anywhere you see.
   void exploreMap(int slot) => _check(_r.bw_bridge_explore_map(_h, slot), 'exploreMap');

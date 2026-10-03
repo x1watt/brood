@@ -259,6 +259,45 @@ class BwBridgeBindings {
   late final _bw_bridge_alliance_get_share = _bw_bridge_alliance_get_sharePtr
       .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int)>();
 
+  /// Defensive mode: while a member's switch is on, the alliance's computer
+  /// players send no attack waves, keep their armies home and fortify every
+  /// base against ground and air. Logged.
+  bw_status bw_bridge_alliance_set_defensive(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int player_slot,
+    int on$,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_alliance_set_defensive(bridge, player_slot, on$),
+    );
+  }
+
+  late final _bw_bridge_alliance_set_defensivePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_alliance_set_defensive');
+  late final _bw_bridge_alliance_set_defensive =
+      _bw_bridge_alliance_set_defensivePtr
+          .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int)>();
+
+  /// That player's own switch: 1 on, 0 off, -1 bad slot.
+  int bw_bridge_alliance_get_defensive(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int player_slot,
+  ) {
+    return _bw_bridge_alliance_get_defensive(bridge, player_slot);
+  }
+
+  late final _bw_bridge_alliance_get_defensivePtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int)>
+      >('bw_bridge_alliance_get_defensive');
+  late final _bw_bridge_alliance_get_defensive =
+      _bw_bridge_alliance_get_defensivePtr
+          .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int)>();
+
   bw_status bw_bridge_alliance_invite(
     ffi.Pointer<bw_bridge_t> bridge,
     int from,
@@ -2669,7 +2708,7 @@ final class bw_sound_info extends ffi.Struct {
   external ffi.Array<ffi.Char> filename;
 }
 
-const int BW_BRIDGE_ABI_VERSION = 18;
+const int BW_BRIDGE_ABI_VERSION = 19;
 
 const int BW_MAX_PLAYERS = 8;
 

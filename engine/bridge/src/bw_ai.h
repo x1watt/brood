@@ -88,6 +88,16 @@ struct player {
 	int modes = mode_all;
 	int next_balance = 0;
 	int next_defense = 0;
+	int next_fortify = 0;
+	// Defensive mode: a detachment sent to an ally under attack stays by it.
+	bool fortifying = false;
+	int guard_ally = -1;          // the ally it guards, -1 none
+	xy guard_pos;                 // where it waits between attacks
+	xy help_target;               // the current threat to the ally
+	int help_until = -1;          // that threat is fresh until this frame
+	int next_ally_check = 0;
+	int last_help_order = -10000;
+	a_vector<uint32_t> detached;  // unit ids (generation-checked) of the detachment
 	int militia_until = -1; // workers pulled into a fight: send them back afterwards
 	int threat_until = -1;  // the base was attacked recently
 
@@ -844,6 +854,15 @@ private:
 
 		bool resources = p.modes & mode_resources, building = p.modes & mode_building;
 		bool attacking = p.modes & mode_attacking, colonizing = p.modes & mode_colonizing;
+		// Defensive mode (a human ally's switch): no attack waves; the army
+		// stays home and the bases are fortified against ground and air.
+		bool fortifying = !p.human && allies && allies->defensive_for(p.owner);
+		if (fortifying) attacking = false;
+		if (!fortifying && p.fortifying) {
+			p.detached.clear();
+			p.guard_ally = -1;
+		}
+		p.fortifying = fortifying;
 		// Survival comes before the chosen job (see defend()).
 		unit_t* intruder = p.human ? find_intruder(f, p, s) : nullptr;
 		// Warned early by an enemy army on its way, not just at the gates.
@@ -879,7 +898,8 @@ private:
 		if ((building || threatened) && !supply_ordered) follow_build_order(f, p, s, minerals, gas);
 		if (colonizing) maybe_expand(f, p, s, minerals, gas);
 		if (building) research(f, p, s, minerals, gas);
-		if (attacking || threatened) train_army(f, p, s, minerals, gas);
+		if (fortifying) fortify(f, p, s, minerals, gas);
+		if (attacking || threatened || fortifying) train_army(f, p, s, minerals, gas);
 		if (attacking || threatened || !s.army.empty()) command_army(f, p, s, attacking);
 	}
 
@@ -1260,6 +1280,102 @@ private:
 		}
 	}
 
+	// Defensive mode: every base gets ground and air defences, the main one
+	// more: Terran bunkers and missile turrets, Protoss photon cannons (they
+	// hit both) by a pylon, Zerg sunken and spore colonies grown from creep
+	// colonies. The buildings these need (engineering bay, forge, evolution
+	// chamber) come first. One building at a time, like the other jobs.
+	void fortify(action_functions& f, player& p, snapshot& s, int& minerals, int& gas) {
+		if (f.st.current_frame < p.next_fortify) return;
+		auto need = [&](UnitTypes t) {
+			if (s.done[(size_t)t] || s.planned[(size_t)t]) return false;
+			const unit_type_t* ut = f.get_unit_type(t);
+			if (affordable(ut, minerals, gas) && place(f, p, s, t)) {
+				minerals -= ut->mineral_cost;
+				gas -= ut->gas_cost;
+				p.next_fortify = f.st.current_frame + 24 * 10;
+			}
+			return true;
+		};
+		UnitTypes tech = p.race == race_t::terran ? UnitTypes::Terran_Engineering_Bay
+		                 : p.race == race_t::protoss ? UnitTypes::Protoss_Forge
+		                                             : UnitTypes::Zerg_Evolution_Chamber;
+		if (!s.done[(size_t)tech]) {
+			if (s.planned[(size_t)tech]) return; // on its way
+			need(tech);
+			return;
+		}
+		for (unit_t* d : s.depots) {
+			xy at = d->sprite->position;
+			bool main = dist2(at, p.home) < 320 * 320;
+			int want_ground = main ? 4 : 2, want_air = main ? 3 : 2;
+			int ground = 0, air = 0;
+			unit_t* pylon = nullptr;
+			unit_t* creep_colony = nullptr;
+			for (unit_t* b : s.buildings) {
+				if (dist2(b->sprite->position, at) > 320 * 320) continue;
+				switch (b->unit_type->id) {
+				case UnitTypes::Terran_Bunker: case UnitTypes::Zerg_Sunken_Colony: ++ground; break;
+				case UnitTypes::Terran_Missile_Turret: case UnitTypes::Zerg_Spore_Colony: ++air; break;
+				case UnitTypes::Protoss_Photon_Cannon: ++ground; ++air; break;
+				case UnitTypes::Zerg_Creep_Colony:
+					if (f.u_completed(b) && b->build_queue.empty()) creep_colony = b;
+					else ++ground; // already turning into something
+					break;
+				case UnitTypes::Protoss_Pylon:
+					if (!pylon || f.u_completed(b)) pylon = b;
+					break;
+				default: break;
+				}
+			}
+			if (ground >= want_ground && air >= want_air) continue;
+			UnitTypes type = UnitTypes::None;
+			xy center = at;
+			int min_r = 2;
+			if (p.race == race_t::terran) {
+				type = air < want_air && (air <= ground || !s.done[(size_t)UnitTypes::Terran_Barracks]) ? UnitTypes::Terran_Missile_Turret : UnitTypes::Terran_Bunker;
+				if (type == UnitTypes::Terran_Bunker && !s.done[(size_t)UnitTypes::Terran_Barracks]) {
+					need(UnitTypes::Terran_Barracks);
+					return;
+				}
+			} else if (p.race == race_t::protoss) {
+				if (!pylon) type = UnitTypes::Protoss_Pylon;
+				else if (!f.u_completed(pylon)) continue;
+				else {
+					type = UnitTypes::Protoss_Photon_Cannon;
+					center = pylon->sprite->position;
+					min_r = 1;
+				}
+			} else {
+				if (creep_colony) {
+					// Spores against air, sunkens (they need the pool) against ground.
+					UnitTypes grow = air < want_air && (air <= ground || !s.done[(size_t)UnitTypes::Zerg_Spawning_Pool])
+					                     ? UnitTypes::Zerg_Spore_Colony
+					                     : UnitTypes::Zerg_Sunken_Colony;
+					if (grow == UnitTypes::Zerg_Sunken_Colony && !s.done[(size_t)UnitTypes::Zerg_Spawning_Pool]) continue;
+					const unit_type_t* ut = f.get_unit_type(grow);
+					if (affordable(ut, minerals, gas) && select(f, p, creep_colony) && f.action_morph_building(p.owner, ut)) {
+						minerals -= ut->mineral_cost;
+						p.next_fortify = f.st.current_frame + 24 * 2;
+					}
+					return;
+				}
+				type = UnitTypes::Zerg_Creep_Colony;
+			}
+			const unit_type_t* ut = f.get_unit_type(type);
+			if (!affordable(ut, minerals, gas)) return;
+			if (place_near(f, p, s, type, center, min_r, 9)) {
+				minerals -= ut->mineral_cost;
+				gas -= ut->gas_cost;
+				// Give the worker time to walk there before asking again.
+				p.next_fortify = f.st.current_frame + 24 * 8;
+			} else {
+				p.next_fortify = f.st.current_frame + 24 * 4;
+			}
+			return; // one at a time
+		}
+	}
+
 	void research(action_functions& f, player& p, snapshot& s, int& minerals, int& gas) {
 		for (auto& r : research_order(p.race)) {
 			if (s.supply_used < r.supply) continue;
@@ -1425,6 +1541,85 @@ private:
 		p.militia_until = f.st.current_frame + 24 * 20;
 	}
 
+	// Defensive mode: when an ally's base is attacked, about half the army
+	// (the units nearest to it) goes to clear the threat; afterwards that
+	// detachment stays by the ally, ready for the next attack, and never
+	// goes on to enemy bases. Returns the detachment's units.
+	a_vector<unit_t*> help_allies(action_functions& f, player& p, snapshot& s) {
+		int frame = f.st.current_frame;
+		if (frame >= p.next_ally_check) {
+			p.next_ally_check = frame + 24;
+			for (int m : allies->members(allies->group[p.owner])) {
+				if (m == p.owner || !allies->active(f.st, m)) continue;
+				unit_t* threat = nullptr;
+				xy base;
+				for (unit_t* b : ptr(f.st.player_units.at(m))) {
+					if (f.unit_dead(b) || !b->sprite || !f.ut_building(b)) continue;
+					unit_t* e = nearest_enemy(f, p, b->sprite->position, false, 448);
+					if (!e || f.ut_worker(e) || !f.unit_can_attack(e)) continue;
+					threat = e;
+					base = b->sprite->position;
+					break;
+				}
+				if (!threat) continue;
+				if (m != p.guard_ally) p.detached.clear();
+				p.guard_ally = m;
+				p.guard_pos = base;
+				p.help_target = threat->sprite->position;
+				p.help_until = frame + 24 * 4;
+				break;
+			}
+		}
+		if (p.guard_ally >= 0 && (!allies->same_group(p.owner, p.guard_ally) || !allies->active(f.st, p.guard_ally))) {
+			p.guard_ally = -1;
+			p.detached.clear();
+		}
+		if (p.guard_ally < 0) return {};
+
+		// The detachment's units still alive (ids carry a generation, so a
+		// reused slot isn't mistaken for one of them).
+		a_vector<unit_t*> group;
+		a_vector<uint32_t> alive;
+		for (unit_t* u : s.army) {
+			uint32_t id = f.get_unit_id_32(u).raw_value;
+			if (std::find(p.detached.begin(), p.detached.end(), id) != p.detached.end()) {
+				group.push_back(u);
+				alive.push_back(id);
+			}
+		}
+		p.detached = alive;
+		bool threat = frame < p.help_until;
+		// Picked when the ally is attacked: half the army, nearest first.
+		if (group.empty() && threat && s.army.size() >= 2) {
+			a_vector<unit_t*> by_distance = s.army;
+			std::stable_sort(by_distance.begin(), by_distance.end(), [&](unit_t* a, unit_t* b) {
+				return dist2(a->sprite->position, p.help_target) < dist2(b->sprite->position, p.help_target);
+			});
+			by_distance.resize((by_distance.size() + 1) / 2);
+			group = by_distance;
+			for (unit_t* u : group) p.detached.push_back(f.get_unit_id_32(u).raw_value);
+			p.last_help_order = -10000;
+		}
+		if (group.empty()) return {};
+		if (threat) {
+			bool refresh = frame - p.last_help_order > 24 * 3;
+			a_vector<unit_t*> go;
+			for (unit_t* u : group) {
+				if (refresh || is_idle(u) || u->order_type->id == Orders::Move) go.push_back(u);
+			}
+			if (refresh) p.last_help_order = frame;
+			if (!go.empty()) order_group(f, p, go, Orders::AttackMove, p.help_target);
+		} else {
+			// Threat gone: wait by the ally.
+			a_vector<unit_t*> back;
+			for (unit_t* u : group) {
+				if (is_idle(u) && dist2(u->sprite->position, p.guard_pos) > 224 * 224) back.push_back(u);
+			}
+			if (!back.empty()) order_group(f, p, back, Orders::Move, p.guard_pos);
+		}
+		return group;
+	}
+
 	void command_army(action_functions& f, player& p, snapshot& s, bool may_attack = true) {
 		int frame = f.st.current_frame;
 
@@ -1435,9 +1630,13 @@ private:
 		}
 
 		if (!may_attack) {
+			// Defensive mode: help allies under attack, then guard them.
+			a_vector<unit_t*> detachment;
+			if (p.fortifying) detachment = help_allies(f, p, s);
 			// Not our job to attack: wait at the rally point.
 			a_vector<unit_t*> stray;
 			for (unit_t* u : s.army) {
+				if (std::find(detachment.begin(), detachment.end(), u) != detachment.end()) continue;
 				if (is_idle(u) && dist2(u->sprite->position, p.rally) > 192 * 192) stray.push_back(u);
 			}
 			if (!stray.empty()) order_group(f, p, stray, Orders::Move, p.rally);

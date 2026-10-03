@@ -102,7 +102,14 @@ split the selection by owner and give each part in its owner's name
 those units alone for a minute. Computers never command the human's units.
 An alliance can never hold every player still in the game. Leaving, or
 switching sharing off, takes an equal share of the treasury. Setup teams
-start as alliances. Saves from before the switch replay with the human
+start as alliances. "Defensive mode" is a human member's switch (logged):
+while it is on, the alliance's computer players send no attack waves, keep
+their armies home, fortify every base against ground and air (bw_ai.h
+fortify: bunkers and turrets, cannons, sunken and spore colonies, with
+the buildings these need), and when an ally's base is attacked they send
+about half their army to clear the threat, which then stays by that ally
+(help_allies); bridge_smoke_test checks they never reach enemy town halls.
+Saves from before the switch replay with the human
 sharing, as they were played (GameSetup.legacyRules).
 
 Surrender: a player offers to surrender to another, who accepts or refuses.
@@ -231,7 +238,7 @@ BrowserContextMenu), so right click gives orders.
 
 The start screen wears the original's menu look with art read from the
 player's own files at startup (lib/ui/menu_art.dart, bw_bridge_load_pcx_rgba
-and bw_bridge_read_file): the title screen once per run, the room of the
+and bw_bridge_read_file): the title screen for three seconds at startup, the room of the
 chosen race behind the menu (glue\\PalRz/Rt/Rp\\Backgnd.pcx, the planet of
 glue\\Palmm for Random and saved games), the menus' green, and their button
 sounds (sound\\glue). Nothing from the game is bundled. The menu music was

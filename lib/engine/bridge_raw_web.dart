@@ -98,6 +98,12 @@ class BridgeRawWeb extends BridgeRaw {
   int bw_bridge_alliance_get_share(int bridge, int player_slot) => _call('_bw_bridge_alliance_get_share', [bridge, player_slot]);
 
   @override
+  int bw_bridge_alliance_set_defensive(int bridge, int player_slot, int on) => _call('_bw_bridge_alliance_set_defensive', [bridge, player_slot, on]);
+
+  @override
+  int bw_bridge_alliance_get_defensive(int bridge, int player_slot) => _call('_bw_bridge_alliance_get_defensive', [bridge, player_slot]);
+
+  @override
   int bw_bridge_alliance_invite(int bridge, int from, int to) => _call('_bw_bridge_alliance_invite', [bridge, from, to]);
 
   @override

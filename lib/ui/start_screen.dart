@@ -5,7 +5,7 @@
 // game.
 //
 // Dressed like the original's menus with art from the player's own game
-// files (lib/ui/menu_art.dart): the title screen once at startup, then the
+// files (lib/ui/menu_art.dart): the title screen for three seconds at startup, then the
 // room of the race you pick behind the menu (the planet for Random), the
 // menus' green, and their button sounds.
 
@@ -14,7 +14,6 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show KeyDownEvent;
 
 import '../game/game_data.dart';
 import '../game/game_setup.dart';
@@ -75,7 +74,7 @@ class _StartScreenState extends State<StartScreen> {
           _art = art;
           _showTitle = !_titleShown && art.title != null;
         });
-        if (_showTitle) _titleTimer = Timer(const Duration(seconds: 4), _hideTitle);
+        if (_showTitle) _titleTimer = Timer(const Duration(seconds: 3), _hideTitle);
       });
     }
     final maps = GameMap.list();
@@ -319,7 +318,7 @@ class _StartScreenState extends State<StartScreen> {
                 child: AnimatedOpacity(
                   opacity: _showTitle ? 1 : 0,
                   duration: const Duration(milliseconds: 700),
-                  child: _TitleScreen(image: art!.title!, onDone: _hideTitle),
+                  child: _TitleScreen(image: art!.title!),
                 ),
               ),
           ],
@@ -610,36 +609,15 @@ class _Logo extends StatelessWidget {
   );
 }
 
-/// The original's title screen, shown once when the app starts; a click or
-/// a key goes on (and starts the sound in a browser).
+/// The original's title screen, shown for three seconds when the app
+/// starts, then it fades into the menu by itself.
 class _TitleScreen extends StatelessWidget {
   final ui.Image image;
-  final VoidCallback onDone;
-  const _TitleScreen({required this.image, required this.onDone});
+  const _TitleScreen({required this.image});
 
   @override
-  Widget build(BuildContext context) => Focus(
-    autofocus: true,
-    onKeyEvent: (_, e) {
-      if (e is KeyDownEvent) onDone();
-      return KeyEventResult.handled;
-    },
-    child: GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onDone,
-      child: ColoredBox(
-        color: Colors.black,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            RawImage(image: image, fit: BoxFit.contain, filterQuality: FilterQuality.medium),
-            const Align(
-              alignment: Alignment(0, 0.95),
-              child: Text('Click or press any key', style: TextStyle(color: Color(0x99FFFFFF), fontSize: 12, letterSpacing: 1.5)),
-            ),
-          ],
-        ),
-      ),
-    ),
+  Widget build(BuildContext context) => ColoredBox(
+    color: Colors.black,
+    child: RawImage(image: image, fit: BoxFit.contain, filterQuality: FilterQuality.medium),
   );
 }

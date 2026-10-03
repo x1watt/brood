@@ -338,7 +338,7 @@ class _GroupCard extends StatelessWidget {
             const SizedBox(height: 6),
             for (final m in sorted) _member(m),
           ],
-          if (_ally) _shareSwitch(),
+          if (_ally) ...[_shareSwitch(), _defensiveSwitch()],
           if (actions.length > 1) ...[const SizedBox(height: 4), Row(mainAxisAlignment: MainAxisAlignment.end, children: actions)],
         ],
       ),
@@ -346,8 +346,33 @@ class _GroupCard extends StatelessWidget {
   }
 
   // Off by default: allies can't spend your money until you say so.
-  Widget _shareSwitch() {
-    final on = c.sharingResources;
+  Widget _shareSwitch() => _switchRow(
+    icon: Icons.savings_outlined,
+    title: 'Share resources',
+    on: c.sharingResources,
+    onText: 'One treasury with allies who share: they spend it too.',
+    offText: 'Your minerals and gas are yours alone.',
+    onChanged: c.setShareResources,
+  );
+
+  // Your computer allies stop attacking, fortify and guard each other.
+  Widget _defensiveSwitch() => _switchRow(
+    icon: Icons.shield_outlined,
+    title: 'Defensive mode',
+    on: c.defensiveMode,
+    onText: 'Computer allies build ground and air defences, help each other against attacks and never attack enemy bases.',
+    offText: 'Computer allies attack enemy bases when ready.',
+    onChanged: c.setDefensiveMode,
+  );
+
+  Widget _switchRow({
+    required IconData icon,
+    required String title,
+    required bool on,
+    required String onText,
+    required String offText,
+    required ValueChanged<bool> onChanged,
+  }) {
     return Container(
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.fromLTRB(10, 2, 2, 2),
@@ -358,21 +383,18 @@ class _GroupCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(Icons.savings_outlined, size: 16, color: on ? _allyColor : _dim),
+          Icon(icon, size: 16, color: on ? _allyColor : _dim),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Share resources', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: on ? Colors.white : _text)),
-                Text(
-                  on ? 'One treasury with allies who share: they spend it too.' : 'Your minerals and gas are yours alone.',
-                  style: const TextStyle(fontSize: 11, color: _dim),
-                ),
+                Text(title, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: on ? Colors.white : _text)),
+                Text(on ? onText : offText, style: const TextStyle(fontSize: 11, color: _dim)),
               ],
             ),
           ),
-          Switch(value: on, onChanged: c.setShareResources),
+          Switch(value: on, onChanged: onChanged),
         ],
       ),
     );

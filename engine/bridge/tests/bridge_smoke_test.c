@@ -585,6 +585,75 @@ static void test_surrender(const char* dd, const char* mf) {
 /* Auto-play for the human: resources only, then building too; units kept in
  * a control group are left alone and the selection is untouched; full auto
  * holds its own against a computer player; all of it replays. */
+/* Defensive mode: the human allied (setup teams) with a computer Protoss
+ * and a computer Zerg switches it on. Over twelve minutes both fortify
+ * their bases (cannons; spore and sunken colonies) and their armies stay
+ * near home, while the enemy Terran is left alone. */
+static void test_defensive(const char* dd, const char* mf) {
+	enum { PROTOSS_NEXUS = 154, PROTOSS_CANNON = 162, ZERG_HATCHERY = 131, ZERG_LAIR = 132, ZERG_SUNKEN = 146, ZERG_SPORE = 144 };
+	bw_game_setup setup;
+	memset(&setup, 0, sizeof(setup));
+	setup.player_count = 4;
+	setup.controller[0] = BW_PLAYER_HUMAN; setup.race[0] = 1; setup.team[0] = 1;
+	setup.controller[1] = BW_PLAYER_COMPUTER; setup.race[1] = 2; setup.team[1] = 1;
+	setup.controller[2] = BW_PLAYER_COMPUTER; setup.race[2] = 0; setup.team[2] = 1;
+	setup.controller[3] = BW_PLAYER_COMPUTER; setup.race[3] = 1; setup.team[3] = 2;
+	setup.seed = 777;
+	int32_t slots[8];
+	bw_bridge_t* b = bw_bridge_create();
+	CHECK(b && bw_bridge_load_assets(b, dd) == BW_OK && bw_bridge_new_game(b, mf, &setup, slots) == BW_OK, "defensive: new game");
+	int me = slots[0], toss = slots[1], zerg = slots[2];
+	CHECK(bw_bridge_alliance_get_defensive(b, me) == 0, "defensive: on by default");
+	CHECK(bw_bridge_alliance_set_defensive(b, me, 1) == BW_OK && bw_bridge_alliance_get_defensive(b, me) == 1, "defensive: switch on");
+	/* The human (in this test) keeps a base going without attacking, so it
+	 * stays in the alliance; its leaving would end defensive mode. */
+	CHECK(bw_bridge_set_autoplay(b, me, 1 | 2) == BW_OK, "defensive: autoplay");
+	int32_t ids[64];
+	/* Each minute while the human is in the game: allied units at an enemy
+	 * town hall (attacking a colony), and allied units by another ally's
+	 * base (helping or guarding it). */
+	int enemy = slots[3], raids = 0, guarding[37] = {0};
+	for (int minute = 1; minute <= 36; ++minute) { /* every 20 s, 12 minutes */
+		bw_bridge_step(b, 24 * 20);
+		int n = bw_bridge_get_units(b, units, 4096), human_buildings = 0;
+		for (int i = 0; i != n; ++i)
+			if (units[i].owner == me && (units[i].flags & BW_UNIT_FLAG_BUILDING)) ++human_buildings;
+		if (human_buildings == 0) break; /* out of the alliance: defensive mode ends */
+		for (int i = 0; i != n; ++i) {
+			int o = units[i].owner;
+			if ((o != toss && o != zerg) || (units[i].flags & (BW_UNIT_FLAG_BUILDING | BW_UNIT_FLAG_WORKER))) continue;
+			for (int j = 0; j != n; ++j) {
+				int oj = units[j].owner, t = units[j].unit_type_id;
+				if (!(units[j].flags & BW_UNIT_FLAG_BUILDING)) continue;
+				int dx = units[i].x - units[j].x, dy = units[i].y - units[j].y, d = dx * dx + dy * dy;
+				if (oj == enemy && t == TERRAN_COMMAND_CENTER && d < 320 * 320) {
+					++raids;
+					break;
+				}
+				if ((oj == me || oj == toss || oj == zerg) && oj != o && d < 640 * 640) {
+					++guarding[minute];
+					break;
+				}
+			}
+		}
+	}
+	int cannons = find_units(b, toss, PROTOSS_CANNON, ids, 64);
+	int sunkens = find_units(b, zerg, ZERG_SUNKEN, ids, 64), spores = find_units(b, zerg, ZERG_SPORE, ids, 64);
+	printf("bridge_smoke_test: defensive: allied units by another ally's base, every 20 s:");
+	int guarded = 0;
+	for (int m = 1; m <= 36; ++m) {
+		printf(" %d", guarding[m]);
+		guarded += guarding[m];
+	}
+	printf("\n");
+	printf("bridge_smoke_test: defensive: after 12 min protoss %d cannons, zerg %d sunken + %d spore; samples at enemy town halls: %d\n", cannons, sunkens, spores, raids);
+	CHECK(cannons >= 3, "defensive: protoss built %d cannons", cannons);
+	CHECK(sunkens >= 1 && spores >= 1, "defensive: zerg built %d sunken, %d spore", sunkens, spores);
+	CHECK(raids == 0, "defensive: allied units attacked enemy colonies (%d samples)", raids);
+	CHECK(guarded > 0, "defensive: no ally ever came to help or guard");
+	bw_bridge_destroy(b);
+}
+
 static void test_autoplay(const char* dd, const char* mf) {
 	enum { BARRACKS = 111, DEPOT = 109 };
 	bw_game_setup setup;
@@ -751,6 +820,7 @@ int main(int argc, char** argv) {
 	const int me = 0;
 
 	CHECK(bw_bridge_abi_version() == BW_BRIDGE_ABI_VERSION, "abi mismatch");
+	if (getenv("DEF_ONLY")) { test_defensive(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
 	bw_bridge_t* b = bw_bridge_create();
 	CHECK(b, "create");
 	CHECK(bw_bridge_load_assets(b, dd) == BW_OK, "load_assets(%s)", dd);
@@ -1052,6 +1122,7 @@ int main(int argc, char** argv) {
 	test_save_replay(dd, mf);
 	test_alliances(dd, mf);
 	test_surrender(dd, mf);
+	test_defensive(dd, mf);
 	test_autoplay(dd, mf);
 	test_ai(dd, mf);
 	printf("bridge_smoke_test: OK\n");
