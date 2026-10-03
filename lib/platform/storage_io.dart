@@ -2,12 +2,19 @@
 
 import 'dart:io';
 
+import 'android_files.dart';
 import 'storage.dart';
 
 AppStorage createStorage() => FileStorage();
 
 class FileStorage extends AppStorage {
+  @override
+  Future<void> load() async {
+    if (Platform.isAndroid) await AndroidFiles.load();
+  }
+
   static String _base() {
+    if (Platform.isAndroid) return '${AndroidFiles.filesDir}/brood';
     final env = Platform.environment;
     final base = env['XDG_DATA_HOME']?.isNotEmpty == true ? env['XDG_DATA_HOME']! : '${env['HOME'] ?? '.'}/.local/share';
     return '$base/brood';

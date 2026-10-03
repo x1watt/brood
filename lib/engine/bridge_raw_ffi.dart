@@ -21,6 +21,8 @@ class BridgeRawFfi extends BridgeRaw {
   /// Next to the executable when bundled (linux/CMakeLists.txt installs it
   /// into the bundle's lib/), otherwise the bridge's own build output.
   static String defaultLibraryPath() {
+    // Android loads it from the APK's native libraries by name.
+    if (Platform.isAndroid) return 'libbwbridge.so';
     final exeDir = File(Platform.resolvedExecutable).parent.path;
     final bundled = '$exeDir/lib/libbwbridge.so';
     if (File(bundled).existsSync()) return bundled;

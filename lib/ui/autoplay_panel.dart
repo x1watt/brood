@@ -36,7 +36,10 @@ const _options = [
 String autoplaySummary(int modes) {
   if (modes == 0) return 'Off';
   if (modes == AutoplayMode.all) return 'Auto';
-  return [for (final o in _options) if (modes & o.bits != 0) o.title].join(' + ');
+  return [
+    for (final o in _options)
+      if (modes & o.bits != 0) o.title,
+  ].join(' + ');
 }
 
 /// Top bar button: shows what auto-play is doing, opens the panel.
@@ -44,7 +47,8 @@ class AutoplayButton extends StatelessWidget {
   final GameController c;
   final bool open;
   final VoidCallback onPressed;
-  const AutoplayButton({super.key, required this.c, required this.open, required this.onPressed});
+  final bool compact; // icon only
+  const AutoplayButton({super.key, required this.c, required this.open, required this.onPressed, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
@@ -66,10 +70,12 @@ class AutoplayButton extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(Icons.smart_toy_outlined, size: 16, color: on ? _accent : _text),
-              const SizedBox(width: 6),
-              Text(on ? 'Auto-play: ${autoplaySummary(c.autoplay)}' : 'Auto-play', style: TextStyle(color: on ? _accent : _text, fontSize: 12)),
-              const SizedBox(width: 2),
-              Icon(open ? Icons.expand_less : Icons.expand_more, size: 16, color: _dim),
+              if (!compact) ...[
+                const SizedBox(width: 6),
+                Text(on ? 'Auto-play: ${autoplaySummary(c.autoplay)}' : 'Auto-play', style: TextStyle(color: on ? _accent : _text, fontSize: 12)),
+                const SizedBox(width: 2),
+                Icon(open ? Icons.expand_less : Icons.expand_more, size: 16, color: _dim),
+              ],
             ],
           ),
         ),
@@ -120,37 +126,52 @@ class AutoplayPanel extends StatelessWidget {
           boxShadow: const [BoxShadow(color: Color(0xAA000000), blurRadius: 24)],
         ),
         padding: const EdgeInsets.fromLTRB(14, 10, 8, 12),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.smart_toy_outlined, color: _on ? _accent : _text, size: 20),
-                const SizedBox(width: 8),
-                const Expanded(child: Text('Auto-play', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white))),
-                Switch(
-                  value: _on,
-                  onChanged: _toggle,
-                  thumbColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? Colors.black : _dim),
-                  trackColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? _accent : const Color(0xFF1E1E1E)),
-                  trackOutlineColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? _accent : const Color(0xFF444444)),
-                ),
-                IconButton(tooltip: 'Close', onPressed: onClose, icon: const Icon(Icons.close, size: 18, color: _dim)),
-              ],
-            ),
-            const Padding(
-              padding: EdgeInsets.only(right: 6, bottom: 8),
-              child: Text(
-                'The computer plays your side with you. Units you command or keep in a control group stay yours, '
-                'and defending your base always comes first.',
-                style: TextStyle(fontSize: 12, color: _dim, height: 1.35),
+        // On a phone the panel is taller than the screen: it scrolls.
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.smart_toy_outlined, color: _on ? _accent : _text, size: 20),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Auto-play',
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white),
+                    ),
+                  ),
+                  Switch(
+                    value: _on,
+                    onChanged: _toggle,
+                    thumbColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? Colors.black : _dim),
+                    trackColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? _accent : const Color(0xFF1E1E1E)),
+                    trackOutlineColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? _accent : const Color(0xFF444444)),
+                  ),
+                  IconButton(
+                    tooltip: 'Close',
+                    onPressed: onClose,
+                    icon: const Icon(Icons.close, size: 18, color: _dim),
+                  ),
+                ],
               ),
-            ),
-            _tile(_auto, modes == AutoplayMode.all, included: false),
-            const Padding(padding: EdgeInsets.symmetric(vertical: 4), child: Divider(height: 1, color: _line)),
-            for (final o in _options) _tile(o, modes & o.bits != 0, included: modes == AutoplayMode.all),
-          ],
+              const Padding(
+                padding: EdgeInsets.only(right: 6, bottom: 8),
+                child: Text(
+                  'The computer plays your side with you. Units you command or keep in a control group stay yours, '
+                  'and defending your base always comes first.',
+                  style: TextStyle(fontSize: 12, color: _dim, height: 1.35),
+                ),
+              ),
+              _tile(_auto, modes == AutoplayMode.all, included: false),
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 4),
+                child: Divider(height: 1, color: _line),
+              ),
+              for (final o in _options) _tile(o, modes & o.bits != 0, included: modes == AutoplayMode.all),
+            ],
+          ),
         ),
       ),
     );
@@ -178,7 +199,10 @@ class AutoplayPanel extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(o.title, style: TextStyle(fontWeight: FontWeight.w700, color: selected ? Colors.white : _text)),
+                  Text(
+                    o.title,
+                    style: TextStyle(fontWeight: FontWeight.w700, color: selected ? Colors.white : _text),
+                  ),
                   const SizedBox(height: 1),
                   Text(o.description, style: const TextStyle(fontSize: 11.5, color: _faint)),
                 ],

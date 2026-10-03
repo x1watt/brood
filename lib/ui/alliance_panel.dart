@@ -104,7 +104,10 @@ class AlliancePanel extends StatelessWidget {
   final VoidCallback onClose;
   final bool dockedLeft;
   final VoidCallback onToggleSide;
-  const AlliancePanel({super.key, required this.c, required this.onClose, this.dockedLeft = false, required this.onToggleSide});
+  // Blurring what's behind costs a full-screen pass every frame: too much
+  // for a phone's GPU.
+  final bool blur;
+  const AlliancePanel({super.key, required this.c, required this.onClose, this.dockedLeft = false, required this.onToggleSide, this.blur = true});
 
   @override
   Widget build(BuildContext context) {
@@ -126,6 +129,7 @@ class AlliancePanel extends StatelessWidget {
 
     return ClipRect(
       child: BackdropFilter(
+        enabled: blur,
         filter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
         child: Container(
           width: 440,

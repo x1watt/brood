@@ -79,9 +79,7 @@ class BwPainter extends CustomPainter {
         ..setImageSampler(1, terrain.paletteForFrame(c.frame));
       canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
     } else {
-      final src = Rect.fromLTWH(camX, camY, size.width, size.height).intersect(
-        Rect.fromLTWH(0, 0, terrain.widthPx.toDouble(), terrain.heightPx.toDouble()),
-      );
+      final src = Rect.fromLTWH(camX, camY, size.width, size.height).intersect(Rect.fromLTWH(0, 0, terrain.widthPx.toDouble(), terrain.heightPx.toDouble()));
       if (!src.isEmpty) canvas.drawImageRect(terrain.colors!, src, src.shift(Offset(-camX, -camY)), _plain);
     }
 
@@ -94,13 +92,13 @@ class BwPainter extends CustomPainter {
       switch (item.modifier) {
         case DrawItem.modShadow:
           final img = atlas.resolveMask(item.imageTypeId, item.frameIndex, item.flipped);
-          if (img != null) canvas.drawImage(img, pos, _shadow);
+          if (img != null) img.draw(canvas, pos, _shadow);
         case DrawItem.modGlow:
         case 17:
           final light = item.modifier == 17 ? 1 : item.colorShift;
           if (light >= 1 && light <= 7) {
             final img = atlas.resolveGlow(item.imageTypeId, item.frameIndex, item.flipped, light);
-            if (img != null) canvas.drawImage(img, pos, _glow);
+            if (img != null) img.draw(canvas, pos, _glow);
           }
         case 2:
         case 3:
@@ -110,13 +108,13 @@ class BwPainter extends CustomPainter {
         case 7:
         case 12:
           final img = atlas.resolveColor(item.imageTypeId, item.frameIndex, item.flipped, item.colorIndex);
-          if (img != null) canvas.drawImage(img, pos, _translucent);
+          if (img != null) img.draw(canvas, pos, _translucent);
         case 8:
           final img = atlas.resolveColor(item.imageTypeId, item.frameIndex, item.flipped, item.colorIndex);
-          if (img != null) canvas.drawImage(img, pos, _faint);
+          if (img != null) img.draw(canvas, pos, _faint);
         default:
           final img = atlas.resolveColor(item.imageTypeId, item.frameIndex, item.flipped, item.colorIndex);
-          if (img != null) canvas.drawImage(img, pos, _plain);
+          if (img != null) img.draw(canvas, pos, _plain);
       }
     }
 
@@ -133,6 +131,7 @@ class BwPainter extends CustomPainter {
     }
 
     _drawRally(canvas, atlas, camX, camY);
+    _drawCommandDrag(canvas);
     _drawMarkers(canvas, atlas, camX, camY);
     _drawPlacementGhost(canvas, camX, camY);
 
@@ -154,7 +153,7 @@ class BwPainter extends CustomPainter {
     final color = relationColor(item.owner);
     final img = atlas.resolveMask(item.imageTypeId, 0, false);
     if (img == null) return;
-    canvas.drawImage(img, pos, _circlePaints[color]!);
+    img.draw(canvas, pos, _circlePaints[color]!);
 
     // Health bar under the circle, like the original's selection display.
     if (item.hpPermille < 0 || item.owner == GameController.neutralPlayer) return;
@@ -177,7 +176,14 @@ class BwPainter extends CustomPainter {
 
     if (item.shieldPermille >= 0) bar(item.shieldPermille / 1000, const Color(0xFF4FA3FF));
     final hp = item.hpPermille / 1000;
-    bar(hp, hp > 0.66 ? const Color(0xFF2EE62E) : hp > 0.33 ? const Color(0xFFF5D90A) : const Color(0xFFE5322E));
+    bar(
+      hp,
+      hp > 0.66
+          ? const Color(0xFF2EE62E)
+          : hp > 0.33
+          ? const Color(0xFFF5D90A)
+          : const Color(0xFFE5322E),
+    );
   }
 
   // Right-click confirmation, as in the original: the cursor marker animates
@@ -196,7 +202,7 @@ class BwPainter extends CustomPainter {
         final frame = (age * frames ~/ GameController.markerMs).clamp(0, frames - 1);
         final img = atlas.resolveColor(markerImage, frame, false, 0);
         if (img == null) continue;
-        canvas.drawImage(img, Offset(ground.dx - camX - img.width / 2, ground.dy - camY - img.height / 2), _plain);
+        img.draw(canvas, Offset(ground.dx - camX - img.width / 2, ground.dy - camY - img.height / 2), _plain);
         continue;
       }
       if ((age ~/ 100).isOdd) continue; // flash: 100 ms on, 100 ms off
@@ -205,7 +211,7 @@ class BwPainter extends CustomPainter {
       final (imageId, x, y) = circle;
       final img = atlas.resolveMask(imageId, 0, false);
       if (img == null) continue;
-      canvas.drawImage(img, Offset(x - camX, y - camY), _circlePaints[relationColor(m.owner)]!);
+      img.draw(canvas, Offset(x - camX, y - camY), _circlePaints[relationColor(m.owner)]!);
     }
   }
 
@@ -234,10 +240,58 @@ class BwPainter extends CustomPainter {
     }
     final img = atlas.resolveColor(c.engine.cursorMarkerImage, 0, false, 0);
     if (img != null) {
-      canvas.drawImage(img, Offset(to.dx - img.width / 2, to.dy - img.height / 2), _plain);
+      img.draw(canvas, Offset(to.dx - img.width / 2, to.dy - img.height / 2), _plain);
     } else {
       canvas.drawCircle(to, 6, line..style = PaintingStyle.stroke);
     }
+  }
+
+  // Touch: the arrow from the selected units to where the finger is, in
+  // the color of what releasing there would do.
+  void _drawCommandDrag(Canvas canvas) {
+    final to = c.commandDragTo;
+    final from = c.selectionCenter;
+    if (to == null || from == null) return;
+    final (color, label) = switch (c.commandIntent) {
+      CommandIntent.attack => (enemyColor, 'Attack'),
+      CommandIntent.gather => (const Color(0xFF6FD3FF), 'Gather'),
+      CommandIntent.follow => (ownColor, 'Follow'),
+      CommandIntent.move => (const Color(0xFFFFFFFF), 'Move'),
+    };
+    final paint = Paint()
+      ..color = color.withValues(alpha: 0.9)
+      ..strokeWidth = 2.5
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    final d = to - from;
+    final len = d.distance;
+    if (len > 1) {
+      final step = d / len;
+      for (double t = 0; t < len - 16; t += 14) {
+        canvas.drawLine(from + step * t, from + step * (t + 8 < len - 16 ? t + 8 : len - 16), paint);
+      }
+      // Arrowhead.
+      final normal = Offset(-step.dy, step.dx);
+      final tip = to - step * 14;
+      canvas.drawPath(
+        Path()
+          ..moveTo(tip.dx, tip.dy)
+          ..lineTo((tip - step * 12 + normal * 7).dx, (tip - step * 12 + normal * 7).dy)
+          ..moveTo(tip.dx, tip.dy)
+          ..lineTo((tip - step * 12 - normal * 7).dx, (tip - step * 12 - normal * 7).dy),
+        paint,
+      );
+    }
+    canvas.drawCircle(to, 14, paint);
+    canvas.drawCircle(to, 14, Paint()..color = color.withValues(alpha: 0.15));
+    final text = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w700, shadows: const [Shadow(blurRadius: 3)]),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    text.paint(canvas, to + Offset(-text.width / 2, -40));
   }
 
   void _drawPlacementGhost(Canvas canvas, double camX, double camY) {

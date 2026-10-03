@@ -1,10 +1,11 @@
 // lib/ui/data_setup_screen.dart
 //
-// First start in the browser: Brood needs the player's own copy of
-// StarCraft: Brood War (never bundled). The player picks the game folder
-// once; the files stay in this browser (IndexedDB) and nothing is uploaded
-// anywhere.
+// First start in the browser or on Android: Brood needs the player's own
+// copy of StarCraft: Brood War (never bundled). The player picks the game
+// folder once; the files are kept by the browser (IndexedDB) or copied into
+// the app's own storage, and nothing is uploaded anywhere.
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../game/game_data.dart';
@@ -89,12 +90,18 @@ class _DataSetupScreenState extends State<DataSetupScreen> {
         child: Container(
           width: 560,
           padding: const EdgeInsets.all(28),
-          decoration: BoxDecoration(border: Border.all(color: _line), borderRadius: BorderRadius.circular(10)),
+          decoration: BoxDecoration(
+            border: Border.all(color: _line),
+            borderRadius: BorderRadius.circular(10),
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text('Brood', style: TextStyle(fontSize: 34, fontWeight: FontWeight.w700, color: Colors.white)),
+              const Text(
+                'Brood',
+                style: TextStyle(fontSize: 34, fontWeight: FontWeight.w700, color: Colors.white),
+              ),
               const SizedBox(height: 16),
               const Text(
                 'Brood plays with your own copy of StarCraft: Brood War. Choose its folder: the one with '
@@ -102,15 +109,18 @@ class _DataSetupScreenState extends State<DataSetupScreen> {
                 style: TextStyle(fontSize: 15, height: 1.4),
               ),
               const SizedBox(height: 10),
-              const Text(
-                'The files are kept in this browser and never leave your computer. You only do this once.',
-                style: TextStyle(fontSize: 13, color: _dim, height: 1.4),
+              Text(
+                kIsWeb
+                    ? 'The files are kept in this browser and never leave your computer. You only do this once.'
+                    : 'The files are copied into the app (about 115 MB) and never leave your device. You only do this once. '
+                          'You can also copy the folder over USB to Android/data/com.maxbrito.brood/files/BROOD.',
+                style: const TextStyle(fontSize: 13, color: _dim, height: 1.4),
               ),
               const SizedBox(height: 24),
               if (_busy) ...[
                 LinearProgressIndicator(value: _total == 0 ? null : _done / _total, color: Colors.white, backgroundColor: _line),
                 const SizedBox(height: 10),
-                Text(_total == 0 ? 'Waiting for your choice...' : 'Keeping $_done of $_total files...', style: const TextStyle(color: _dim)),
+                Text(_total == 0 ? 'Waiting for your choice...' : 'Copying $_done of $_total files...', style: const TextStyle(color: _dim)),
               ] else ...[
                 FilledButton.icon(
                   style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
@@ -118,17 +128,15 @@ class _DataSetupScreenState extends State<DataSetupScreen> {
                   icon: const Icon(Icons.folder_open),
                   label: const Text('Choose the game folder'),
                 ),
-                const SizedBox(height: 10),
-                OutlinedButton(
-                  style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(44)),
-                  onPressed: () => _choose(folder: false),
-                  child: const Text('Or pick the files one by one (the three .mpq files and some maps)'),
-                ),
+                if (kIsWeb) const SizedBox(height: 10),
+                if (kIsWeb)
+                  OutlinedButton(
+                    style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(44)),
+                    onPressed: () => _choose(folder: false),
+                    child: const Text('Or pick the files one by one (the three .mpq files and some maps)'),
+                  ),
               ],
-              if (_error != null) ...[
-                const SizedBox(height: 14),
-                Text(_error!, style: const TextStyle(color: Color(0xFFFF6B5E))),
-              ],
+              if (_error != null) ...[const SizedBox(height: 14), Text(_error!, style: const TextStyle(color: Color(0xFFFF6B5E)))],
               const SizedBox(height: 18),
               const Text('Brood is not affiliated with Blizzard Entertainment.', style: TextStyle(fontSize: 11, color: _faint)),
             ],

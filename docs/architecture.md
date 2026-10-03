@@ -177,7 +177,39 @@ background isolate on desktop and directly in the browser. Audio starts
 from the click that starts a game (browsers require it) and stays up
 between games.
 
-Still missing: creep drawing, lift off/land and nukes, and Android.
+Android version (tool/build_android.sh, output
+build/app/outputs/flutter-apk/app-release.apk, arm64): the bridge is built
+with the NDK (tool/build_android_bridge.sh into
+android/app/src/main/jniLibs, not committed) and loaded through the same
+dart:ffi layer. The game files are never in the APK: the first screen asks
+for the player's StarCraft folder (storage access framework; MainActivity's
+"brood/files" channel copies the three archives and the melee maps into
+Android/data/com.maxbrito.brood/files/BROOD), or they can be copied there
+over USB. Settings, stats and saves live in the app's private files. The
+app runs in landscape, full screen, with the screen kept on.
+
+Phones (shortest side under 500 dp) get a compact HUD over a full-screen
+map: thin top bar, small minimap bottom-left, a fixed five-by-two command
+card bottom-right (buttons never move under the finger), a selection card
+only as big as what's selected, and messages as a toast under the bar.
+Touch (lib/ui/game_viewport.dart, tested in test/touch_input_test.dart):
+two fingers move the map; one finger on the ground draws a selection box;
+a drag starting on the selected units draws an arrow colored by what
+releasing would do (attack an enemy, gather from minerals or gas, follow a
+friend, move) and does it; holding a finger still gives that command in
+place; a tap selects, a double tap selects all of that type. Fingers are
+imprecise, so taps and targets take the closest unit within a few pixels
+(GameController.pickNear). A mouse (USB or Bluetooth) works as on desktop.
+
+Phone GPUs are the bottleneck: sprites are packed into a few large
+textures per image (lib/rendering/sprite_atlas.dart) instead of one per
+frame, and the alliance panel's background blur is off on phones and the
+panel isn't built while closed.
+--dart-define=BROOD_PERF_LOG=true prints frame timings and
+--dart-define=BROOD_TOUCH_LOG=true prints touch handling, for testing over
+adb.
+
+Still missing: creep drawing, lift off/land and nukes.
 
 ## Layers
 
@@ -187,7 +219,7 @@ Still missing: creep drawing, lift off/land and nukes, and Android.
    the simulation core. This is the only layer this project writes new C++ for.
    Compiled per target:
    - Linux desktop: native `.so` via CMake + system toolchain.
-   - Android: native `.so` via CMake + NDK (same `CMakeLists.txt`, cross-compiled).
+   - Android: native `.so` cross-compiled with the NDK (tool/build_android_bridge.sh).
    - Web: `.wasm` via Emscripten.
 3. **Dart bindings** (`lib/engine`) — `dart:ffi` on Linux/Android, `dart:js_interop`
    on web, unified behind a platform-conditional facade (`bw_engine.dart`) so the

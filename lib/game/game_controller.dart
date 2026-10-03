@@ -29,7 +29,27 @@ enum CommandMode { none, move, attack, patrol, gather, repair, build, cast, rall
 
 enum CardMenu { main, basic, advanced }
 
-enum CmdKind { move, stop, attack, patrol, hold, gather, returnCargo, repair, basicMenu, advancedMenu, back, produce, selectLarva, cancel, cancelTarget, ability, research, upgrade, rally }
+enum CmdKind {
+  move,
+  stop,
+  attack,
+  patrol,
+  hold,
+  gather,
+  returnCargo,
+  repair,
+  basicMenu,
+  advancedMenu,
+  back,
+  produce,
+  selectLarva,
+  cancel,
+  cancelTarget,
+  ability,
+  research,
+  upgrade,
+  rally,
+}
 
 class CmdButton {
   final CmdKind kind;
@@ -69,6 +89,9 @@ class CommandMarker {
 }
 
 enum _Edge { none, top, bottom, left, right }
+
+/// What a right click (or a touch command drag) at a spot will do.
+enum CommandIntent { move, attack, gather, follow }
 
 enum GameOutcome { victory, defeat }
 
@@ -161,6 +184,11 @@ class GameController {
   AbilityEntry? castAbility;
   Rect? dragBox; // viewport space
 
+  /// Touch: dragging from the selected units to a target (viewport space),
+  /// and what releasing there would do.
+  Offset? commandDragTo;
+  CommandIntent commandIntent = CommandIntent.move;
+
   final List<CommandMarker> markers = [];
 
   String? message;
@@ -194,11 +222,7 @@ class GameController {
       final e = await BwEngine.open();
       e.loadAssets(dataDir);
       final setup = launch.setup;
-      final slots = e.newGame(
-        launch.mapFile,
-        [for (final p in setup.players) (human: p.human, race: p.race, team: p.team)],
-        setup.seed,
-      );
+      final slots = e.newGame(launch.mapFile, [for (final p in setup.players) (human: p.human, race: p.race, team: p.team)], setup.seed);
       var computers = 0;
       final placed = <GamePlayer>[];
       for (int i = 0; i < setup.players.length; ++i) {
@@ -284,7 +308,10 @@ class GameController {
   List<int> get invitationsForMe {
     final m = me;
     if (m == null) return const [];
-    return [for (int s = 0; s < 8; ++s) if (m.invitedBySlot(s) && alliance[s].active) s];
+    return [
+      for (int s = 0; s < 8; ++s)
+        if (m.invitedBySlot(s) && alliance[s].active) s,
+    ];
   }
 
   bool invitedByMe(int slot) => alliance.length == 8 && alliance[slot].invitedBySlot(myPlayer);
@@ -293,7 +320,10 @@ class GameController {
   List<int> get surrendersForMe {
     final m = me;
     if (m == null) return const [];
-    return [for (int s = 0; s < 8; ++s) if (m.offersSurrender(s) && alliance[s].active) s];
+    return [
+      for (int s = 0; s < 8; ++s)
+        if (m.offersSurrender(s) && alliance[s].active) s,
+    ];
   }
 
   bool surrenderOfferedBy(int slot) => alliance.length == 8 && alliance[slot].offersSurrender(myPlayer);
@@ -313,7 +343,10 @@ class GameController {
   }
 
   /// The other players of my alliance (active ones).
-  List<int> get myAllies => [for (final a in alliance) if (a.slot != myPlayer && a.active && relation(a.slot) == Relation.ally) a.slot];
+  List<int> get myAllies => [
+    for (final a in alliance)
+      if (a.slot != myPlayer && a.active && relation(a.slot) == Relation.ally) a.slot,
+  ];
 
   String nameOf(int slot) => slot == myPlayer ? 'You' : (playerAt(slot)?.name ?? 'Player ${slot + 1}');
 
@@ -359,11 +392,15 @@ class GameController {
       AllianceEventKind.open => e.a == myPlayer ? 'You are open to alliances.' : '$a is open to alliances.',
       AllianceEventKind.closed => e.a == myPlayer ? 'You no longer accept alliances.' : '$a no longer accepts alliances.',
       AllianceEventKind.surrenderOffer =>
-        e.b == myPlayer ? '$a offers to surrender to you.' : (e.a == myPlayer ? 'You offered to surrender to ${nameOf(e.b)}.' : '$a offers to surrender to ${nameOf(e.b)}.'),
+        e.b == myPlayer
+            ? '$a offers to surrender to you.'
+            : (e.a == myPlayer ? 'You offered to surrender to ${nameOf(e.b)}.' : '$a offers to surrender to ${nameOf(e.b)}.'),
       AllianceEventKind.surrendered =>
         e.b == myPlayer ? '$a surrendered to you.' : (e.a == myPlayer ? 'You surrendered to ${nameOf(e.b)}.' : '$a surrendered to ${nameOf(e.b)}.'),
       AllianceEventKind.surrenderRefused =>
-        e.a == myPlayer ? '${nameOf(e.b)} refused your surrender.' : (e.b == myPlayer ? "You refused $a's surrender." : "${nameOf(e.b)} refused $a's surrender."),
+        e.a == myPlayer
+            ? '${nameOf(e.b)} refused your surrender.'
+            : (e.b == myPlayer ? "You refused $a's surrender." : "${nameOf(e.b)} refused $a's surrender."),
       AllianceEventKind.vassalMoved => e.a == myPlayer ? 'Your lord was conquered: you now serve ${nameOf(e.b)}.' : '$a now serves ${nameOf(e.b)}.',
       AllianceEventKind.none => null,
     };
@@ -462,13 +499,8 @@ class GameController {
 
   /// What a save point needs: the command log so far, the frame and where
   /// the camera looks.
-  SavedGameData snapshot() => SavedGameData(
-    commandLog: engine.commandLog(),
-    frame: engine.currentFrame,
-    camX: camX + viewport.width / 2,
-    camY: camY + viewport.height / 2,
-  );
-
+  SavedGameData snapshot() =>
+      SavedGameData(commandLog: engine.commandLog(), frame: engine.currentFrame, camX: camX + viewport.width / 2, camY: camY + viewport.height / 2);
 
   // --- fog of war ---
 
@@ -844,7 +876,10 @@ class GameController {
 
   // --- selection ---
 
-  List<UnitInfo> get selectedUnits => [for (final id in selection) if (unitsById[id] != null) unitsById[id]!];
+  List<UnitInfo> get selectedUnits => [
+    for (final id in selection)
+      if (unitsById[id] != null) unitsById[id]!,
+  ];
 
   /// The selection holds only units I may command (mine and my allies').
   bool get selectionCommandable => selection.isNotEmpty && selectedUnits.every((u) => canControl(u.owner));
@@ -858,9 +893,9 @@ class GameController {
     if (voice) _sayWhat(repeatedClick: repeatedClick);
   }
 
-  void clickSelect(Offset screen, {bool add = false}) {
+  void clickSelect(Offset screen, {bool add = false, bool touch = false}) {
     final p = screenToMap(screen);
-    final id = engine.pickUnitAt(p.dx.round(), p.dy.round());
+    final id = touch ? pickNear(p, slop: fingerSlop, ownFirst: true) : engine.pickUnitAt(p.dx.round(), p.dy.round());
     if (id == 0) {
       if (!add) select(const [], voice: false);
       return;
@@ -911,10 +946,7 @@ class GameController {
 
   void selectAllOfTypeOnScreen(int typeId) {
     final r = screenRect;
-    select(units
-        .where((u) => canControl(u.owner) && u.typeId == typeId && r.contains(Offset(u.x.toDouble(), u.y.toDouble())))
-        .map((u) => u.unitId)
-        .toList());
+    select(units.where((u) => canControl(u.owner) && u.typeId == typeId && r.contains(Offset(u.x.toDouble(), u.y.toDouble()))).map((u) => u.unitId).toList());
   }
 
   // --- control groups (Ctrl+N assign, Shift+N add, N recall, N twice = jump) ---
@@ -942,9 +974,9 @@ class GameController {
     }
   }
 
-  void showMessageQuiet(String text) {
+  void showMessageQuiet(String text, {int ms = 1500}) {
     message = text;
-    _messageUntilMs = _nowMs + 1500;
+    _messageUntilMs = _nowMs + ms;
     _notifyHud(force: true);
   }
 
@@ -981,10 +1013,7 @@ class GameController {
 
     if (worker != null && cardMenu != CardMenu.main) {
       final entries = cardMenu == CardMenu.basic ? worker.basic : worker.advanced;
-      return [
-        for (final (key, typeId) in entries) produceButton(key, typeId),
-        const CmdButton(CmdKind.back, 'Esc', 'Back', icon: CmdIcon.cancel),
-      ];
+      return [for (final (key, typeId) in entries) produceButton(key, typeId), const CmdButton(CmdKind.back, 'Esc', 'Back', icon: CmdIcon.cancel)];
     }
 
     final buttons = <CmdButton>[];
@@ -1047,13 +1076,33 @@ class GameController {
         if (isTech) {
           final t = engine.techInfo(myPlayer, id);
           if (t == null || t.researched) continue;
-          buttons.add(CmdButton(CmdKind.research, key, 'Research ${t.name}', icon: t.icon, typeId: id,
-              mineralCost: t.mineralCost, gasCost: t.gasCost, enabled: researchable.contains(id)));
+          buttons.add(
+            CmdButton(
+              CmdKind.research,
+              key,
+              'Research ${t.name}',
+              icon: t.icon,
+              typeId: id,
+              mineralCost: t.mineralCost,
+              gasCost: t.gasCost,
+              enabled: researchable.contains(id),
+            ),
+          );
         } else {
           final u = engine.upgradeInfo(myPlayer, id);
           if (u == null || u.level >= u.maxLevel) continue;
-          buttons.add(CmdButton(CmdKind.upgrade, key, 'Upgrade ${u.name}${u.maxLevel > 1 ? ' (level ${u.level + 1})' : ''}',
-              icon: u.icon, typeId: id, mineralCost: u.mineralCost, gasCost: u.gasCost, enabled: upgradable.contains(id)));
+          buttons.add(
+            CmdButton(
+              CmdKind.upgrade,
+              key,
+              'Upgrade ${u.name}${u.maxLevel > 1 ? ' (level ${u.level + 1})' : ''}',
+              icon: u.icon,
+              typeId: id,
+              mineralCost: u.mineralCost,
+              gasCost: u.gasCost,
+              enabled: upgradable.contains(id),
+            ),
+          );
         }
       }
     }
@@ -1200,13 +1249,16 @@ class GameController {
 
   void _selectLarva() {
     final hatcheries = selectedUnits.where((u) => larvaProducers.contains(u.typeId)).toList();
-    final larvae = units.where((l) {
-      if (l.typeId != zergLarva || !hatcheries.any((h) => h.owner == l.owner)) return false;
-      return hatcheries.any((h) {
-        final dx = l.x - h.x, dy = l.y - h.y;
-        return dx * dx + dy * dy < 160 * 160;
-      });
-    }).map((l) => l.unitId).toList();
+    final larvae = units
+        .where((l) {
+          if (l.typeId != zergLarva || !hatcheries.any((h) => h.owner == l.owner)) return false;
+          return hatcheries.any((h) {
+            final dx = l.x - h.x, dy = l.y - h.y;
+            return dx * dx + dy * dy < 160 * 160;
+          });
+        })
+        .map((l) => l.unitId)
+        .toList();
     if (larvae.isEmpty) {
       showMessage('No larva available.');
       return;
@@ -1215,14 +1267,14 @@ class GameController {
   }
 
   /// Right click in the world: the original game's context command.
-  void smartCommand(Offset mapPos, {bool queue = false}) {
+  void smartCommand(Offset mapPos, {bool queue = false, bool touch = false}) {
     if (mode != CommandMode.none) {
       cancelMode();
       return;
     }
     if (!selectionCommandable) return;
     final x = mapPos.dx.round(), y = mapPos.dy.round();
-    final target = engine.pickUnitAt(x, y);
+    final target = touch ? pickNear(mapPos, slop: fingerSlop, skipSelected: true) : engine.pickUnitAt(x, y);
     if (engine.order(myPlayer, UnitOrder.smart, x, y, targetUnitId: target, queue: queue)) {
       target != 0 ? _markUnit(target) : _markGround(mapPos);
       _sayYes();
@@ -1230,8 +1282,80 @@ class GameController {
     _changed();
   }
 
+  // --- touch ---
+
+  /// The unit at [map], or for a finger ([slop] > 0) the closest one whose
+  /// outline is within [slop] pixels: a fingertip covers more than a unit.
+  /// [ownFirst] prefers your units (selecting); [skipSelected] ignores the
+  /// units being ordered (targeting).
+  int pickNear(Offset map, {double slop = 0, bool ownFirst = false, bool skipSelected = false}) {
+    final exact = engine.pickUnitAt(map.dx.round(), map.dy.round());
+    if (exact != 0 && !(skipSelected && selection.contains(exact))) return exact;
+    if (slop <= 0) return 0;
+    int best = 0;
+    double bestScore = double.infinity;
+    for (final u in unitsById.values) {
+      if (skipSelected && selection.contains(u.unitId)) continue;
+      final dx = math.max(0.0, (u.x - map.dx).abs() - u.width / 2);
+      final dy = math.max(0.0, (u.y - map.dy).abs() - u.height / 2);
+      final d = math.sqrt(dx * dx + dy * dy);
+      if (d > slop) continue;
+      final score = d + (ownFirst && !canControl(u.owner) ? slop : 0);
+      if (score < bestScore) {
+        bestScore = score;
+        best = u.unitId;
+      }
+    }
+    return best;
+  }
+
+  static const double fingerSlop = 18;
+
+  /// Whether a finger at [screen] is on one of the selected units (fingers
+  /// are imprecise: a margin around each unit counts).
+  bool nearSelected(Offset screen) {
+    if (!selectionCommandable) return false;
+    for (final u in selectedUnits) {
+      final p = Offset(u.x - camX, u.y - camY);
+      final r = math.max(28.0, math.max(u.width, u.height) / 2 + 14);
+      if ((p - screen).distance <= r) return true;
+    }
+    return false;
+  }
+
+  /// The selection's center on screen, where a command arrow starts.
+  Offset? get selectionCenter {
+    final sel = selectedUnits;
+    if (sel.isEmpty) return null;
+    double x = 0, y = 0;
+    for (final u in sel) {
+      x += u.x;
+      y += u.y;
+    }
+    return Offset(x / sel.length - camX, y / sel.length - camY);
+  }
+
+  CommandIntent intentAt(Offset screen) {
+    final u = unitsById[pickNear(screenToMap(screen), slop: fingerSlop, skipSelected: true)];
+    if (u == null) return CommandIntent.move;
+    if (u.isResource || u.typeId == 110 || u.typeId == 149 || u.typeId == 157) {
+      return selectedUnits.any((s) => s.isWorker) ? CommandIntent.gather : CommandIntent.move;
+    }
+    return switch (relation(u.owner)) {
+      Relation.enemy => CommandIntent.attack,
+      Relation.neutral => CommandIntent.move,
+      _ => CommandIntent.follow,
+    };
+  }
+
+  void setCommandDrag(Offset? to) {
+    commandDragTo = to;
+    if (to != null) commandIntent = intentAt(to);
+    repaint.fire();
+  }
+
   /// Left click while a targeted command is armed.
-  void modeClick(Offset mapPos, {bool queue = false}) {
+  void modeClick(Offset mapPos, {bool queue = false, bool touch = false}) {
     final x = mapPos.dx.round(), y = mapPos.dy.round();
     switch (mode) {
       case CommandMode.move:
@@ -1246,7 +1370,11 @@ class GameController {
           CommandMode.repair => UnitOrder.repair,
           _ => UnitOrder.smart,
         };
-        final target = order == UnitOrder.patrol ? 0 : engine.pickUnitAt(x, y);
+        final target = order == UnitOrder.patrol
+            ? 0
+            : touch
+            ? pickNear(mapPos, slop: fingerSlop, skipSelected: true)
+            : engine.pickUnitAt(x, y);
         if ((mode == CommandMode.gather || mode == CommandMode.repair) && target == 0) {
           showMessage(mode == CommandMode.gather ? 'Must target a resource.' : 'Must target a unit to repair.');
           return;

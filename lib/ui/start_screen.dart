@@ -4,11 +4,8 @@
 // plus computer opponents, their races and alliances), or load a saved
 // game.
 
-import 'dart:ui' show AppExitType;
-
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../game/game_data.dart';
 import '../game/game_setup.dart';
@@ -16,6 +13,7 @@ import '../game/play_stats.dart';
 import '../game/saved_games.dart';
 import '../game/settings.dart';
 import 'game_screen.dart';
+import 'window_control.dart';
 
 const _line = Color(0xFF2A2A2A);
 const _dim = Color(0xFF8C8C8C);
@@ -116,6 +114,10 @@ class _StartScreenState extends State<StartScreen> {
 
   // --- layout ---
 
+  // A phone in landscape is short: less padding, and the setup list shows
+  // its scrollbar so the options below the fold are found.
+  bool get _short => MediaQuery.sizeOf(context).height < 500;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -123,7 +125,7 @@ class _StartScreenState extends State<StartScreen> {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1040, maxHeight: 760),
           child: Padding(
-            padding: const EdgeInsets.all(24),
+            padding: EdgeInsets.all(_short ? 12 : 24),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -141,7 +143,7 @@ class _StartScreenState extends State<StartScreen> {
                     if (!kIsWeb) ...[
                       IconButton(
                         tooltip: 'Quit Brood',
-                        onPressed: () => ServicesBinding.instance.exitApplication(AppExitType.required),
+                        onPressed: WindowControl.quit,
                         icon: const Icon(Icons.power_settings_new, color: _dim),
                       ),
                       const SizedBox(width: 8),
@@ -157,7 +159,7 @@ class _StartScreenState extends State<StartScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 20),
+                SizedBox(height: _short ? 10 : 20),
                 Expanded(child: _loadTab ? _savedGames() : _newGame()),
               ],
             ),
@@ -257,88 +259,91 @@ class _StartScreenState extends State<StartScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.only(bottom: 8),
-              children: [
-                _heading('Map'),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Text(map?.name ?? 'None selected', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white)),
-                ),
-                _heading('Players'),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    children: [
-                      IconButton.outlined(
-                        tooltip: 'Fewer players',
-                        onPressed: n > 2 ? () => _setPlayerCount(n - 1) : null,
-                        icon: const Icon(Icons.remove, size: 18),
-                      ),
-                      SizedBox(
-                        width: 48,
-                        child: Text('$n', textAlign: TextAlign.center, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white)),
-                      ),
-                      IconButton.outlined(
-                        tooltip: 'More players',
-                        onPressed: n < _maxPlayers ? () => _setPlayerCount(n + 1) : null,
-                        icon: const Icon(Icons.add, size: 18),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(child: Text('You and ${n - 1} computer ${n - 1 == 1 ? 'opponent' : 'opponents'} (this map allows $_maxPlayers)', style: const TextStyle(color: _dim, fontSize: 12))),
-                    ],
-                  ),
-                ),
-                _heading('Alliances'),
-                RadioGroup<AllianceMode>(
-                  groupValue: _alliances,
-                  onChanged: (v) => setState(() => _alliances = v!),
-                  child: Column(
-                    children: [
-                      for (final mode in AllianceMode.values)
-                        RadioListTile<AllianceMode>(
-                          dense: true,
-                          value: mode,
-                          title: Text(mode.label),
-                          subtitle: Text(mode.description, style: const TextStyle(fontSize: 11, color: _faint)),
-                        ),
-                    ],
-                  ),
-                ),
-                _heading('Your race'),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: SegmentedButton<int>(
-                    showSelectedIcon: false,
-                    segments: [for (final r in _raceChoices) ButtonSegment(value: r, label: Text(raceName(r)))],
-                    selected: {_myRace},
-                    onSelectionChanged: (s) => setState(() => _myRace = s.first),
-                  ),
-                ),
-                _heading('Opponents'),
-                for (int i = 0; i < n - 1; ++i)
+            child: Scrollbar(
+              thumbVisibility: _short,
+              child: ListView(
+                padding: const EdgeInsets.only(bottom: 8),
+                children: [
+                  _heading('Map'),
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Text(map?.name ?? 'None selected', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white)),
+                  ),
+                  _heading('Players'),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: Row(
                       children: [
-                        const Icon(Icons.smart_toy_outlined, size: 18, color: _dim),
-                        const SizedBox(width: 10),
-                        Expanded(child: Text('Computer ${i + 1}')),
-                        DropdownButton<int>(
-                          value: _opponentRaces[i],
-                          underline: const SizedBox.shrink(),
-                          style: const TextStyle(fontSize: 14, color: Color(0xFFE8E8E8)),
-                          items: [for (final r in _raceChoices) DropdownMenuItem(value: r, child: Text(raceName(r)))],
-                          onChanged: (r) => setState(() => _opponentRaces = [..._opponentRaces]..[i] = r!),
+                        IconButton.outlined(
+                          tooltip: 'Fewer players',
+                          onPressed: n > 2 ? () => _setPlayerCount(n - 1) : null,
+                          icon: const Icon(Icons.remove, size: 18),
                         ),
+                        SizedBox(
+                          width: 48,
+                          child: Text('$n', textAlign: TextAlign.center, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white)),
+                        ),
+                        IconButton.outlined(
+                          tooltip: 'More players',
+                          onPressed: n < _maxPlayers ? () => _setPlayerCount(n + 1) : null,
+                          icon: const Icon(Icons.add, size: 18),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(child: Text('You and ${n - 1} computer ${n - 1 == 1 ? 'opponent' : 'opponents'} (this map allows $_maxPlayers)', style: const TextStyle(color: _dim, fontSize: 12))),
                       ],
                     ),
                   ),
-              ],
+                  _heading('Alliances'),
+                  RadioGroup<AllianceMode>(
+                    groupValue: _alliances,
+                    onChanged: (v) => setState(() => _alliances = v!),
+                    child: Column(
+                      children: [
+                        for (final mode in AllianceMode.values)
+                          RadioListTile<AllianceMode>(
+                            dense: true,
+                            value: mode,
+                            title: Text(mode.label),
+                            subtitle: Text(mode.description, style: const TextStyle(fontSize: 11, color: _faint)),
+                          ),
+                      ],
+                    ),
+                  ),
+                  _heading('Your race'),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: SegmentedButton<int>(
+                      showSelectedIcon: false,
+                      segments: [for (final r in _raceChoices) ButtonSegment(value: r, label: Text(raceName(r)))],
+                      selected: {_myRace},
+                      onSelectionChanged: (s) => setState(() => _myRace = s.first),
+                    ),
+                  ),
+                  _heading('Opponents'),
+                  for (int i = 0; i < n - 1; ++i)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.smart_toy_outlined, size: 18, color: _dim),
+                          const SizedBox(width: 10),
+                          Expanded(child: Text('Computer ${i + 1}')),
+                          DropdownButton<int>(
+                            value: _opponentRaces[i],
+                            underline: const SizedBox.shrink(),
+                            style: const TextStyle(fontSize: 14, color: Color(0xFFE8E8E8)),
+                            items: [for (final r in _raceChoices) DropdownMenuItem(value: r, child: Text(raceName(r)))],
+                            onChanged: (r) => setState(() => _opponentRaces = [..._opponentRaces]..[i] = r!),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: EdgeInsets.all(_short ? 8 : 16),
             child: FilledButton(
               style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(44)),
               onPressed: map == null ? null : _start,
