@@ -111,7 +111,7 @@ class SpriteAtlas {
           row = 0;
         }
         if (y + h > _pageMaxHeight) {
-          pageHeights.add(y);
+          pageHeights.add(y + row); // rows so far, including the current one
           x = 0;
           y = 0;
           row = 0;

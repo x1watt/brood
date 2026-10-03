@@ -92,14 +92,18 @@ deterministic (no pointer ordering, its own seeded random numbers).
 
 In-game alliances (engine/bridge/src/bw_alliances.h, lib/ui/alliance_panel.dart,
 F9 or the top bar button): players invite each other and accept or decline;
-an alliance shares one treasury (each frame every member's spending and
-income is folded into one pool), researched techs and upgrade levels, and
+an alliance shares a treasury among the members whose "Share resources"
+switch is on (each frame their spending and income is folded into one
+pool; computers start with it on, the human off, so allies can't spend
+your money until you choose to), researched techs and upgrade levels, and
 mining points, and the human may command allies' units: bridge commands
 split the selection by owner and give each part in its owner's name
 (OpenBW only lets a player order its own units); the computer then leaves
 those units alone for a minute. Computers never command the human's units.
-An alliance can never hold every player still in the game. Leaving takes an
-equal share of the treasury. Setup teams start as alliances.
+An alliance can never hold every player still in the game. Leaving, or
+switching sharing off, takes an equal share of the treasury. Setup teams
+start as alliances. Saves from before the switch replay with the human
+sharing, as they were played (GameSetup.legacyRules).
 
 Surrender: a player offers to surrender to another, who accepts or refuses.
 A vassal joins its lord's alliance for good (no leaving, inviting or being
@@ -214,7 +218,18 @@ the game's) is drawn in code by tool/icons/make_icons_test.dart, which
 writes the Android (legacy, adaptive and themed), web and Linux window
 icons: run it with flutter test after changing the design.
 
-Still missing: creep drawing, lift off/land and nukes.
+Zerg creep (lib/rendering/creep_layer.dart) is drawn over the terrain from
+the bridge's per-tile codes (bw_bridge_get_creep), creep megatiles plus the
+tileset's edge frames as OpenBW draws them, refreshed a few times a second.
+Without fog of war the map counts as explored for the human (logged
+bw_bridge_explore_map): OpenBW refuses buildings on unexplored ground, which
+made every Hatchery ghost red away from home. The placement preview checks
+creep and blockers on every tile.
+
+The browser's own right-click menu is disabled (web/index.html and
+BrowserContextMenu), so right click gives orders.
+
+Still missing: lift off/land and nukes.
 
 ## Layers
 

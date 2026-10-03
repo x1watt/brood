@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 16
+#define BW_BRIDGE_ABI_VERSION 17
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -126,6 +126,13 @@ int bw_bridge_alliances(bw_bridge_t* bridge, bw_alliance_player* out, int max_co
 bw_status bw_bridge_alliance_set_open(bw_bridge_t* bridge, int player_slot, int open);
 // Invites `to` (and its alliance) to join `from`'s. If `to` already invited
 // `from`, this accepts that invitation instead.
+// Share resources: a player sharing pools minerals and gas with the other
+// sharers of its alliance; off, it keeps its own (switching off takes an
+// equal part of the common treasury along). Computer players start with it
+// on, the human off. Logged.
+bw_status bw_bridge_alliance_set_share(bw_bridge_t* bridge, int player_slot, int on);
+// 1 sharing, 0 not, -1 bad slot.
+int bw_bridge_alliance_get_share(bw_bridge_t* bridge, int player_slot);
 bw_status bw_bridge_alliance_invite(bw_bridge_t* bridge, int from, int to);
 bw_status bw_bridge_alliance_respond(bw_bridge_t* bridge, int player_slot, int from, int accept);
 // Leaves the alliance, taking an equal share of its treasury (with its
@@ -186,6 +193,11 @@ void bw_bridge_set_viewer(bw_bridge_t* bridge, int player_slot);
 // One byte per map tile, row by row: 0 never explored, 1 explored but out of
 // sight, 2 in sight. out_cap must be at least width * height tiles.
 bw_status bw_bridge_get_fog(bw_bridge_t* bridge, int player_slot, uint8_t* out_tiles, int out_cap);
+
+// Marks the whole map explored for that player (logged): without fog of war
+// the player sees everything, and OpenBW doesn't let anyone build on
+// ground they haven't explored.
+bw_status bw_bridge_explore_map(bw_bridge_t* bridge, int player_slot);
 
 // --- Saved games -----------------------------------------------------------------
 //
@@ -286,6 +298,19 @@ bw_status bw_bridge_decode_image_frame(bw_bridge_t* bridge, int image_type_id, i
 bw_status bw_bridge_get_map_tile_size(bw_bridge_t* bridge, int* out_width, int* out_height);
 bw_status bw_bridge_get_tile_grid(bw_bridge_t* bridge, uint16_t* out_megatiles, int out_cap);
 bw_status bw_bridge_decode_megatile(bw_bridge_t* bridge, int megatile_index, uint8_t* out_pixels, int out_cap);
+
+// Zerg creep, which changes as buildings spread and recede: one code per map
+// tile, row by row. 0: no creep and none next to it. 0x8000 | megatile: a
+// creep tile, drawn as that megatile (decode_megatile) instead of the
+// terrain. 0x4000 | frame: no creep but creep next to it, the tileset's
+// creep edge frame drawn over the terrain (get_creep_edge). Returns the
+// number of tiles with creep, or a negative bw_status.
+int bw_bridge_get_creep(bw_bridge_t* bridge, uint16_t* out_tiles, int out_cap);
+// Creep edge frame (the tileset's creep GRP) on its full canvas, frame
+// placed at its offset: *out_width x *out_height palette indices, 0 =
+// transparent. Pass out_pixels NULL to get the size and *out_count (the
+// number of frames) only.
+bw_status bw_bridge_get_creep_edge(bw_bridge_t* bridge, int frame, uint8_t* out_pixels, int out_cap, int* out_width, int* out_height, int* out_count);
 
 // --- Units -------------------------------------------------------------------
 //

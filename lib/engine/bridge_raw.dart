@@ -6,7 +6,7 @@
 
 import 'dart:typed_data';
 
-const int BW_BRIDGE_ABI_VERSION = 16;
+const int BW_BRIDGE_ABI_VERSION = 17;
 const int BW_MAX_PLAYERS = 8;
 const int BW_PLAYER_HUMAN = 1;
 const int BW_PLAYER_COMPUTER = 2;
@@ -86,6 +86,8 @@ abstract class BridgeRaw {
   int bw_bridge_victory_state(int bridge, int player_slot);
   int bw_bridge_alliances(int bridge, int out, int max_count);
   int bw_bridge_alliance_set_open(int bridge, int player_slot, int open);
+  int bw_bridge_alliance_set_share(int bridge, int player_slot, int on);
+  int bw_bridge_alliance_get_share(int bridge, int player_slot);
   int bw_bridge_alliance_invite(int bridge, int from, int to);
   int bw_bridge_alliance_respond(int bridge, int player_slot, int from, int accept);
   int bw_bridge_alliance_leave(int bridge, int player_slot);
@@ -96,6 +98,7 @@ abstract class BridgeRaw {
   int bw_bridge_get_autoplay(int bridge, int player_slot);
   void bw_bridge_set_viewer(int bridge, int player_slot);
   int bw_bridge_get_fog(int bridge, int player_slot, int out_tiles, int out_cap);
+  int bw_bridge_explore_map(int bridge, int player_slot);
   int bw_bridge_command_log(int bridge, int out, int out_cap);
   int bw_bridge_replay_commands(int bridge, int log, int len, int end_frame);
   int bw_bridge_current_frame(int bridge);
@@ -115,6 +118,8 @@ abstract class BridgeRaw {
   int bw_bridge_get_map_tile_size(int bridge, int out_width, int out_height);
   int bw_bridge_get_tile_grid(int bridge, int out_megatiles, int out_cap);
   int bw_bridge_decode_megatile(int bridge, int megatile_index, int out_pixels, int out_cap);
+  int bw_bridge_get_creep(int bridge, int out_tiles, int out_cap);
+  int bw_bridge_get_creep_edge(int bridge, int frame, int out_pixels, int out_cap, int out_width, int out_height, int out_count);
   int bw_bridge_get_units(int bridge, int out_units, int max_count);
   int bw_bridge_get_unit(int bridge, int unit_id, int out_unit);
   int bw_bridge_pick_unit_at(int bridge, int x, int y);

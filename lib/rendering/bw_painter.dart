@@ -83,6 +83,8 @@ class BwPainter extends CustomPainter {
       if (!src.isEmpty) canvas.drawImageRect(terrain.colors!, src, src.shift(Offset(-camX, -camY)), _plain);
     }
 
+    c.creep?.paint(canvas, camX, camY, size, _plain);
+
     for (final item in c.drawItems) {
       final pos = Offset(item.x - camX, item.y - camY);
       if (item.kind == DrawItem.kindSelectionCircle) {

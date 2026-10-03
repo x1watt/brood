@@ -93,6 +93,14 @@ class BridgeRawFfi extends BridgeRaw {
   @override
   int bw_bridge_alliance_set_open(int bridge, int player_slot, int open) => _bw_bridge_alliance_set_open(bridge, player_slot, open);
 
+  late final _bw_bridge_alliance_set_share = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.Int32), int Function(int, int, int)>('bw_bridge_alliance_set_share');
+  @override
+  int bw_bridge_alliance_set_share(int bridge, int player_slot, int on) => _bw_bridge_alliance_set_share(bridge, player_slot, on);
+
+  late final _bw_bridge_alliance_get_share = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32), int Function(int, int)>('bw_bridge_alliance_get_share');
+  @override
+  int bw_bridge_alliance_get_share(int bridge, int player_slot) => _bw_bridge_alliance_get_share(bridge, player_slot);
+
   late final _bw_bridge_alliance_invite = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.Int32), int Function(int, int, int)>('bw_bridge_alliance_invite');
   @override
   int bw_bridge_alliance_invite(int bridge, int from, int to) => _bw_bridge_alliance_invite(bridge, from, to);
@@ -132,6 +140,10 @@ class BridgeRawFfi extends BridgeRaw {
   late final _bw_bridge_get_fog = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.IntPtr, ffi.Int32), int Function(int, int, int, int)>('bw_bridge_get_fog');
   @override
   int bw_bridge_get_fog(int bridge, int player_slot, int out_tiles, int out_cap) => _bw_bridge_get_fog(bridge, player_slot, out_tiles, out_cap);
+
+  late final _bw_bridge_explore_map = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32), int Function(int, int)>('bw_bridge_explore_map');
+  @override
+  int bw_bridge_explore_map(int bridge, int player_slot) => _bw_bridge_explore_map(bridge, player_slot);
 
   late final _bw_bridge_command_log = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.IntPtr, ffi.Int32), int Function(int, int, int)>('bw_bridge_command_log');
   @override
@@ -208,6 +220,14 @@ class BridgeRawFfi extends BridgeRaw {
   late final _bw_bridge_decode_megatile = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.IntPtr, ffi.Int32), int Function(int, int, int, int)>('bw_bridge_decode_megatile');
   @override
   int bw_bridge_decode_megatile(int bridge, int megatile_index, int out_pixels, int out_cap) => _bw_bridge_decode_megatile(bridge, megatile_index, out_pixels, out_cap);
+
+  late final _bw_bridge_get_creep = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.IntPtr, ffi.Int32), int Function(int, int, int)>('bw_bridge_get_creep');
+  @override
+  int bw_bridge_get_creep(int bridge, int out_tiles, int out_cap) => _bw_bridge_get_creep(bridge, out_tiles, out_cap);
+
+  late final _bw_bridge_get_creep_edge = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.IntPtr, ffi.Int32, ffi.IntPtr, ffi.IntPtr, ffi.IntPtr), int Function(int, int, int, int, int, int, int)>('bw_bridge_get_creep_edge');
+  @override
+  int bw_bridge_get_creep_edge(int bridge, int frame, int out_pixels, int out_cap, int out_width, int out_height, int out_count) => _bw_bridge_get_creep_edge(bridge, frame, out_pixels, out_cap, out_width, out_height, out_count);
 
   late final _bw_bridge_get_units = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.IntPtr, ffi.Int32), int Function(int, int, int)>('bw_bridge_get_units');
   @override

@@ -46,6 +46,8 @@
   </style>
   <!-- Everything below is served from this folder: no internet needed. -->
   <!-- The game engine, compiled to WebAssembly (engine/web/build_wasm.sh). -->
+  <!-- Right click gives orders in the game: no browser menu, anywhere on the page. -->
+  <script>document.addEventListener('contextmenu', function (e) { e.preventDefault(); });</script>
   <script src="bwbridge.js"></script>
   <!-- Sound (flutter_soloud's own WebAssembly build). -->
   <script src="assets/packages/flutter_soloud/web/init_soloud.js" defer></script>

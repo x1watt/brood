@@ -338,7 +338,41 @@ class _GroupCard extends StatelessWidget {
             const SizedBox(height: 6),
             for (final m in sorted) _member(m),
           ],
+          if (_ally) _shareSwitch(),
           if (actions.length > 1) ...[const SizedBox(height: 4), Row(mainAxisAlignment: MainAxisAlignment.end, children: actions)],
+        ],
+      ),
+    );
+  }
+
+  // Off by default: allies can't spend your money until you say so.
+  Widget _shareSwitch() {
+    final on = c.sharingResources;
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.fromLTRB(10, 2, 2, 2),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(6),
+        color: on ? _allyColor.withValues(alpha: 0.08) : null,
+        border: Border.all(color: on ? _allyColor.withValues(alpha: 0.5) : _line),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.savings_outlined, size: 16, color: on ? _allyColor : _dim),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Share resources', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: on ? Colors.white : _text)),
+                Text(
+                  on ? 'One treasury with allies who share: they spend it too.' : 'Your minerals and gas are yours alone.',
+                  style: const TextStyle(fontSize: 11, color: _dim),
+                ),
+              ],
+            ),
+          ),
+          Switch(value: on, onChanged: c.setShareResources),
         ],
       ),
     );
@@ -418,6 +452,10 @@ class _GroupCard extends StatelessWidget {
                       style: TextStyle(fontSize: 13, color: isMe ? Colors.white : _text, fontWeight: isMe ? FontWeight.w700 : FontWeight.w500),
                     ),
                   ),
+                  if (m.slot < c.shares.length && c.shares[m.slot]) ...[
+                    const SizedBox(width: 6),
+                    const Tooltip(message: 'Shares resources', child: Icon(Icons.savings_outlined, size: 13, color: _dim)),
+                  ],
                   if (m.isVassal) ...[const SizedBox(width: 6), const Icon(Icons.flag, size: 13, color: _vassalColor)],
                   if (offers || invited) ...[const SizedBox(width: 6), Icon(offers ? Icons.flag_outlined : Icons.mail_outline, size: 13, color: _allyColor)],
                 ],

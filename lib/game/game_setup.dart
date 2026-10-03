@@ -45,7 +45,12 @@ class GameSetup {
   final AllianceMode alliances;
   final int seed;
 
-  const GameSetup({required this.players, required this.alliances, required this.seed});
+  /// Saved before resource sharing became a switch (and before the map
+  /// counted as explored without fog of war): everyone in an alliance
+  /// shares, so the game replays as it was played.
+  final bool legacyRules;
+
+  const GameSetup({required this.players, required this.alliances, required this.seed, this.legacyRules = false});
 
   bool get isResolved => players.every((p) => p.race >= 0 && p.race < 3);
 
@@ -72,6 +77,7 @@ class GameSetup {
       players: [for (int i = 0; i < players.length; ++i) PlayerSetup(human: players[i].human, race: races[i], team: teams[i])],
       alliances: alliances,
       seed: seed,
+      legacyRules: legacyRules,
     );
   }
 
@@ -79,12 +85,14 @@ class GameSetup {
     'players': [for (final p in players) p.toJson()],
     'alliances': alliances.name,
     'seed': seed,
+    'shareSwitch': !legacyRules,
   };
 
   static GameSetup fromJson(Map<String, dynamic> j) => GameSetup(
     players: [for (final p in j['players'] as List) PlayerSetup.fromJson(p as Map<String, dynamic>)],
     alliances: AllianceMode.values.firstWhere((m) => m.name == j['alliances'], orElse: () => AllianceMode.freeForAll),
     seed: (j['seed'] as num).toInt(),
+    legacyRules: j['shareSwitch'] != true,
   );
 
   static int newSeed() => DateTime.now().microsecondsSinceEpoch & 0x7fffffff;

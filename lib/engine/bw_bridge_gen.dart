@@ -221,6 +221,44 @@ class BwBridgeBindings {
 
   /// Invites `to` (and its alliance) to join `from`'s. If `to` already invited
   /// `from`, this accepts that invitation instead.
+  /// Share resources: a player sharing pools minerals and gas with the other
+  /// sharers of its alliance; off, it keeps its own (switching off takes an
+  /// equal part of the common treasury along). Computer players start with it
+  /// on, the human off. Logged.
+  bw_status bw_bridge_alliance_set_share(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int player_slot,
+    int on$,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_alliance_set_share(bridge, player_slot, on$),
+    );
+  }
+
+  late final _bw_bridge_alliance_set_sharePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_alliance_set_share');
+  late final _bw_bridge_alliance_set_share = _bw_bridge_alliance_set_sharePtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int)>();
+
+  /// 1 sharing, 0 not, -1 bad slot.
+  int bw_bridge_alliance_get_share(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int player_slot,
+  ) {
+    return _bw_bridge_alliance_get_share(bridge, player_slot);
+  }
+
+  late final _bw_bridge_alliance_get_sharePtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int)>
+      >('bw_bridge_alliance_get_share');
+  late final _bw_bridge_alliance_get_share = _bw_bridge_alliance_get_sharePtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int)>();
+
   bw_status bw_bridge_alliance_invite(
     ffi.Pointer<bw_bridge_t> bridge,
     int from,
@@ -417,6 +455,23 @@ class BwBridgeBindings {
       .asFunction<
         int Function(ffi.Pointer<bw_bridge_t>, int, ffi.Pointer<ffi.Uint8>, int)
       >();
+
+  /// Marks the whole map explored for that player (logged): without fog of war
+  /// the player sees everything, and OpenBW doesn't let anyone build on
+  /// ground they haven't explored.
+  bw_status bw_bridge_explore_map(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int player_slot,
+  ) {
+    return bw_status.fromValue(_bw_bridge_explore_map(bridge, player_slot));
+  }
+
+  late final _bw_bridge_explore_mapPtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int)>
+      >('bw_bridge_explore_map');
+  late final _bw_bridge_explore_map = _bw_bridge_explore_mapPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int)>();
 
   /// Copies the command log into out (pass NULL to just get its length).
   /// Returns the length in int32 values, or -1 without a game.
@@ -931,6 +986,88 @@ class BwBridgeBindings {
   late final _bw_bridge_decode_megatile = _bw_bridge_decode_megatilePtr
       .asFunction<
         int Function(ffi.Pointer<bw_bridge_t>, int, ffi.Pointer<ffi.Uint8>, int)
+      >();
+
+  /// Zerg creep, which changes as buildings spread and recede: one code per map
+  /// tile, row by row. 0: no creep and none next to it. 0x8000 | megatile: a
+  /// creep tile, drawn as that megatile (decode_megatile) instead of the
+  /// terrain. 0x4000 | frame: no creep but creep next to it, the tileset's
+  /// creep edge frame drawn over the terrain (get_creep_edge). Returns the
+  /// number of tiles with creep, or a negative bw_status.
+  int bw_bridge_get_creep(
+    ffi.Pointer<bw_bridge_t> bridge,
+    ffi.Pointer<ffi.Uint16> out_tiles,
+    int out_cap,
+  ) {
+    return _bw_bridge_get_creep(bridge, out_tiles, out_cap);
+  }
+
+  late final _bw_bridge_get_creepPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Pointer<ffi.Uint16>,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_get_creep');
+  late final _bw_bridge_get_creep = _bw_bridge_get_creepPtr
+      .asFunction<
+        int Function(ffi.Pointer<bw_bridge_t>, ffi.Pointer<ffi.Uint16>, int)
+      >();
+
+  /// Creep edge frame (the tileset's creep GRP) on its full canvas, frame
+  /// placed at its offset: *out_width x *out_height palette indices, 0 =
+  /// transparent. Pass out_pixels NULL to get the size and *out_count (the
+  /// number of frames) only.
+  bw_status bw_bridge_get_creep_edge(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int frame,
+    ffi.Pointer<ffi.Uint8> out_pixels,
+    int out_cap,
+    ffi.Pointer<ffi.Int> out_width,
+    ffi.Pointer<ffi.Int> out_height,
+    ffi.Pointer<ffi.Int> out_count,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_get_creep_edge(
+        bridge,
+        frame,
+        out_pixels,
+        out_cap,
+        out_width,
+        out_height,
+        out_count,
+      ),
+    );
+  }
+
+  late final _bw_bridge_get_creep_edgePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Pointer<ffi.Uint8>,
+            ffi.Int,
+            ffi.Pointer<ffi.Int>,
+            ffi.Pointer<ffi.Int>,
+            ffi.Pointer<ffi.Int>,
+          )
+        >
+      >('bw_bridge_get_creep_edge');
+  late final _bw_bridge_get_creep_edge = _bw_bridge_get_creep_edgePtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<bw_bridge_t>,
+          int,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Int>,
+          ffi.Pointer<ffi.Int>,
+          ffi.Pointer<ffi.Int>,
+        )
       >();
 
   /// All live units of every player. Returns count written, -1 on error.
@@ -2447,7 +2584,7 @@ final class bw_sound_info extends ffi.Struct {
   external ffi.Array<ffi.Char> filename;
 }
 
-const int BW_BRIDGE_ABI_VERSION = 16;
+const int BW_BRIDGE_ABI_VERSION = 17;
 
 const int BW_MAX_PLAYERS = 8;
 

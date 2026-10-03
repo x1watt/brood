@@ -25,7 +25,7 @@
 // It only ever commands its own units: OpenBW refuses orders for anyone
 // else's, and only the human player is given allies' units to command (in
 // bw_bridge.cpp). Units a human ally took over recently are left alone, and
-// allied with a human it spends only its share of the common treasury.
+// sharing a treasury with a human it spends only its share of it.
 //
 // It plays through OpenBW's action functions (select, train, build, order),
 // the same way a human's commands reach the simulation. It runs inside
@@ -853,11 +853,11 @@ private:
 		if (resources || f.st.current_frame < p.militia_until + 24 * 30) manage_workers(f, p, s);
 		if (resources) balance_workers(f, p, s);
 
-		// Money still uncommitted after this round's decisions. With human
-		// allies the treasury is common: use only the computers' share.
+		// Money still uncommitted after this round's decisions. Sharing a
+		// treasury with a human: use only the computers' share.
 		int minerals = s.minerals - s.reserved_minerals, gas = s.gas - s.reserved_gas;
 		if (allies && !p.human) {
-			auto mates = allies->members(allies->group[p.owner]);
+			auto mates = allies->pool(p.owner);
 			int computers = 0;
 			for (int m : mates) {
 				for (auto& o : players) {

@@ -92,6 +92,12 @@ class BridgeRawWeb extends BridgeRaw {
   int bw_bridge_alliance_set_open(int bridge, int player_slot, int open) => _call('_bw_bridge_alliance_set_open', [bridge, player_slot, open]);
 
   @override
+  int bw_bridge_alliance_set_share(int bridge, int player_slot, int on) => _call('_bw_bridge_alliance_set_share', [bridge, player_slot, on]);
+
+  @override
+  int bw_bridge_alliance_get_share(int bridge, int player_slot) => _call('_bw_bridge_alliance_get_share', [bridge, player_slot]);
+
+  @override
   int bw_bridge_alliance_invite(int bridge, int from, int to) => _call('_bw_bridge_alliance_invite', [bridge, from, to]);
 
   @override
@@ -120,6 +126,9 @@ class BridgeRawWeb extends BridgeRaw {
 
   @override
   int bw_bridge_get_fog(int bridge, int player_slot, int out_tiles, int out_cap) => _call('_bw_bridge_get_fog', [bridge, player_slot, out_tiles, out_cap]);
+
+  @override
+  int bw_bridge_explore_map(int bridge, int player_slot) => _call('_bw_bridge_explore_map', [bridge, player_slot]);
 
   @override
   int bw_bridge_command_log(int bridge, int out, int out_cap) => _call('_bw_bridge_command_log', [bridge, out, out_cap]);
@@ -177,6 +186,12 @@ class BridgeRawWeb extends BridgeRaw {
 
   @override
   int bw_bridge_decode_megatile(int bridge, int megatile_index, int out_pixels, int out_cap) => _call('_bw_bridge_decode_megatile', [bridge, megatile_index, out_pixels, out_cap]);
+
+  @override
+  int bw_bridge_get_creep(int bridge, int out_tiles, int out_cap) => _call('_bw_bridge_get_creep', [bridge, out_tiles, out_cap]);
+
+  @override
+  int bw_bridge_get_creep_edge(int bridge, int frame, int out_pixels, int out_cap, int out_width, int out_height, int out_count) => _call('_bw_bridge_get_creep_edge', [bridge, frame, out_pixels, out_cap, out_width, out_height, out_count]);
 
   @override
   int bw_bridge_get_units(int bridge, int out_units, int max_count) => _call('_bw_bridge_get_units', [bridge, out_units, max_count]);

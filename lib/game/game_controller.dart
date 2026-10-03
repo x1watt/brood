@@ -19,6 +19,7 @@ import '../audio/sound_system.dart';
 import '../engine/bw_engine.dart';
 import '../engine/models.dart';
 import '../rendering/icon_atlas.dart';
+import '../rendering/creep_layer.dart';
 import '../rendering/sprite_atlas.dart';
 import '../rendering/terrain_layer.dart';
 import 'alliance_names.dart';
@@ -133,6 +134,7 @@ class GameController {
 
   BwEngine? _engine;
   SpriteAtlas? atlas;
+  CreepLayer? creep;
   IconAtlas? icons;
   TerrainLayer? terrain;
   SoundSystem? sound;
@@ -146,6 +148,7 @@ class GameController {
   GameOutcome? outcome;
   ui.Image? fogImage; // one pixel per tile, black with fog alpha
   int _fogFrame = -1000;
+  int _creepFrame = -1000;
   bool _fogBusy = false;
   bool _disposed = false;
   bool revealed = false; // whole map shown (after a defeat)
@@ -240,11 +243,17 @@ class GameController {
       if (saved != null) {
         loadingSave = true;
         _notifyHud(force: true);
+        // Older saves were played with everyone sharing resources.
+        if (setup.legacyRules && setup.players.length > 1) e.setAllianceShare(myPlayer, true);
         await e.replayCommands(saved.commandLog, saved.frame);
+        if (setup.legacyRules && !fogOfWar) e.exploreMap(myPlayer);
         loadingSave = false;
       } else {
-        // You start open to alliances (a logged command, so saves replay it).
+        // You start open to alliances, and without fog of war the map counts
+        // as explored so you can build anywhere (logged commands, so saves
+        // replay them).
         if (setup.players.length > 1) e.setAllianceOpen(myPlayer, true);
+        if (!fogOfWar) e.exploreMap(myPlayer);
         e.step(1);
       }
       e.setViewer(fogOfWar ? myPlayer : -1);
@@ -256,6 +265,7 @@ class GameController {
       await s.init();
       sound = s;
       terrain = await TerrainLayer.build(e);
+      creep = CreepLayer.create(e);
       _loadColors();
       _refreshUnits();
       for (final u in units) {
@@ -269,6 +279,7 @@ class GameController {
         _centerOnHome();
       }
       _updateFog();
+      _updateCreep();
       _refreshView();
       final left = setup.players.length - placed.length;
       if (left > 0) showMessageQuiet('This map has room for ${placed.length} players: $left opponent${left == 1 ? ' was' : 's were'} left out.');
@@ -298,6 +309,7 @@ class GameController {
   // --- alliances ---
 
   List<AlliancePlayer> alliance = const [];
+  List<bool> shares = const []; // by slot: shares resources with its alliance
   final List<AllianceNote> allianceFeed = [];
   List<Color> _colorTable = const [];
 
@@ -368,6 +380,7 @@ class GameController {
 
   void _refreshAlliance() {
     alliance = engine.alliances();
+    shares = [for (int s = 0; s < alliance.length; ++s) engine.allianceShare(s)];
     for (final e in engine.pollAllianceEvents()) {
       final text = _describe(e);
       if (text == null) continue;
@@ -404,6 +417,16 @@ class GameController {
       AllianceEventKind.vassalMoved => e.a == myPlayer ? 'Your lord was conquered: you now serve ${nameOf(e.b)}.' : '$a now serves ${nameOf(e.b)}.',
       AllianceEventKind.none => null,
     };
+  }
+
+  bool get sharingResources => myPlayer < shares.length && shares[myPlayer];
+
+  /// Your minerals and gas: pooled with your allies who share, or your own.
+  void setShareResources(bool on) {
+    if (!ready) return;
+    engine.setAllianceShare(myPlayer, on);
+    _allianceChanged();
+    showMessageQuiet(on ? 'Sharing resources with your alliance.' : 'Your minerals and gas are your own again.');
   }
 
   void setOpenToAlliances(bool on) {
@@ -504,6 +527,15 @@ class GameController {
 
   // --- fog of war ---
 
+  void _updateCreep() {
+    final layer = creep, t = terrain;
+    if (layer == null || t == null || _engine == null) return;
+    _creepFrame = frame;
+    final w = t.widthPx ~/ 32, h = t.heightPx ~/ 32;
+    final codes = engine.getCreep(w * h);
+    if (codes != null) layer.update(codes, w);
+  }
+
   void _updateFog() {
     final t = terrain;
     if (!fogOfWar || _fogBusy || revealed || t == null || _engine == null) return;
@@ -535,6 +567,7 @@ class GameController {
     _disposed = true;
     fogImage?.dispose();
     fogImage = null;
+    creep?.dispose();
     sound?.dispose();
     _engine?.dispose();
     repaint.dispose();
@@ -613,6 +646,8 @@ class GameController {
       sound?.drainEngine(screenRect);
       _announceCompletedUnits();
       if (frame - _fogFrame >= fogInterval) _updateFog();
+      // Creep spreads one tile now and then: a few times a second is plenty.
+      if (frame - _creepFrame >= 6) _updateCreep();
       _checkOutcome();
       changed = true;
     }

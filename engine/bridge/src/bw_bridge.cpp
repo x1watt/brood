@@ -99,6 +99,10 @@ struct bw_bridge {
 	int terrain_tileset_index = -1;
 	bw_render_util::tileset_terrain terrain;
 
+	int creep_tileset_index = -1;
+	grp_t creep_grp;
+	std::array<int, 0x100> creep_edge_frame{};
+
 	int light_tileset_index = -1;
 	std::array<bw_render_util::pcx_image, 7> light_tables;
 
@@ -151,6 +155,8 @@ struct bw_bridge {
 		op_alliance_surrender,
 		op_alliance_answer_surrender,
 		op_autoplay,
+		op_explore,
+		op_alliance_share,
 	};
 	a_vector<int32_t> cmd_log;
 	void log(int32_t op, std::initializer_list<int32_t> args, const int32_t* extra = nullptr, int extra_n = 0) {
@@ -465,7 +471,13 @@ bw_status bw_bridge_new_game(bw_bridge_t* bridge, const char* map_file, const bw
 		for (int k = 0; k != count; ++k) {
 			if (slot_of[(size_t)k] >= 0) team_of_slot[(size_t)slot_of[(size_t)k]] = setup->team[k];
 		}
-		b->alliances.reset(st, team_of_slot, setup->seed);
+		// Computer players share resources with their allies from the start;
+		// the human decides (bw_bridge_alliance_set_share).
+		std::array<bool, bw_alliances::max_players> shares{};
+		for (int k = 0; k != count; ++k) {
+			if (slot_of[(size_t)k] >= 0) shares[(size_t)slot_of[(size_t)k]] = setup->controller[k] == BW_PLAYER_COMPUTER;
+		}
+		b->alliances.reset(st, team_of_slot, shares, setup->seed);
 		b->alliances_on = count > 1;
 		b->sim->allies = b->alliances_on ? &b->alliances : nullptr;
 		b->ai.allies = b->alliances_on ? &b->alliances : nullptr;
@@ -520,6 +532,18 @@ bw_status bw_bridge_get_fog(bw_bridge_t* bridge, int player_slot, uint8_t* out_t
 	return BW_OK;
 }
 
+bw_status bw_bridge_explore_map(bw_bridge_t* bridge, int player_slot) {
+	if (!bridge || player_slot < 0 || player_slot > 7) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	b->log(bw_bridge::op_explore, {player_slot});
+	state& st = b->player->st();
+	size_t n = st.game->map_tile_width * st.game->map_tile_height;
+	// OpenBW keeps the bits inverted: set = not explored.
+	for (size_t i = 0; i != n; ++i) st.tiles[i].explored &= ~(1u << player_slot);
+	return BW_OK;
+}
+
 int bw_bridge_command_log(bw_bridge_t* bridge, int32_t* out, int out_cap) {
 	if (!bridge || !B(bridge)->in_game()) return -1;
 	auto& log = B(bridge)->cmd_log;
@@ -566,6 +590,8 @@ bw_status bw_bridge_replay_commands(bw_bridge_t* bridge, const int32_t* log, int
 			case bw_bridge::op_alliance_surrender: bw_bridge_alliance_surrender(bridge, arg(0), arg(1)); break;
 			case bw_bridge::op_alliance_answer_surrender: bw_bridge_alliance_answer_surrender(bridge, arg(0), arg(1), arg(2)); break;
 			case bw_bridge::op_autoplay: bw_bridge_set_autoplay(bridge, arg(0), arg(1)); break;
+			case bw_bridge::op_explore: bw_bridge_explore_map(bridge, arg(0)); break;
+			case bw_bridge::op_alliance_share: bw_bridge_alliance_set_share(bridge, arg(0), arg(1)); break;
 			default: return BW_ERR_INVALID_ARGUMENT;
 			}
 			i += 3 + (size_t)n;
@@ -914,6 +940,108 @@ bw_status bw_bridge_decode_megatile(bw_bridge_t* bridge, int megatile_index, uin
 		}
 	}
 	bw_render_util::decode_megatile(b->terrain, (size_t)megatile_index, out_pixels);
+	return BW_OK;
+}
+
+// --- Creep ----------------------------------------------------------------------
+//
+// As OpenBW's ui.h draws it: a creep tile is one of the tileset's creep
+// megatiles (cv5 group 1, mostly the first six, now and then one of the
+// next seven), and a tile next to creep gets an edge frame from the
+// tileset's GRP chosen by which neighbors have creep. The random pick is a
+// hash of the position, so it stays put and never touches the simulation.
+
+static bool ensure_creep(bw_bridge* b) {
+	int t = b->tileset_index();
+	if (b->creep_tileset_index == t) return true;
+	try {
+		a_vector<uint8_t> data;
+		b->asset_loader()(data, format("Tileset/%s.grp", bw_render_util::tileset_names().at((size_t)t)));
+		b->creep_grp = read_grp(data_loading::data_reader_le(data.data(), data.data() + data.size()));
+	} catch (...) {
+		return false;
+	}
+	std::array<int, 0x100> neighbors{};
+	std::array<int, 128> numbered{};
+	for (size_t i = 0; i != 0x100; ++i) {
+		int v = 0;
+		if (i & 2) v |= 0x10;
+		if (i & 8) v |= 0x24;
+		if (i & 0x10) v |= 9;
+		if (i & 0x40) v |= 2;
+		if ((i & 0xc0) == 0xc0) v |= 1;
+		if ((i & 0x60) == 0x60) v |= 4;
+		if ((i & 3) == 3) v |= 0x20;
+		if ((i & 6) == 6) v |= 8;
+		if ((v & 0x21) == 0x21) v |= 0x40;
+		if ((v & 0xc) == 0xc) v |= 0x40;
+		neighbors[i] = v;
+	}
+	int n = 0;
+	for (int i = 0; i != 128; ++i) {
+		if (std::find(neighbors.begin(), neighbors.end(), i) == neighbors.end()) continue;
+		numbered[(size_t)i] = n++;
+	}
+	for (size_t i = 0; i != 0x100; ++i) b->creep_edge_frame[i] = numbered[(size_t)neighbors[i]];
+	b->creep_tileset_index = t;
+	return true;
+}
+
+int bw_bridge_get_creep(bw_bridge_t* bridge, uint16_t* out_tiles, int out_cap) {
+	if (!bridge || !out_tiles) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	if (!ensure_creep(b)) return BW_ERR_ASSET_LOAD_FAILED;
+	state& st = b->player->st();
+	const size_t w = st.game->map_tile_width, h = st.game->map_tile_height;
+	if ((size_t)out_cap < w * h) return BW_ERR_INVALID_ARGUMENT;
+	auto& creep_megatiles = st.game->cv5.at(1).mega_tile_index;
+	static const int dx[8] = {1, 0, -1, 1, -1, 1, 0, -1};
+	static const int dy[8] = {1, 1, 1, 0, 0, -1, -1, -1};
+	int count = 0;
+	for (size_t y = 0; y != h; ++y) {
+		for (size_t x = 0; x != w; ++x) {
+			uint16_t code = 0;
+			if (st.tiles[y * w + x].flags & tile_t::flag_has_creep) {
+				uint32_t r = (uint32_t)(x * 73856093u) ^ (uint32_t)(y * 19349663u);
+				r = r * 22695477u + 1;
+				uint32_t a = (r >> 16) & 0x7fff;
+				r = r * 22695477u + 1;
+				uint32_t c = (r >> 16) & 0x7fff;
+				size_t pick = a % 100 < 4 ? 6 + c % 7 : c % 6;
+				code = (uint16_t)(0x8000 | (creep_megatiles[pick] & 0x3fff));
+				++count;
+			} else {
+				size_t index = 0;
+				for (size_t i = 0; i != 8; ++i) {
+					size_t nx = x + dx[i], ny = y + dy[i];
+					if (nx >= w || ny >= h) continue;
+					if (st.tiles[ny * w + nx].flags & tile_t::flag_has_creep) index |= (size_t)1 << i;
+				}
+				int frame = b->creep_edge_frame[index];
+				if (frame) code = (uint16_t)(0x4000 | (frame - 1));
+			}
+			out_tiles[y * w + x] = code;
+		}
+	}
+	return count;
+}
+
+bw_status bw_bridge_get_creep_edge(bw_bridge_t* bridge, int frame, uint8_t* out_pixels, int out_cap, int* out_width, int* out_height, int* out_count) {
+	if (!bridge || !out_width || !out_height || !out_count) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	if (!ensure_creep(b)) return BW_ERR_ASSET_LOAD_FAILED;
+	auto& g = b->creep_grp;
+	*out_width = (int)g.width;
+	*out_height = (int)g.height;
+	*out_count = (int)g.frames.size();
+	if (!out_pixels) return BW_OK;
+	if (frame < 0 || (size_t)frame >= g.frames.size() || (size_t)out_cap < g.width * g.height) return BW_ERR_INVALID_ARGUMENT;
+	std::memset(out_pixels, 0, g.width * g.height);
+	auto& f = g.frames[(size_t)frame];
+	if (f.offset.x + f.size.x > g.width || f.offset.y + f.size.y > g.height) return BW_ERR_INVALID_ARGUMENT;
+	bw_render_util::draw_frame<false, false>(f, out_pixels + f.offset.y * g.width + f.offset.x, g.width, 0, 0, f.size.x, f.size.y, bw_render_util::no_remap());
 	return BW_OK;
 }
 
@@ -1283,7 +1411,10 @@ int bw_bridge_can_place(bw_bridge_t* bridge, int owner, int unit_type_id, int ti
 		const unit_type_t* ut = f.get_unit_type((UnitTypes)unit_type_id);
 		if (!controls(b, owner, u->owner)) return 0;
 		xy pos(tile_x * 32 + ut->placement_size.x / 2, tile_y * 32 + ut->placement_size.y / 2);
-		return f.can_place_building(u, u->owner, ut, pos, false, false) ? 1 : 0;
+		// Judged on every tile, seen right now or not (creep, buildings in
+		// the way): the preview should match what happens when the worker
+		// gets there, and without fog of war the player sees it all anyway.
+		return f.can_place_building(u, u->owner, ut, pos, false, true) ? 1 : 0;
 	} catch (...) {
 		return 0;
 	}
@@ -1874,6 +2005,18 @@ bw_status bw_bridge_alliance_set_open(bw_bridge_t* bridge, int player_slot, int 
 	bw_bridge* b = B(bridge);
 	b->log(bw_bridge::op_alliance_open, {player_slot, open});
 	return b->alliances.set_open(b->player->st(), player_slot, open != 0) ? BW_OK : BW_ERR_REJECTED;
+}
+
+bw_status bw_bridge_alliance_set_share(bw_bridge_t* bridge, int player_slot, int on) {
+	if (!bridge || !alliance_slot_ok(B(bridge), player_slot)) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	b->log(bw_bridge::op_alliance_share, {player_slot, on});
+	return b->alliances.set_share(b->player->st(), player_slot, on != 0) ? BW_OK : BW_ERR_REJECTED;
+}
+
+int bw_bridge_alliance_get_share(bw_bridge_t* bridge, int player_slot) {
+	if (!bridge || !alliance_slot_ok(B(bridge), player_slot)) return -1;
+	return B(bridge)->alliances.share[(size_t)player_slot] ? 1 : 0;
 }
 
 bw_status bw_bridge_alliance_invite(bw_bridge_t* bridge, int from, int to) {

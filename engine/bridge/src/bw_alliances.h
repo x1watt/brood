@@ -3,7 +3,10 @@
 // In-game alliances, a mechanic of this project (Brood War itself only has
 // allied/enemy flags). Players form groups by inviting and accepting; a
 // group shares:
-//   - one treasury: every member sees and spends the same minerals and gas,
+//   - a treasury, among the members who chose to share resources (each
+//     player's switch; computer players start with it on, the human with
+//     it off): they see and spend the same minerals and gas, the others
+//     keep their own,
 //   - its technology: researched techs and upgrade levels,
 //   - control: a member may command the others' units (see bw_bridge.cpp),
 //   - points: everything any free member mines is credited to every free
@@ -78,6 +81,7 @@ struct alliance_system {
 	std::array<int, max_players> name_of_group{}; // by group id: name code, -1 for none
 	uint32_t name_rng = 1;
 
+	std::array<bool, max_players> share{}; // pools money with the group's other sharers
 	std::array<int, max_players> synced_minerals{};
 	std::array<int, max_players> synced_gas{};
 	std::array<int, max_players> gathered_seen{};
@@ -101,10 +105,11 @@ struct alliance_system {
 
 	a_vector<event> events; // for the UI, drained by polling
 
-	void reset(state& st, const std::array<int, max_players>& team_of_slot, uint32_t seed) {
+	void reset(state& st, const std::array<int, max_players>& team_of_slot, const std::array<bool, max_players>& shares, uint32_t seed) {
 		name_rng = seed * 2246822519u + 3266489917u;
 		for (int p = 0; p != max_players; ++p) {
 			group[p] = p;
+			share[p] = shares[p];
 			open[p] = false;
 			lord[p] = -1;
 			playing[p] = st.players[p].controller == player_t::controller_occupied;
@@ -124,26 +129,21 @@ struct alliance_system {
 		}
 		samples = 0;
 		events.clear();
-		// Teams chosen before the game start as alliances.
-		for (int a = 0; a != max_players; ++a) {
-			if (!playing[a] || team_of_slot[a] == 0) continue;
-			for (int b = 0; b != a; ++b) {
-				if (playing[b] && team_of_slot[b] == team_of_slot[a]) {
-					group[a] = group[b];
-					break;
+		// Teams chosen before the game start as alliances; the sharers' treasury
+		// starts as the sum of their money.
+		regroup(st, [&] {
+			for (int a = 0; a != max_players; ++a) {
+				if (!playing[a] || team_of_slot[a] == 0) continue;
+				for (int b = 0; b != a; ++b) {
+					if (playing[b] && team_of_slot[b] == team_of_slot[a]) {
+						group[a] = group[b];
+						break;
+					}
 				}
 			}
-		}
-		// A team's treasury starts as the sum of its members' money.
+		});
 		for (int g = 0; g != max_players; ++g) {
-			if (members(g).size() < 2) continue;
-			int m = 0, gas = 0;
-			for (int p : members(g)) {
-				m += st.current_minerals[p];
-				gas += st.current_gas[p];
-			}
-			for (int p : members(g)) set_money(st, p, m, gas);
-			name_group(g);
+			if (members(g).size() >= 2) name_group(g);
 		}
 		apply_relations(st);
 	}
@@ -209,6 +209,54 @@ struct alliance_system {
 		synced_gas[p] = gas;
 	}
 
+	// Who spends from the same money as p: the sharers of its group, or p alone.
+	a_vector<int> pool(int p) const {
+		if (!share[p]) return {p};
+		a_vector<int> out;
+		for (int m : members(group[p])) {
+			if (share[m]) out.push_back(m);
+		}
+		return out;
+	}
+
+	// Changes groups or share switches (`change`) and moves the money along:
+	// every treasury is split per head among its members first, and each
+	// treasury afterwards is the sum of its members' heads. So joiners bring
+	// their money, leavers take their share, and a player who stops sharing
+	// keeps an equal part of what the sharers had.
+	template<typename F>
+	void regroup(state& st, F&& change) {
+		sync(st);
+		std::array<int, max_players> head_m{}, head_g{};
+		for (int p = 0; p != max_players; ++p) {
+			if (!playing[p]) continue;
+			a_vector<int> mates = pool(p);
+			int n = (int)mates.size();
+			int m = st.current_minerals[p], g = st.current_gas[p];
+			head_m[p] = m / n + (p == mates.front() ? m % n : 0);
+			head_g[p] = g / n + (p == mates.front() ? g % n : 0);
+		}
+		change();
+		std::array<bool, max_players> done{};
+		for (int p = 0; p != max_players; ++p) {
+			if (!playing[p] || done[p]) continue;
+			a_vector<int> mates = pool(p);
+			int m = 0, g = 0;
+			for (int q : mates) {
+				m += head_m[q];
+				g += head_g[q];
+				done[q] = true;
+			}
+			for (int q : mates) set_money(st, q, m, g);
+		}
+	}
+
+	bool set_share(state& st, int p, bool on) {
+		if (!active(st, p) || share[p] == on) return false;
+		regroup(st, [&] { share[p] = on; });
+		return true;
+	}
+
 	void push_event(const state& st, int kind, int a, int b) {
 		if (events.size() >= 256) events.erase(events.begin());
 		events.push_back({(int32_t)st.current_frame, kind, a, b});
@@ -269,29 +317,20 @@ struct alliance_system {
 
 	// Moves `movers` (all in one group) into group `target`, pooling money.
 	void join(state& st, const a_vector<int>& movers, int target) {
-		sync(st);
 		int old = group[movers.front()];
 		a_vector<int> stay;
 		for (int m : members(old)) {
 			if (std::find(movers.begin(), movers.end(), m) == movers.end()) stay.push_back(m);
 		}
-		// What the movers take along: their share of their old treasury.
-		int minerals = st.current_minerals[movers.front()], gas = st.current_gas[movers.front()];
-		int n = (int)(stay.size() + movers.size());
-		int take_m = minerals * (int)movers.size() / n, take_g = gas * (int)movers.size() / n;
-		if (!stay.empty()) {
-			int id = std::find(stay.begin(), stay.end(), old) != stay.end() ? old : stay.front();
-			move_group(old, id);
-			for (int m : stay) {
-				group[m] = id;
-				set_money(st, m, minerals - take_m, gas - take_g);
+		// The movers take along their share of their old treasury.
+		regroup(st, [&] {
+			if (!stay.empty()) {
+				int id = std::find(stay.begin(), stay.end(), old) != stay.end() ? old : stay.front();
+				move_group(old, id);
+				for (int m : stay) group[m] = id;
 			}
-		}
-		a_vector<int> joined = members(target);
-		int tm = st.current_minerals[joined.front()] + take_m;
-		int tg = st.current_gas[joined.front()] + take_g;
-		for (int m : movers) group[m] = target;
-		for (int m : members(target)) set_money(st, m, tm, tg);
+			for (int m : movers) group[m] = target;
+		});
 	}
 
 	// --- commands -------------------------------------------------------------
@@ -322,17 +361,15 @@ struct alliance_system {
 			push_event(st, event_declined, from, p);
 			return true;
 		}
-		sync(st);
 		int ga = group[from], gb = group[p];
-		// One treasury from two.
 		a_vector<int> a_members = members(ga), b_members = members(gb);
-		int minerals = st.current_minerals[a_members.front()] + st.current_minerals[b_members.front()];
-		int gas = st.current_gas[a_members.front()] + st.current_gas[b_members.front()];
 		// The larger alliance's name lives on.
 		if (name_of_group[ga] < 0 || (b_members.size() > a_members.size() && name_of_group[gb] >= 0)) name_of_group[ga] = name_of_group[gb];
 		name_of_group[gb] = -1;
-		for (int m : b_members) group[m] = ga;
-		for (int m : members(ga)) set_money(st, m, minerals, gas);
+		// The two groups' sharers pool their treasuries.
+		regroup(st, [&] {
+			for (int m : b_members) group[m] = ga;
+		});
 		// Invitations between the new partners are settled.
 		for (int x : members(ga)) {
 			for (int y : members(ga)) invite_frame[x][y] = surrender_frame[x][y] = -1;
@@ -352,22 +389,19 @@ struct alliance_system {
 			if (lord[m] == p) movers.push_back(m);
 		}
 		if (movers.size() >= mates.size()) return false;
-		sync(st);
 		int old = group[p];
 		a_vector<int> rest;
 		for (int m : mates) {
 			if (std::find(movers.begin(), movers.end(), m) == movers.end()) rest.push_back(m);
 		}
-		// Group ids are a member's slot.
-		int remaining = std::find(rest.begin(), rest.end(), old) != rest.end() ? old : rest.front();
-		move_group(old, remaining);
-		for (int m : rest) group[m] = remaining;
-		for (int m : movers) group[m] = p;
-		// The leavers take their share of the treasury.
-		int minerals = st.current_minerals[p], gas = st.current_gas[p];
-		int share_m = minerals * (int)movers.size() / (int)mates.size(), share_g = gas * (int)movers.size() / (int)mates.size();
-		for (int m : movers) set_money(st, m, share_m, share_g);
-		for (int m : rest) set_money(st, m, minerals - share_m, gas - share_g);
+		// Group ids are a member's slot. The leavers take their share of the
+		// treasury.
+		regroup(st, [&] {
+			int remaining = std::find(rest.begin(), rest.end(), old) != rest.end() ? old : rest.front();
+			move_group(old, remaining);
+			for (int m : rest) group[m] = remaining;
+			for (int m : movers) group[m] = p;
+		});
 		for (int m : movers) clear_offers(m);
 		push_event(st, event_left, p, -1);
 		apply_relations(st);
@@ -480,15 +514,14 @@ struct alliance_system {
 
 	// --- per frame ------------------------------------------------------------
 
-	// Folds every member's spending and income since the last sync into the
-	// group's treasury and hands everyone the result.
+	// Folds every sharer's spending and income since the last sync into its
+	// treasury and hands everyone the result.
 	void sync(state& st) {
 		std::array<bool, max_players> done{};
 		for (int p = 0; p != max_players; ++p) {
-			if (!playing[p] || done[(size_t)group[p]]) continue;
-			int g = group[p];
-			done[(size_t)g] = true;
-			a_vector<int> mates = members(g);
+			if (!playing[p] || done[(size_t)p]) continue;
+			a_vector<int> mates = pool(p);
+			for (int q : mates) done[(size_t)q] = true;
 			if (mates.size() < 2) {
 				synced_minerals[p] = st.current_minerals[p];
 				synced_gas[p] = st.current_gas[p];

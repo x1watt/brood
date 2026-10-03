@@ -60,6 +60,8 @@ class BwEngine {
   late final int _allianceEvents = _r.malloc(64 * L.allianceEventSize);
   int _fogBuf = 0;
   int _fogCap = 0;
+  int _creepBuf = 0;
+  int _creepCap = 0;
   final Map<int, UnitTypeInfo> _typeInfoCache = {};
   bool _disposed = false;
 
@@ -179,6 +181,37 @@ class BwEngine {
     }
     _check(_r.bw_bridge_get_fog(_h, slot, _fogBuf, tiles), 'getFog');
     return _copy(_fogBuf, tiles);
+  }
+
+  /// Zerg creep per tile (see bw_bridge_get_creep): 0 none, 0x8000 |
+  /// megatile for creep, 0x4000 | edge frame next to creep. Null when the
+  /// tileset's creep graphics are missing.
+  Uint16List? getCreep(int tiles) {
+    if (_creepCap < tiles) {
+      if (_creepBuf != 0) _r.free(_creepBuf);
+      _creepBuf = _r.malloc(tiles * 2);
+      _creepCap = tiles;
+    }
+    if (_r.bw_bridge_get_creep(_h, _creepBuf, tiles) < 0) return null;
+    return Uint16List.view(_copy(_creepBuf, tiles * 2).buffer);
+  }
+
+  /// Number of creep edge frames and their canvas size.
+  (int count, int width, int height)? creepEdgeInfo() {
+    if (!_ok(_r.bw_bridge_get_creep_edge(_h, 0, 0, 0, _ints, _ints + 4, _ints + 8))) return null;
+    return (_i32(_ints + 8), _i32(_ints), _i32(_ints + 4));
+  }
+
+  /// One creep edge frame on its canvas (palette indices, 0 transparent).
+  Uint8List? decodeCreepEdge(int frame, int width, int height) {
+    final size = width * height;
+    final buf = _r.malloc(size);
+    try {
+      if (!_ok(_r.bw_bridge_get_creep_edge(_h, frame, buf, size, _ints, _ints + 4, _ints + 8))) return null;
+      return _copy(buf, size);
+    } finally {
+      _r.free(buf);
+    }
   }
 
   /// Every command given so far, for saving the game.
@@ -528,6 +561,14 @@ class BwEngine {
   }
 
   bool setAllianceOpen(int slot, bool open) => _ok(_r.bw_bridge_alliance_set_open(_h, slot, open ? 1 : 0));
+
+  /// Share resources with the alliance's other sharers (logged).
+  bool setAllianceShare(int slot, bool on) => _ok(_r.bw_bridge_alliance_set_share(_h, slot, on ? 1 : 0));
+  bool allianceShare(int slot) => _r.bw_bridge_alliance_get_share(_h, slot) == 1;
+
+  /// The whole map counts as explored for [slot] (logged): with no fog of
+  /// war you see everything and may build anywhere you see.
+  void exploreMap(int slot) => _check(_r.bw_bridge_explore_map(_h, slot), 'exploreMap');
   bool allianceInvite(int from, int to) => _ok(_r.bw_bridge_alliance_invite(_h, from, to));
   bool allianceRespond(int slot, int from, bool accept) => _ok(_r.bw_bridge_alliance_respond(_h, slot, from, accept ? 1 : 0));
   bool allianceLeave(int slot) => _ok(_r.bw_bridge_alliance_leave(_h, slot));
@@ -646,5 +687,6 @@ class BwEngine {
       _r.free(p);
     }
     if (_fogBuf != 0) _r.free(_fogBuf);
+    if (_creepBuf != 0) _r.free(_creepBuf);
   }
 }

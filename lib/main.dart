@@ -9,6 +9,8 @@ import 'ui/start_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Right click gives orders in the game, not the browser's menu.
+  if (kIsWeb) await BrowserContextMenu.disableContextMenu();
   if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
     // A phone plays in landscape, full screen (system bars come back with a
     // swipe from the edge).

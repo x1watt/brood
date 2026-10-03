@@ -400,6 +400,21 @@ static void test_alliances(const char* dd, const char* mf) {
 		for (int i = 0; i != n; ++i) if (ev[i].kind == BW_ALLIANCE_FORMED) formed = 1;
 		CHECK(formed, "alliances: no 'formed' event");
 	}
+	/* Sharing resources is the human's choice and starts off: separate money,
+	   then one treasury holding both once switched on, then an equal part
+	   back when switched off again. */
+	CHECK(bw_bridge_alliance_get_share(b, me) == 0 && bw_bridge_alliance_get_share(b, ally) == 1, "alliances: share defaults");
+	{
+		int mine = bw_bridge_minerals(b, me), theirs = bw_bridge_minerals(b, ally);
+		CHECK(mine != theirs, "alliances: money shared without asking (%d)", mine);
+		CHECK(bw_bridge_alliance_set_share(b, me, 1) == BW_OK, "alliances: share on");
+		CHECK(bw_bridge_minerals(b, me) == mine + theirs && bw_bridge_minerals(b, ally) == mine + theirs, "alliances: share on: %d + %d gave %d / %d", mine, theirs, bw_bridge_minerals(b, me), bw_bridge_minerals(b, ally));
+		CHECK(bw_bridge_alliance_set_share(b, me, 0) == BW_OK, "alliances: share off");
+		int total = mine + theirs;
+		CHECK(bw_bridge_minerals(b, me) + bw_bridge_minerals(b, ally) == total && bw_bridge_minerals(b, me) >= total / 2 - 1, "alliances: share off split %d / %d", bw_bridge_minerals(b, me), bw_bridge_minerals(b, ally));
+		printf("bridge_smoke_test: alliances: share resources %d + %d -> pooled -> %d / %d\n", mine, theirs, bw_bridge_minerals(b, me), bw_bridge_minerals(b, ally));
+		CHECK(bw_bridge_alliance_set_share(b, me, 1) == BW_OK, "alliances: share on again");
+	}
 	/* One treasury. */
 	CHECK(bw_bridge_minerals(b, me) == bw_bridge_minerals(b, ally) && bw_bridge_gas(b, me) == bw_bridge_gas(b, ally), "alliances: treasury not shared (%d vs %d)", bw_bridge_minerals(b, me), bw_bridge_minerals(b, ally));
 	int32_t cc[1];
@@ -531,6 +546,7 @@ static void test_surrender(const char* dd, const char* mf) {
 	alliance_state(b, al);
 	CHECK(al[x].lord == me && al[x].group == al[me].group, "surrender: not a vassal (lord %d)", al[x].lord);
 	CHECK(al[me].name >= 0, "surrender: the new alliance has no name");
+	CHECK(bw_bridge_alliance_set_share(b, me, 1) == BW_OK, "surrender: share on");
 	CHECK(bw_bridge_minerals(b, x) == bw_bridge_minerals(b, me), "surrender: treasury not shared");
 	CHECK(bw_bridge_alliance_leave(b, x) == BW_ERR_REJECTED, "surrender: a vassal left");
 	CHECK(bw_bridge_alliance_invite(b, x, z) == BW_ERR_REJECTED, "surrender: a vassal invited");
