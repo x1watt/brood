@@ -158,8 +158,26 @@ checks the replayed state hash matches. Saves from before sessions are
 turned into one-point sessions. The game menu (top-left button or F10)
 pauses, saves, exits and quits; the start screen has a quit button too.
 
-Still missing: creep drawing, lift off/land and nukes, and the web/Android
-targets.
+Browser version (tool/build_web.sh, output build/web): the bridge is
+compiled to WebAssembly with Emscripten (engine/web/build_wasm.sh into
+web/bwbridge.js/.wasm, EMSDK default ~/temp/emsdk), and Flutter is built
+with --no-web-resources-cdn, a bundled font (assets/fonts, web only) and a
+bootstrap that never fetches fallback fonts, so the folder runs from any
+static server with no internet. Dart reaches the engine through
+lib/engine/bridge_raw.dart, one method per C function, generated with its
+dart:ffi and WebAssembly implementations by tool/gen_bridge_raw.py from
+bw_bridge.h; lib/engine/bw_engine.dart is the shared engine API on top,
+reading structs at explicit offsets checked by test/engine_layout_test.dart.
+Platform pieces: lib/platform/storage*.dart (files on desktop, IndexedDB in
+the browser) for settings, stats and saves; lib/game/game_files_*.dart for
+the game data (a folder on desktop; in the browser the player picks the
+game folder once, the files are kept in IndexedDB and written into the
+engine's in-memory file system at start). Saved games replay on a
+background isolate on desktop and directly in the browser. Audio starts
+from the click that starts a game (browsers require it) and stays up
+between games.
+
+Still missing: creep drawing, lift off/land and nukes, and Android.
 
 ## Layers
 

@@ -10,11 +10,13 @@
 // per-pixel composition of the full map runs in a background isolate.
 
 import 'dart:async';
-import 'dart:isolate';
 import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart' show compute;
+
 import 'dart:ui' as ui;
 
-import '../engine/bw_engine_io.dart';
+import '../engine/bw_engine.dart';
 
 /// Palette ranges the original rotates (indices 1-6 and 7-13: on every
 /// tileset these hold the water/lava animation colors).
@@ -110,16 +112,9 @@ class TerrainLayer {
     Uint8List palette,
     Map<int, Uint8List> megatiles,
     bool withColors,
-  ) => Isolate.run(() => _compose(widthTiles, heightTiles, grid, palette, megatiles, withColors));
+  ) => compute((_) => _compose(widthTiles, heightTiles, grid, palette, megatiles, withColors), null); // a background isolate where there is one
 
-  static _Composed _compose(
-    int widthTiles,
-    int heightTiles,
-    Uint16List grid,
-    Uint8List palette,
-    Map<int, Uint8List> megatiles,
-    bool withColors,
-  ) {
+  static _Composed _compose(int widthTiles, int heightTiles, Uint16List grid, Uint8List palette, Map<int, Uint8List> megatiles, bool withColors) {
     final widthPx = widthTiles * 32;
     final heightPx = heightTiles * 32;
     final paletteWords = Uint32List(256);

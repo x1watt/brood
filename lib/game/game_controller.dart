@@ -16,7 +16,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 
 import '../audio/sound_system.dart';
-import '../engine/bw_engine_io.dart';
+import '../engine/bw_engine.dart';
 import '../engine/models.dart';
 import '../rendering/icon_atlas.dart';
 import '../rendering/sprite_atlas.dart';
@@ -188,8 +188,10 @@ class GameController {
 
   Future<void> start({required String dataDir, required GameLaunch launch}) async {
     this.launch = launch;
+    // Audio first, while the click that started the game still counts.
+    final audio = SoundSystem.startAudio();
     try {
-      final e = BwEngine.open();
+      final e = await BwEngine.open();
       e.loadAssets(dataDir);
       final setup = launch.setup;
       final slots = e.newGame(
@@ -225,6 +227,7 @@ class GameController {
       _engine = e;
       atlas = SpriteAtlas(e);
       icons = IconAtlas(e)..onLoaded = () => _notifyHud(force: true);
+      await audio;
       final s = SoundSystem(e);
       await s.init();
       sound = s;

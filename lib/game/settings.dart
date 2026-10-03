@@ -1,15 +1,17 @@
 // lib/game/settings.dart
 //
-// Player preferences kept between runs in $XDG_DATA_HOME/brood/settings.json
-// (next to play_stats.json): sound volume and mute, whether the game runs
-// fullscreen, and the last game setup chosen on the start screen.
-// BROOD_SETTINGS_FILE overrides the location (tests).
+// Player preferences kept between runs ('settings.json' in the app storage,
+// lib/platform/storage.dart): sound volume and mute, fullscreen, the last
+// game setup chosen on the start screen, panel side, auto-save and the
+// auto-play modes.
 
 import 'dart:convert';
-import 'dart:io';
+
+import '../platform/storage.dart';
 
 class Settings {
-  final File file;
+  static const key = 'settings.json';
+
   double volume;
   bool muted;
   bool fullscreen;
@@ -18,7 +20,7 @@ class Settings {
   bool autosave; // save a point in time every few minutes of play
   int autoplayModes; // what auto-play does when switched on (AutoplayMode bits)
 
-  Settings._(this.file, {
+  Settings._({
     this.volume = 0.7,
     this.muted = false,
     this.fullscreen = false,
@@ -28,21 +30,12 @@ class Settings {
     this.autoplayModes = 15,
   });
 
-  static File defaultFile() {
-    final env = Platform.environment;
-    final override = env['BROOD_SETTINGS_FILE'];
-    if (override != null && override.isNotEmpty) return File(override);
-    final base = env['XDG_DATA_HOME']?.isNotEmpty == true ? env['XDG_DATA_HOME']! : '${env['HOME'] ?? '.'}/.local/share';
-    return File('$base/brood/settings.json');
-  }
-
-  static Settings load([File? file]) {
-    final f = file ?? defaultFile();
+  static Settings load() {
     try {
-      if (f.existsSync()) {
-        final j = jsonDecode(f.readAsStringSync()) as Map<String, dynamic>;
+      final text = AppStorage.instance.read(key);
+      if (text != null) {
+        final j = jsonDecode(text) as Map<String, dynamic>;
         return Settings._(
-          f,
           volume: ((j['volume'] as num?)?.toDouble() ?? 0.7).clamp(0.0, 1.0),
           muted: j['muted'] == true,
           fullscreen: j['fullscreen'] == true,
@@ -55,14 +48,12 @@ class Settings {
     } catch (_) {
       // Unreadable settings fall back to defaults.
     }
-    return Settings._(f);
+    return Settings._();
   }
 
   void save() {
     try {
-      file.parent.createSync(recursive: true);
-      final tmp = File('${file.path}.tmp');
-      tmp.writeAsStringSync(const JsonEncoder.withIndent('  ').convert({
+      AppStorage.instance.write(key, const JsonEncoder.withIndent('  ').convert({
         'volume': volume,
         'muted': muted,
         'fullscreen': fullscreen,
@@ -71,7 +62,6 @@ class Settings {
         'autosave': autosave,
         'autoplayModes': autoplayModes,
       }));
-      tmp.renameSync(file.path);
     } catch (_) {
       // Preferences are a convenience; never let them break the game.
     }

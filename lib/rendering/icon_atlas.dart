@@ -19,7 +19,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import '../engine/bw_engine_io.dart';
+import '../engine/bw_engine.dart';
 
 /// Fixed cmdicons.grp frames for commands that aren't a unit/tech/upgrade.
 abstract class CmdIcon {

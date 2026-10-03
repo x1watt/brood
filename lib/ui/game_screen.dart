@@ -5,14 +5,15 @@
 // defeat screen.
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:ui' show AppExitResponse, AppExitType, FramePhase, FrameTiming;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../game/game_controller.dart';
+import '../platform/env.dart';
 import '../game/game_data.dart';
 import '../game/game_setup.dart';
 import '../game/play_stats.dart';
@@ -81,7 +82,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       },
     );
     SchedulerBinding.instance.addTimingsCallback(_onTimings);
-    if (Platform.environment['BROOD_PERF_LOG'] == '1') {
+    if (env('BROOD_PERF_LOG') == '1') {
       // For measuring: print the overlay's numbers every 5 s.
       _perfLogTimer = Timer.periodic(const Duration(seconds: 5), (_) {
         final t = List<FrameTiming>.of(_timings);
@@ -89,7 +90,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
         final span = t.last.timestampInMicroseconds(FramePhase.vsyncStart) - t.first.timestampInMicroseconds(FramePhase.vsyncStart);
         double avg(Iterable<int> v) => v.isEmpty ? 0 : v.reduce((a, b) => a + b) / v.length / 1000;
         int worst(Iterable<int> v) => v.isEmpty ? 0 : v.reduce((a, b) => a > b ? a : b);
-        stderr.writeln(
+        debugPrint(
           'perf fps=${((t.length - 1) * 1e6 / span).toStringAsFixed(1)} '
           'tick=${avg(_c.tickMicros).toStringAsFixed(2)}ms(worst ${(worst(_c.tickMicros) / 1000).toStringAsFixed(1)}) '
           'build=${avg(t.map((f) => f.buildDuration.inMicroseconds)).toStringAsFixed(2)}ms '
@@ -750,13 +751,16 @@ class _GameMenu extends StatelessWidget {
             onPressed: onExit,
             child: const Text('Exit to main menu'),
           ),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(minimumSize: button, foregroundColor: const Color(0xFFFF6B5E)),
-            onPressed: onQuit,
-            icon: const Icon(Icons.power_settings_new, size: 18),
-            label: const Text('Quit Brood'),
-          ),
+          // A browser tab can't quit itself.
+          if (!kIsWeb) ...[
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(minimumSize: button, foregroundColor: const Color(0xFFFF6B5E)),
+              onPressed: onQuit,
+              icon: const Icon(Icons.power_settings_new, size: 18),
+              label: const Text('Quit Brood'),
+            ),
+          ],
           const SizedBox(height: 8),
           Row(
             children: [

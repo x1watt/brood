@@ -1,12 +1,12 @@
 // lib/game/play_stats.dart
 //
-// Per-map play time, games started and last played date, kept in
-// $XDG_DATA_HOME/brood/play_stats.json (default ~/.local/share/brood/) so
-// the start screen can list the most played maps first. BROOD_STATS_FILE
-// overrides the location (used by tests).
+// Per-map play time, games started and last played date ('play_stats.json'
+// in the app storage, lib/platform/storage.dart), so the start screen can
+// list the most played maps first.
 
 import 'dart:convert';
-import 'dart:io';
+
+import '../platform/storage.dart';
 
 class MapStats {
   int seconds;
@@ -28,32 +28,24 @@ class MapStats {
 }
 
 class PlayStats {
-  final File file;
+  static const key = 'play_stats.json';
   final Map<String, MapStats> maps;
 
-  PlayStats._(this.file, this.maps);
+  PlayStats._(this.maps);
 
-  static File defaultFile() {
-    final env = Platform.environment;
-    final override = env['BROOD_STATS_FILE'];
-    if (override != null && override.isNotEmpty) return File(override);
-    final base = env['XDG_DATA_HOME']?.isNotEmpty == true ? env['XDG_DATA_HOME']! : '${env['HOME'] ?? '.'}/.local/share';
-    return File('$base/brood/play_stats.json');
-  }
-
-  static PlayStats load([File? file]) {
-    final f = file ?? defaultFile();
+  static PlayStats load() {
     final maps = <String, MapStats>{};
     try {
-      if (f.existsSync()) {
-        final json = jsonDecode(f.readAsStringSync()) as Map<String, dynamic>;
+      final text = AppStorage.instance.read(key);
+      if (text != null) {
+        final json = jsonDecode(text) as Map<String, dynamic>;
         final m = json['maps'] as Map<String, dynamic>? ?? const {};
         m.forEach((k, v) => maps[k] = MapStats.fromJson(v as Map<String, dynamic>));
       }
     } catch (_) {
       // A damaged file just starts the stats over.
     }
-    return PlayStats._(f, maps);
+    return PlayStats._(maps);
   }
 
   MapStats of(String mapKey) => maps.putIfAbsent(mapKey, MapStats.new);
@@ -75,12 +67,9 @@ class PlayStats {
 
   void save() {
     try {
-      file.parent.createSync(recursive: true);
-      final tmp = File('${file.path}.tmp');
-      tmp.writeAsStringSync(const JsonEncoder.withIndent('  ').convert({
+      AppStorage.instance.write(key, const JsonEncoder.withIndent('  ').convert({
         'maps': {for (final e in maps.entries) e.key: e.value.toJson()},
       }));
-      tmp.renameSync(file.path);
     } catch (_) {
       // Stats are a convenience; never let them break the game.
     }

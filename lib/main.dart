@@ -1,9 +1,18 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
+import 'game/game_data.dart';
+import 'platform/storage.dart';
+import 'ui/data_setup_screen.dart';
 import 'ui/start_screen.dart';
 
-void main() {
-  runApp(const BroodApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // The browser keeps settings, stats, saves and the game files in
+  // IndexedDB: load them before the first screen.
+  await AppStorage.init();
+  final hasData = await GameFiles.instance.init();
+  runApp(BroodApp(hasData: hasData));
 }
 
 /// Black and neutral greys throughout; the only colors are the game's own
@@ -12,6 +21,8 @@ ThemeData _theme() {
   const text = Color(0xFFE8E8E8);
   const line = Color(0xFF2A2A2A);
   final base = ThemeData(
+    // The browser gets a bundled font (no download from the internet).
+    fontFamily: kIsWeb ? 'NotoSans' : null,
     brightness: Brightness.dark,
     useMaterial3: true,
     colorScheme: const ColorScheme.dark(
@@ -56,7 +67,8 @@ ThemeData _theme() {
 }
 
 class BroodApp extends StatelessWidget {
-  const BroodApp({super.key});
+  final bool hasData;
+  const BroodApp({super.key, this.hasData = true});
 
   @override
   Widget build(BuildContext context) {
@@ -64,7 +76,7 @@ class BroodApp extends StatelessWidget {
       title: 'Brood',
       debugShowCheckedModeBanner: false,
       theme: _theme(),
-      home: const StartScreen(),
+      home: hasData ? const StartScreen() : const DataSetupScreen(),
     );
   }
 }

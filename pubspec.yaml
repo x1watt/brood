@@ -39,6 +39,7 @@ dependencies:
   # lib/engine's Linux/Android bridge bindings.
   ffi: ^2.1.3
   flutter_soloud: ^5.1.6
+  web: ^1.1.1
 
 dev_dependencies:
   flutter_test:
@@ -68,6 +69,15 @@ flutter:
 
   shaders:
     - shaders/terrain.frag
+
+  # Bundled so the browser build needs no web font download (SIL Open Font
+  # License, see assets/fonts/NotoSans-LICENSE.txt). Used on the web only.
+  fonts:
+    - family: NotoSans
+      fonts:
+        - asset: assets/fonts/NotoSans-Regular.ttf
+        - asset: assets/fonts/NotoSans-Bold.ttf
+          weight: 700
 
   # To add assets to your application, add an assets section, like this:
   # assets:

@@ -4,10 +4,9 @@
 // plus computer opponents, their races and alliances), or load a saved
 // game.
 
-import 'dart:io';
-
 import 'dart:ui' show AppExitType;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -136,15 +135,17 @@ class _StartScreenState extends State<StartScreen> {
                     Expanded(
                       child: Padding(
                         padding: const EdgeInsets.only(bottom: 7),
-                        child: Text('Game data: $gameDataDir', style: const TextStyle(color: _faint, fontSize: 12), overflow: TextOverflow.ellipsis),
+                        child: Text('Game data: ${GameFiles.instance.description}', style: const TextStyle(color: _faint, fontSize: 12), overflow: TextOverflow.ellipsis),
                       ),
                     ),
-                    IconButton(
-                      tooltip: 'Quit Brood',
-                      onPressed: () => ServicesBinding.instance.exitApplication(AppExitType.required),
-                      icon: const Icon(Icons.power_settings_new, color: _dim),
-                    ),
-                    const SizedBox(width: 8),
+                    if (!kIsWeb) ...[
+                      IconButton(
+                        tooltip: 'Quit Brood',
+                        onPressed: () => ServicesBinding.instance.exitApplication(AppExitType.required),
+                        icon: const Icon(Icons.power_settings_new, color: _dim),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
                     SegmentedButton<bool>(
                       showSelectedIcon: false,
                       segments: [
@@ -416,7 +417,7 @@ class _StartScreenState extends State<StartScreen> {
   }
 
   void _load(SaveSession s, SavePoint p) {
-    if (!File(s.mapFile).existsSync()) {
+    if (!GameFiles.instance.exists(s.mapFile)) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('The map of this save is missing: ${s.mapFile}')));
       return;
     }

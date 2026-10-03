@@ -15,14 +15,14 @@
 // lost.
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
+import '../platform/env.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 
-import '../engine/bw_engine_io.dart';
+import '../engine/bw_engine.dart';
 import '../engine/models.dart';
 
 class _Channel {
@@ -65,26 +65,42 @@ class SoundSystem {
 
   SoundSystem(this._engine);
 
-  Future<void> init() async {
+  static Future<bool>? _starting;
+
+  /// Starts the audio engine. Call it straight from a click: browsers only
+  /// allow audio to start right after one, and a game can take seconds to
+  /// load (a saved game replays first).
+  static Future<bool> startAudio() => _starting ??= () async {
     // BROOD_AUDIO_BACKEND=pulse|alsa forces a backend (e.g. so a test run can
     // be sent to a silent sink with PULSE_SINK); default lets miniaudio pick.
-    final backend = switch (Platform.environment['BROOD_AUDIO_BACKEND']) {
+    final backend = switch (env('BROOD_AUDIO_BACKEND')) {
       'pulse' => LinuxAudioBackend.pulseAudio,
       'alsa' => LinuxAudioBackend.alsa,
       _ => LinuxAudioBackend.auto,
     };
-    if (Platform.environment['BROOD_MUTE'] == '1') _muted = true;
     try {
-      await SoLoud.instance.init(linuxAudioBackend: backend);
-      _ready = true;
-      _applyGlobal();
+      if (!SoLoud.instance.isInitialized) await SoLoud.instance.init(linuxAudioBackend: backend);
+      return true;
     } catch (e) {
       debugPrint('Sound disabled: $e');
+      return false;
     }
+  }();
+
+  Future<void> init() async {
+    if (env('BROOD_MUTE') == '1') _muted = true;
+    _ready = await startAudio();
+    if (_ready) _applyGlobal();
   }
 
+  // The audio engine stays up for the next game (starting it again in a
+  // browser would need another click); only this game's sounds go.
   void dispose() {
-    if (_ready) SoLoud.instance.deinit();
+    if (!_ready) return;
+    for (final src in _sources.values) {
+      if (src != null) SoLoud.instance.disposeSource(src);
+    }
+    _sources.clear();
   }
 
   SoundInfo? _info(int id) => _infos.putIfAbsent(id, () => _engine.soundInfo(id));

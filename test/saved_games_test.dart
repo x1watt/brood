@@ -2,25 +2,21 @@
 // and turning a save from before sessions into a session.
 
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:brood/game/game_setup.dart';
 import 'package:brood/game/saved_games.dart';
+import 'package:brood/platform/storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  late Directory tmp;
+  late MemoryStorage store;
   const setup = GameSetup(
     players: [PlayerSetup(human: true, race: 1, team: 0), PlayerSetup(human: false, race: 2, team: 0)],
     alliances: AllianceMode.freeForAll,
     seed: 7,
   );
 
-  setUp(() {
-    tmp = Directory.systemTemp.createTempSync('brood_saves_');
-    SaveSession.rootOverride = tmp;
-  });
-  tearDown(() => tmp.deleteSync(recursive: true));
+  setUp(() => AppStorage.instance = store = MemoryStorage());
 
   test('a session keeps its points in time and reads them back', () async {
     final s = SaveSession.create(name: 'Lost Temple test', mapFile: '/maps/lt.scm', mapKey: 'maps/lt.scm', mapName: '(4)Lost Temple', setup: setup);
@@ -45,7 +41,7 @@ void main() {
   });
 
   test('a save from before sessions becomes a session', () {
-    File('${tmp.path}/save_1.json').writeAsStringSync(jsonEncode({
+    store.write('saves/save_1.json', jsonEncode({
       'version': 1,
       'name': 'old save',
       'saved': '2026-10-03T13:06:25',
@@ -63,6 +59,6 @@ void main() {
     expect(listed.single.name, 'old save');
     expect(listed.single.points.single.frame, 838);
     expect(listed.single.readPoint(listed.single.points.single).commandLog, [1]);
-    expect(File('${tmp.path}/save_1.json').existsSync(), isFalse);
+    expect(store.read('saves/save_1.json'), isNull);
   });
 }

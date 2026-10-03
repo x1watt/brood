@@ -64,3 +64,7 @@ engine/web/build/
 *.wasm
 *.so
 *.o
+
+# Built by engine/web/build_wasm.sh (tool/build_web.sh)
+/web/bwbridge.js
+/web/bwbridge.wasm

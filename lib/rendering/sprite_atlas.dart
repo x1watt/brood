@@ -24,7 +24,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import '../engine/bw_engine_io.dart';
+import '../engine/bw_engine.dart';
 
 enum _Variant { color, mask, glow }
 
