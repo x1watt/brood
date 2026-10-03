@@ -1,0 +1,33 @@
+# Regenerate with: dart run ffigen --config ffigen.yaml
+# Source of truth is engine/bridge/include/bw_bridge.h — edit that, not the
+# generated output.
+name: BwBridgeBindings
+description: Generated FFI bindings for the Brood War bridge (engine/bridge/include/bw_bridge.h).
+output: lib/engine/bw_bridge_gen.dart
+headers:
+  entry-points:
+    - engine/bridge/include/bw_bridge.h
+functions:
+  include:
+    - 'bw_.*'
+structs:
+  include:
+    - 'bw_.*'
+enums:
+  include:
+    - 'bw_.*'
+globals:
+  include:
+    - 'BW_.*'
+macros:
+  include:
+    - 'BW_.*'
+silence-enum-warning: true
+comments:
+  style: any
+  length: full
+preamble: |
+  // GENERATED FILE — do not edit by hand.
+  // Source: engine/bridge/include/bw_bridge.h
+  // Regenerate with: dart run ffigen --config ffigen.yaml
+  // ignore_for_file: unused_element, unused_field
