@@ -1255,17 +1255,18 @@ class GameController {
 
   /// Esc: cancel a targeting mode, else leave a build submenu, else cancel
   /// the last queued item (as the original's Cancel hotkey).
-  void escape() {
+  /// Esc: backs out of an armed command or a build menu. Returns false
+  /// when there was nothing to back out of (the game menu opens then).
+  bool escape() {
     if (mode != CommandMode.none) {
       cancelMode();
-      return;
+      return true;
     }
     if (cardMenu != CardMenu.main) {
       _setMenu(CardMenu.main);
-      return;
+      return true;
     }
-    final cancel = commandCard().where((b) => b.kind == CmdKind.cancel);
-    if (cancel.isNotEmpty) activate(cancel.first);
+    return false;
   }
 
   // A building that can't be started (money, requirements) closes the

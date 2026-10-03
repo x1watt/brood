@@ -867,7 +867,10 @@ private:
 		unit_t* intruder = p.human ? find_intruder(f, p, s) : nullptr;
 		// Warned early by an enemy army on its way, not just at the gates.
 		if (intruder || (p.human && find_intruder(f, p, s, 1100))) p.threat_until = f.st.current_frame + 24 * 90;
-		// Under attack (and for a while after): army, and what makes one.
+		// Under attack (and for a while after): the army there is, and the
+		// nearby workers, defend (command_army, defend()). Units are only
+		// trained in the attacking mode: an auto-play without it spending the
+		// player's money on an army was not what the player picked.
 		bool threatened = f.st.current_frame < p.threat_until;
 		if (resources || f.st.current_frame < p.militia_until + 24 * 30) manage_workers(f, p, s);
 		if (resources) balance_workers(f, p, s);
@@ -895,11 +898,11 @@ private:
 		// order (which would otherwise keep the money reserved); new bases
 		// after it, since defences need its buildings.
 		if (colonizing) build_defenses(f, p, s, minerals, gas);
-		if ((building || threatened) && !supply_ordered) follow_build_order(f, p, s, minerals, gas);
+		if (building && !supply_ordered) follow_build_order(f, p, s, minerals, gas);
 		if (colonizing) maybe_expand(f, p, s, minerals, gas);
 		if (building) research(f, p, s, minerals, gas);
 		if (fortifying) fortify(f, p, s, minerals, gas);
-		if (attacking || threatened || fortifying) train_army(f, p, s, minerals, gas);
+		if (attacking || fortifying) train_army(f, p, s, minerals, gas);
 		if (attacking || threatened || !s.army.empty()) command_army(f, p, s, attacking);
 	}
 

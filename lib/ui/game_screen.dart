@@ -487,7 +487,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       setState(() => _showPerf = !_showPerf);
       return KeyEventResult.handled;
     }
-    // The game menu, as in the original: F10 opens it, Esc closes it.
+    // The game menu: F10 or Esc opens it, either closes it.
     if (_menuOpen) {
       if (e is KeyDownEvent && (key == LogicalKeyboardKey.escape || key == LogicalKeyboardKey.f10)) _closeMenu();
       return KeyEventResult.handled;
@@ -516,8 +516,9 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
     if (!_c.ready) return KeyEventResult.ignored;
     final kb = HardwareKeyboard.instance;
 
+    // Esc backs out of a command or build menu first, then opens the menu.
     if (key == LogicalKeyboardKey.escape) {
-      _c.escape();
+      if (!_c.escape()) _openMenu();
       return KeyEventResult.handled;
     }
     final digit = _digits.indexOf(key);
@@ -967,7 +968,7 @@ class _GameMenu extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           const Text(
-            'F10 opens this menu, Esc closes it.',
+            'Esc or F10 opens and closes this menu.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 12, color: Color(0xFF5E5E5E)),
           ),

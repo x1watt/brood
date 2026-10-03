@@ -737,9 +737,12 @@ static void test_autoplay(const char* dd, const char* mf) {
 		bw_bridge_step(b, 1);
 		CHECK(bw_bridge_set_autoplay(b, slots[0], BW_AUTOPLAY_RESOURCES | BW_AUTOPLAY_BUILDING | BW_AUTOPLAY_COLONIZING) == BW_OK, "autoplay: colonizing on");
 		int32_t ids[32];
-		int max_halls = 0, max_defenses = 0;
+		int max_halls = 0, max_defenses = 0, max_army = 0;
 		for (int m = 1; m <= 14; ++m) {
 			bw_bridge_step(b, 24 * 60);
+			int w, bl, a;
+			count_owned(b, slots[0], &w, &bl, &a);
+			if (a > max_army) max_army = a;
 			int h = find_units(b, slots[0], depot_types[race], ids, 32);
 			int d = find_units(b, slots[0], defense_types[race][0], ids, 32);
 			if (defense_types[race][1] != defense_types[race][0]) d += find_units(b, slots[0], defense_types[race][1], ids, 32);
@@ -749,12 +752,13 @@ static void test_autoplay(const char* dd, const char* mf) {
 		printf("bridge_smoke_test: autoplay: colonizing as race %d: up to %d town halls and %d defences in 14 min\n", race, max_halls, max_defenses);
 		CHECK(max_halls >= 2, "autoplay: colonizing never expanded (race %d)", race);
 		CHECK(max_defenses >= 1, "autoplay: colonizing never defended a new base (race %d)", race);
+		CHECK(max_army == 0, "autoplay: building and colonizing trained %d army units (race %d)", max_army, race);
 		bw_bridge_destroy(b);
 	}
 
-	/* Survival first: in resources mode only, once attacked it starts
-	 * production, trains an army and fights back (an idle human just falls,
-	 * see test_ai). */
+	/* Without the attacking mode no army is ever trained, even under
+	 * attack: the player's money isn't spent on units they didn't ask for
+	 * (the army there is and the nearby workers defend). */
 	{
 		memset(&setup, 0, sizeof(setup));
 		setup.player_count = 2;
@@ -781,7 +785,7 @@ static void test_autoplay(const char* dd, const char* mf) {
 		alliance_state(b, al);
 		printf("bridge_smoke_test: autoplay: resources mode under attack: built %d barracks, up to %d army units, destroyed %d units, %s\n", barracks, max_army,
 		       al[slots[0]].units_killed, fell ? "fell" : "still standing after 12 min");
-		CHECK(barracks > 0 && max_army > 0, "autoplay: resources mode didn't start defending itself");
+		CHECK(barracks == 0 && max_army == 0, "autoplay: resources mode trained an army (%d barracks, %d units)", barracks, max_army);
 		bw_bridge_destroy(b);
 	}
 

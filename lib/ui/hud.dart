@@ -557,7 +557,7 @@ class _Help extends StatelessWidget {
       'Left click: select   ·   Drag: box select   ·   Shift: add to selection   ·   Double click: all of that type\n'
       'Right click: move / attack / gather / set rally point   ·   Minimap: click to jump, right click to command\n'
       'Hotkeys as in the original: the highlighted letter on each button. Workers: B / V open the build menus,\n'
-      'then the building letter (SCV: B, S = Supply Depot; Probe: B, C = Photon Cannon). Esc goes back / cancels.\n'
+      'then the building letter (SCV: B, S = Supply Depot; Probe: B, C = Photon Cannon). Esc goes back, or opens the game menu.\n'
       'Ctrl+1..9 assigns a group, 1..9 selects it (twice jumps to it), Shift+1..9 adds to it.\n'
       'Scroll: push the mouse against any screen edge or corner, arrow keys, middle drag. F11: fullscreen.',
       style: style,
