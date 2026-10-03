@@ -93,7 +93,8 @@ deterministic (no pointer ordering, its own seeded random numbers).
 Fog of war: bw_bridge_set_viewer filters the draw list, unit list and
 picking to what the player sees (neutral resources stay on explored
 ground); bw_bridge_get_fog gives per-tile state, drawn as a one-texel-per-
-tile image stretched over the map and minimap.
+tile image stretched over the map and minimap. Switched off for now
+(GameController.fogOfWar = false): the whole map is shown.
 
 Saved games ($XDG_DATA_HOME/brood/saves/, lib/game/saved_games.dart) are
 the resolved setup plus the bridge's command log (every command entering

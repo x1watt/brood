@@ -85,6 +85,9 @@ class GamePlayer {
 
 class GameController {
   static const int neutralPlayer = 11;
+  // Fog of war is implemented (bridge viewer filter + fog picture) but off
+  // for now: the whole map and every unit are shown.
+  static const bool fogOfWar = false;
   // How often (in game frames) the fog of war picture is refreshed.
   static const int fogInterval = 8;
   // Brood War's "Fastest" game speed: one simulation frame every 42 ms.
@@ -206,7 +209,7 @@ class GameController {
       } else {
         e.step(1);
       }
-      e.setViewer(myPlayer);
+      e.setViewer(fogOfWar ? myPlayer : -1);
       _engine = e;
       atlas = SpriteAtlas(e);
       icons = IconAtlas(e)..onLoaded = () => _notifyHud(force: true);
@@ -306,7 +309,7 @@ class GameController {
 
   void _updateFog() {
     final t = terrain;
-    if (_fogBusy || revealed || t == null || _engine == null) return;
+    if (!fogOfWar || _fogBusy || revealed || t == null || _engine == null) return;
     _fogBusy = true;
     _fogFrame = frame;
     final w = t.widthPx ~/ 32, h = t.heightPx ~/ 32;
