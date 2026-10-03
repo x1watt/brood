@@ -168,6 +168,49 @@ class BwBridgeBindings {
   late final _bw_bridge_gas = _bw_bridge_gasPtr
       .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int)>();
 
+  /// Supply in BW's own half-unit fixed-point (divide by 2.0 for the usual
+  /// display value, e.g. raw 18 = 9 supply). race: 0=zerg,1=terran,2=protoss.
+  bw_status bw_bridge_supply(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int player_slot,
+    int race,
+    ffi.Pointer<ffi.Int> out_used_raw,
+    ffi.Pointer<ffi.Int> out_available_raw,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_supply(
+        bridge,
+        player_slot,
+        race,
+        out_used_raw,
+        out_available_raw,
+      ),
+    );
+  }
+
+  late final _bw_bridge_supplyPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Int,
+            ffi.Pointer<ffi.Int>,
+            ffi.Pointer<ffi.Int>,
+          )
+        >
+      >('bw_bridge_supply');
+  late final _bw_bridge_supply = _bw_bridge_supplyPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<bw_bridge_t>,
+          int,
+          int,
+          ffi.Pointer<ffi.Int>,
+          ffi.Pointer<ffi.Int>,
+        )
+      >();
+
   /// Fills out_sprites (capacity max_count) with every currently visible
   /// image across all players, returns the number written (which may be less
   /// than the true total if max_count was too small — call again with a
@@ -361,6 +404,274 @@ class BwBridgeBindings {
           int,
         )
       >();
+
+  /// --- Terrain -----------------------------------------------------------
+  ///
+  /// The map is a grid of 32x32-pixel "megatiles". out_width/out_height below
+  /// are in tile units (multiply by 32 for pixels).
+  bw_status bw_bridge_get_map_tile_size(
+    ffi.Pointer<bw_bridge_t> bridge,
+    ffi.Pointer<ffi.Int> out_width,
+    ffi.Pointer<ffi.Int> out_height,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_get_map_tile_size(bridge, out_width, out_height),
+    );
+  }
+
+  late final _bw_bridge_get_map_tile_sizePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Pointer<ffi.Int>,
+            ffi.Pointer<ffi.Int>,
+          )
+        >
+      >('bw_bridge_get_map_tile_size');
+  late final _bw_bridge_get_map_tile_size = _bw_bridge_get_map_tile_sizePtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<bw_bridge_t>,
+          ffi.Pointer<ffi.Int>,
+          ffi.Pointer<ffi.Int>,
+        )
+      >();
+
+  /// Fills out_megatiles (capacity map_width*map_height from
+  /// bw_bridge_get_map_tile_size) with one megatile index per tile position,
+  /// row-major. Pass each value to bw_bridge_decode_megatile.
+  bw_status bw_bridge_get_tile_grid(
+    ffi.Pointer<bw_bridge_t> bridge,
+    ffi.Pointer<ffi.Uint16> out_megatiles,
+    int out_cap,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_get_tile_grid(bridge, out_megatiles, out_cap),
+    );
+  }
+
+  late final _bw_bridge_get_tile_gridPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Pointer<ffi.Uint16>,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_get_tile_grid');
+  late final _bw_bridge_get_tile_grid = _bw_bridge_get_tile_gridPtr
+      .asFunction<
+        int Function(ffi.Pointer<bw_bridge_t>, ffi.Pointer<ffi.Uint16>, int)
+      >();
+
+  /// Decodes one 32x32 megatile into out_pixels (must hold 32*32 = 1024 bytes)
+  /// as palette-index bytes — apply bw_bridge_get_palette the same way as for
+  /// sprite frames (no player-color remap for terrain).
+  bw_status bw_bridge_decode_megatile(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int megatile_index,
+    ffi.Pointer<ffi.Uint8> out_pixels,
+    int out_cap,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_decode_megatile(bridge, megatile_index, out_pixels, out_cap),
+    );
+  }
+
+  late final _bw_bridge_decode_megatilePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Pointer<ffi.Uint8>,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_decode_megatile');
+  late final _bw_bridge_decode_megatile = _bw_bridge_decode_megatilePtr
+      .asFunction<
+        int Function(ffi.Pointer<bw_bridge_t>, int, ffi.Pointer<ffi.Uint8>, int)
+      >();
+
+  /// Finds a unit whose sprite covers map position (x, y), or 0 if none.
+  int bw_bridge_pick_unit_at(ffi.Pointer<bw_bridge_t> bridge, int x, int y) {
+    return _bw_bridge_pick_unit_at(bridge, x, y);
+  }
+
+  late final _bw_bridge_pick_unit_atPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int32 Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_pick_unit_at');
+  late final _bw_bridge_pick_unit_at = _bw_bridge_pick_unit_atPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int)>();
+
+  /// Replaces player's current selection (same semantics as a fresh left-click
+  /// or a drag-box select — not shift-add). count is clamped to 12 (BW's own
+  /// selection limit) by the engine.
+  bw_status bw_bridge_select_units(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    ffi.Pointer<ffi.Int32> unit_ids,
+    int count,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_select_units(bridge, owner, unit_ids, count),
+    );
+  }
+
+  late final _bw_bridge_select_unitsPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Pointer<ffi.Int32>,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_select_units');
+  late final _bw_bridge_select_units = _bw_bridge_select_unitsPtr
+      .asFunction<
+        int Function(ffi.Pointer<bw_bridge_t>, int, ffi.Pointer<ffi.Int32>, int)
+      >();
+
+  /// Fills out_unit_ids with the player's currently selected units, returns
+  /// the count written (BW's own cap is 12).
+  int bw_bridge_get_selected_units(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    ffi.Pointer<ffi.Int32> out_unit_ids,
+    int max_count,
+  ) {
+    return _bw_bridge_get_selected_units(
+      bridge,
+      owner,
+      out_unit_ids,
+      max_count,
+    );
+  }
+
+  late final _bw_bridge_get_selected_unitsPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Pointer<ffi.Int32>,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_get_selected_units');
+  late final _bw_bridge_get_selected_units = _bw_bridge_get_selected_unitsPtr
+      .asFunction<
+        int Function(ffi.Pointer<bw_bridge_t>, int, ffi.Pointer<ffi.Int32>, int)
+      >();
+
+  /// Orders the current selection to move to (x, y).
+  bw_status bw_bridge_order_move(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    int x,
+    int y,
+    int queue,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_order_move(bridge, owner, x, y, queue),
+    );
+  }
+
+  late final _bw_bridge_order_movePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Int,
+            ffi.Int,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_order_move');
+  late final _bw_bridge_order_move = _bw_bridge_order_movePtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int, int, int)>();
+
+  /// Orders the current selection to act on whatever's at (x, y) — the same
+  /// "smart click" a right-click performs in the original game: attack if
+  /// target_unit_id is hostile, gather if it's a resource, follow if it's
+  /// friendly, otherwise just move there. Pass target_unit_id 0 (e.g. from
+  /// bw_bridge_pick_unit_at returning none) for a plain move.
+  bw_status bw_bridge_order_right_click(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    int x,
+    int y,
+    int target_unit_id,
+    int queue,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_order_right_click(bridge, owner, x, y, target_unit_id, queue),
+    );
+  }
+
+  late final _bw_bridge_order_right_clickPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Int,
+            ffi.Int,
+            ffi.Int32,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_order_right_click');
+  late final _bw_bridge_order_right_click = _bw_bridge_order_right_clickPtr
+      .asFunction<
+        int Function(ffi.Pointer<bw_bridge_t>, int, int, int, int, int)
+      >();
+
+  /// Stops the current selection.
+  bw_status bw_bridge_order_stop(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    int queue,
+  ) {
+    return bw_status.fromValue(_bw_bridge_order_stop(bridge, owner, queue));
+  }
+
+  late final _bw_bridge_order_stopPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_order_stop');
+  late final _bw_bridge_order_stop = _bw_bridge_order_stopPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int)>();
+
+  /// Trains unit_type_id (a UnitTypes ordinal) from the current selection
+  /// (only has an effect on selected production buildings that can train it).
+  bw_status bw_bridge_train(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int owner,
+    int unit_type_id,
+  ) {
+    return bw_status.fromValue(_bw_bridge_train(bridge, owner, unit_type_id));
+  }
+
+  late final _bw_bridge_trainPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_train');
+  late final _bw_bridge_train = _bw_bridge_trainPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int)>();
 }
 
 typedef __u_char = ffi.UnsignedChar;
@@ -568,6 +879,10 @@ final class bw_sprite_info extends ffi.Struct {
   /// image->modifier (0/1 = normal/player-color; others are cloak/shadow/warp/etc, see bw_render_util.h — approximate or ignore these for now)
   @ffi.Int32()
   external int modifier;
+
+  /// stable handle for this sprite's owning unit (0 = none); pass to the command functions below
+  @ffi.Int32()
+  external int unit_id;
 }
 
-const int BW_BRIDGE_ABI_VERSION = 2;
+const int BW_BRIDGE_ABI_VERSION = 5;

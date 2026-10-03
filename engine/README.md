@@ -19,15 +19,27 @@ full design.
   against). Confirmed against the real install: `bridge_smoke_test: OK`.
 
   The bridge now also exposes the "parts list" rendering API (sprite
-  enumeration + per-frame GRP decode + palette + player-color tables — see
-  `bw_bridge.h`), deliberately not a pre-composited picture, so individual
-  sprites can later be swapped for custom/HD textures on the Flutter side.
-  The decode path (`bw_render_util.h`, adapted from OpenBW's own
-  `ui/ui.h` RLE unpacker and PCX loader, without pulling in its SDL-coupled
-  UI layer) is visually confirmed correct: `bridge_smoke_test` decodes a
-  real visible sprite from the running game and dumps it to
+  enumeration + per-frame GRP decode + palette + player-color tables, plus
+  terrain megatile decode — see `bw_bridge.h`), deliberately not a
+  pre-composited picture, so individual sprites can later be swapped for
+  custom/HD textures on the Flutter side. The decode path
+  (`bw_render_util.h`, adapted from OpenBW's own `ui/ui.h` RLE unpacker,
+  PCX loader, and VR4/VX4 megatile format, without pulling in its
+  SDL-coupled UI layer) is visually confirmed correct: `bridge_smoke_test`
+  decodes a real visible sprite from the running game and dumps it to
   `sprite_decode_test.ppm` — opened and inspected, it's a clean, correctly
   colored Brood War sprite, not noise.
+
+  The bridge also exposes commands (`bw_bridge_pick_unit_at`,
+  `bw_bridge_select_units`, `bw_bridge_order_move`,
+  `bw_bridge_order_right_click` — move/attack/gather/follow, resolved the
+  same way a real right-click would be — `bw_bridge_order_stop`,
+  `bw_bridge_train`), all built on OpenBW's own `actions.h` functions
+  (`action_select`/`action_order`/`action_train`/`action_stop` — the same
+  functions real replays and BWAPI bots drive the game through), not
+  reimplemented command logic. `bridge_smoke_test` proves a select+move
+  round trip: picks a real unit, selects it, orders it to move, steps the
+  sim, and confirms it actually moved via real pathing.
 - `web/` — Emscripten build script for the WASM target. Not yet added (Phase 3b).
 - `tools/sim_smoke_test/` — Phase 1 gate. No bundled `.rep` replay file exists
   in OpenBW's own repos, so this loads a real melee map (`(4)Lost Temple.scm`)

@@ -13,6 +13,10 @@ class SpriteInfo {
   final int elevationLevel;
   final int modifier;
 
+  /// Stable handle for this sprite's owning unit (0 = none). Pass to the
+  /// engine's command methods (selectUnits, orderMove, orderRightClick...).
+  final int unitId;
+
   const SpriteInfo({
     required this.x,
     required this.y,
@@ -22,5 +26,6 @@ class SpriteInfo {
     required this.owner,
     required this.elevationLevel,
     required this.modifier,
+    required this.unitId,
   });
 }

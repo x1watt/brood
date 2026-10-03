@@ -1,13 +1,17 @@
 # Architecture
 
-Status: end-to-end proof of concept running (Linux desktop). Lifecycle,
-stepping, sprite enumeration, GRP decode, palette/player-color, FFI bindings,
-and a live `CustomPainter` render have all been verified against the user's
-real StarCraft: Brood War install — a Command Center + SCVs + minerals,
-correctly colored, rendered in an actual Flutter window via
-`flutter run -d linux`. Still missing: terrain background, fog-of-war,
-command submission/input, camera follow/zoom, HUD, and the web/Android
-targets. Updated as each phase lands.
+Status: playable on Linux desktop. Lifecycle, stepping, sprite enumeration,
+GRP decode, palette/player-color, terrain (VX4/VR4/CV5 megatile decode),
+selection, move/attack/gather ("right-click smart command"), stop, and
+training are all implemented and verified end to end against the user's
+real StarCraft: Brood War install, including real mouse-driven play
+(click-select, drag-box-select, right-click move with observed pathing,
+Train SCV with correct mineral/supply deduction) in a live
+`flutter run -d linux` window.
+
+Still missing: fog-of-war, a real command card/build menu (only a single
+hardcoded "Train SCV" button exists), minimap, camera zoom/clamping, sound,
+and the web/Android targets. Updated as each phase lands.
 
 ## Layers
 

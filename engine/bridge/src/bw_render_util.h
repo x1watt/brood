@@ -23,6 +23,7 @@
 #include "bwgame.h"
 
 #include <array>
+#include <cstring>
 
 namespace bwgame {
 namespace bw_render_util {
@@ -182,6 +183,65 @@ std::array<std::array<uint8_t, 8>, 16> load_player_unit_colors(load_data_file_F&
 		for (size_t i2 = 0; i2 != 8; ++i2) colors[i][i2] = tunit_pcx.data[i * 8 + i2];
 	}
 	return colors;
+}
+
+// --- new glue: terrain (megatile) decoding ----------------------------------
+//
+// Not reusing ui.h's load_tileset_image_data() here — that also loads creep
+// rendering, cloak/warp light_pcx effects, etc, which aren't needed yet.
+// Just the two files that describe what a megatile looks like.
+
+struct tileset_terrain {
+	a_vector<uint8_t> vr4;   // count * 64 bytes: 8 rows x 8 palette-index bytes per 8x8 block
+	a_vector<uint16_t> vx4;  // count * 16 entries: 4x4 grid of (vr4_index<<1 | inverted) per megatile
+};
+
+template<typename load_data_file_F>
+tileset_terrain load_tileset_terrain(size_t tileset_index, load_data_file_F&& load_data_file) {
+	tileset_terrain t;
+	const char* name = tileset_names().at(tileset_index);
+
+	a_vector<uint8_t> vr4_data;
+	load_data_file(vr4_data, format("Tileset/%s.vr4", name));
+	t.vr4 = std::move(vr4_data); // already exactly count*64 raw bytes, no repacking needed
+
+	a_vector<uint8_t> vx4_data;
+	load_data_file(vx4_data, format("Tileset/%s.vx4", name));
+	t.vx4.resize(vx4_data.size() / 2);
+	for (size_t i = 0; i != t.vx4.size(); ++i) {
+		t.vx4[i] = (uint16_t)(vx4_data[i * 2] | (vx4_data[i * 2 + 1] << 8));
+	}
+	return t;
+}
+
+// Decodes one 32x32 megatile into out (must hold 32*32 = 1024 bytes),
+// palette-index pixels, same convention as draw_frame (index 0 = BW's
+// transparent/background index; terrain practically never uses it, but
+// nothing here assumes otherwise).
+inline void decode_megatile(const tileset_terrain& t, size_t megatile_index, uint8_t* out) {
+	if (megatile_index >= t.vx4.size() / 16) {
+		std::memset(out, 0, 32 * 32);
+		return;
+	}
+	const uint16_t* images = &t.vx4[megatile_index * 16];
+	for (size_t by = 0; by != 4; ++by) {
+		for (size_t bx = 0; bx != 4; ++bx) {
+			uint16_t image_index = images[by * 4 + bx];
+			bool inverted = (image_index & 1) != 0;
+			size_t vr4_index = image_index >> 1;
+			if (vr4_index >= t.vr4.size() / 64) continue;
+			const uint8_t* block = &t.vr4[vr4_index * 64];
+			for (size_t row = 0; row != 8; ++row) {
+				const uint8_t* src_row = block + row * 8;
+				uint8_t* dst_row = out + (by * 8 + row) * 32 + bx * 8;
+				if (inverted) {
+					for (size_t c = 0; c != 8; ++c) dst_row[c] = src_row[7 - c];
+				} else {
+					for (size_t c = 0; c != 8; ++c) dst_row[c] = src_row[c];
+				}
+			}
+		}
+	}
 }
 
 } // namespace bw_render_util

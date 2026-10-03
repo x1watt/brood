@@ -28,7 +28,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 2
+#define BW_BRIDGE_ABI_VERSION 5
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -76,6 +76,10 @@ int bw_bridge_unit_count(bw_bridge_t* bridge, int player_slot);
 int bw_bridge_minerals(bw_bridge_t* bridge, int player_slot);
 int bw_bridge_gas(bw_bridge_t* bridge, int player_slot);
 
+// Supply in BW's own half-unit fixed-point (divide by 2.0 for the usual
+// display value, e.g. raw 18 = 9 supply). race: 0=zerg,1=terran,2=protoss.
+bw_status bw_bridge_supply(bw_bridge_t* bridge, int player_slot, int race, int* out_used_raw, int* out_available_raw);
+
 // --- Rendering: the "parts list" the bridge hands to a host renderer -------
 //
 // Deliberately NOT a composited picture: every visible thing is described
@@ -95,6 +99,7 @@ typedef struct bw_sprite_info {
 	int32_t owner;           // player slot 0-11, for recoloring
 	int32_t elevation_level; // z-order
 	int32_t modifier;        // image->modifier (0/1 = normal/player-color; others are cloak/shadow/warp/etc, see bw_render_util.h — approximate or ignore these for now)
+	int32_t unit_id;         // stable handle for this sprite's owning unit (0 = none); pass to the command functions below
 } bw_sprite_info;
 
 // Fills out_sprites (capacity max_count) with every currently visible
@@ -131,6 +136,61 @@ bw_status bw_bridge_get_image_frame_size(bw_bridge_t* bridge, int image_type_id,
 // depends on which player owns the sprite being drawn, not the image data
 // itself.
 bw_status bw_bridge_decode_image_frame(bw_bridge_t* bridge, int image_type_id, int frame_index, int flipped, uint8_t* out_pixels, int out_cap);
+
+// --- Terrain -----------------------------------------------------------
+//
+// The map is a grid of 32x32-pixel "megatiles". out_width/out_height below
+// are in tile units (multiply by 32 for pixels).
+
+bw_status bw_bridge_get_map_tile_size(bw_bridge_t* bridge, int* out_width, int* out_height);
+
+// Fills out_megatiles (capacity map_width*map_height from
+// bw_bridge_get_map_tile_size) with one megatile index per tile position,
+// row-major. Pass each value to bw_bridge_decode_megatile.
+bw_status bw_bridge_get_tile_grid(bw_bridge_t* bridge, uint16_t* out_megatiles, int out_cap);
+
+// Decodes one 32x32 megatile into out_pixels (must hold 32*32 = 1024 bytes)
+// as palette-index bytes — apply bw_bridge_get_palette the same way as for
+// sprite frames (no player-color remap for terrain).
+bw_status bw_bridge_decode_megatile(bw_bridge_t* bridge, int megatile_index, uint8_t* out_pixels, int out_cap);
+
+// --- Commands ------------------------------------------------------------
+//
+// Unit handles are opaque, stable 32-bit values (index+generation packed;
+// 0 means "no unit"); get them from bw_sprite_info.unit_id or
+// bw_bridge_pick_unit_at. They go stale once the unit dies — the command
+// functions below simply no-op (return BW_OK, nothing happens) if a handle
+// no longer resolves to a live unit, same as the original game silently
+// ignoring a stale order.
+
+// Finds a unit whose sprite covers map position (x, y), or 0 if none.
+int32_t bw_bridge_pick_unit_at(bw_bridge_t* bridge, int x, int y);
+
+// Replaces player's current selection (same semantics as a fresh left-click
+// or a drag-box select — not shift-add). count is clamped to 12 (BW's own
+// selection limit) by the engine.
+bw_status bw_bridge_select_units(bw_bridge_t* bridge, int owner, const int32_t* unit_ids, int count);
+
+// Fills out_unit_ids with the player's currently selected units, returns
+// the count written (BW's own cap is 12).
+int bw_bridge_get_selected_units(bw_bridge_t* bridge, int owner, int32_t* out_unit_ids, int max_count);
+
+// Orders the current selection to move to (x, y).
+bw_status bw_bridge_order_move(bw_bridge_t* bridge, int owner, int x, int y, int queue);
+
+// Orders the current selection to act on whatever's at (x, y) — the same
+// "smart click" a right-click performs in the original game: attack if
+// target_unit_id is hostile, gather if it's a resource, follow if it's
+// friendly, otherwise just move there. Pass target_unit_id 0 (e.g. from
+// bw_bridge_pick_unit_at returning none) for a plain move.
+bw_status bw_bridge_order_right_click(bw_bridge_t* bridge, int owner, int x, int y, int32_t target_unit_id, int queue);
+
+// Stops the current selection.
+bw_status bw_bridge_order_stop(bw_bridge_t* bridge, int owner, int queue);
+
+// Trains unit_type_id (a UnitTypes ordinal) from the current selection
+// (only has an effect on selected production buildings that can train it).
+bw_status bw_bridge_train(bw_bridge_t* bridge, int owner, int unit_type_id);
 
 #ifdef __cplusplus
 }

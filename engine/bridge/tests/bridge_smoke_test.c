@@ -128,6 +128,63 @@ int main(int argc, char** argv) {
 		free(indexed);
 	}
 
+	/* Command loop check: pick a real unit by its sprite position, select
+	 * it, order it to move, and confirm it actually moved after stepping —
+	 * proves the select/order bridge functions actually drive the sim, not
+	 * just that they don't crash. */
+	if (sprite_count > 0) {
+		const bw_sprite_info* s = &sprites[0];
+		int32_t picked = bw_bridge_pick_unit_at(bridge, s->x, s->y);
+		if (picked == 0) {
+			printf("bridge_smoke_test: FAIL — pick_unit_at found nothing at a known sprite position\n");
+			bw_bridge_destroy(bridge);
+			return 1;
+		}
+
+		if (bw_bridge_select_units(bridge, my_slot, &picked, 1) != BW_OK) {
+			printf("bridge_smoke_test: FAIL — bw_bridge_select_units\n");
+			bw_bridge_destroy(bridge);
+			return 1;
+		}
+		int32_t selected[12];
+		int sel_count = bw_bridge_get_selected_units(bridge, my_slot, selected, 12);
+		if (sel_count != 1 || selected[0] != picked) {
+			printf("bridge_smoke_test: FAIL — selection not reflected (count=%d)\n", sel_count);
+			bw_bridge_destroy(bridge);
+			return 1;
+		}
+
+		int target_x = s->x + 300;
+		int target_y = s->y;
+		if (bw_bridge_order_move(bridge, my_slot, target_x, target_y, 0) != BW_OK) {
+			printf("bridge_smoke_test: FAIL — bw_bridge_order_move\n");
+			bw_bridge_destroy(bridge);
+			return 1;
+		}
+		bw_bridge_step(bridge, 200);
+
+		/* Re-find the same unit's current sprite position via another
+		 * visible-sprites pass (positions aren't queryable by unit id
+		 * directly in v0). */
+		int found = 0, moved_x = s->x, moved_y = s->y;
+		static bw_sprite_info sprites2[4096];
+		int sc2 = bw_bridge_get_visible_sprites(bridge, sprites2, 4096);
+		for (int i = 0; i != sc2; ++i) {
+			if (sprites2[i].unit_id == picked) {
+				found = 1;
+				moved_x = sprites2[i].x;
+				moved_y = sprites2[i].y;
+				break;
+			}
+		}
+		printf("bridge_smoke_test: moved unit from (%d,%d) to (%d,%d), found=%d\n", s->x, s->y, moved_x, moved_y, found);
+		if (!found || (moved_x == s->x && moved_y == s->y)) {
+			printf("bridge_smoke_test: FAIL — unit did not move after order_move\n");
+			bw_bridge_destroy(bridge);
+			return 1;
+		}
+	}
+
 	bw_bridge_destroy(bridge);
 
 	if (frame != 500) {

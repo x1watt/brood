@@ -96,6 +96,19 @@ class BwEngine {
   int gas(int playerSlot) => _bindings.bw_bridge_gas(_handle, playerSlot);
   int get tilesetIndex => _bindings.bw_bridge_get_tileset_index(_handle);
 
+  /// (used, available), both already divided down to normal display units.
+  (double used, double available) supply(int playerSlot, int race) {
+    final usedPtr = calloc<ffi.Int>();
+    final availPtr = calloc<ffi.Int>();
+    try {
+      _check(_bindings.bw_bridge_supply(_handle, playerSlot, race, usedPtr, availPtr), 'supply');
+      return (usedPtr.value / 2.0, availPtr.value / 2.0);
+    } finally {
+      calloc.free(usedPtr);
+      calloc.free(availPtr);
+    }
+  }
+
   List<SpriteInfo> getVisibleSprites({int maxCount = 8192}) {
     final buf = calloc<bw_sprite_info>(maxCount);
     try {
@@ -112,6 +125,7 @@ class BwEngine {
           owner: s.owner,
           elevationLevel: s.elevation_level,
           modifier: s.modifier,
+          unitId: s.unit_id,
         );
       });
     } finally {
@@ -174,6 +188,96 @@ class BwEngine {
     } finally {
       calloc.free(buf);
     }
+  }
+
+  (int widthTiles, int heightTiles) getMapTileSize() {
+    final wPtr = calloc<ffi.Int>();
+    final hPtr = calloc<ffi.Int>();
+    try {
+      _check(_bindings.bw_bridge_get_map_tile_size(_handle, wPtr, hPtr), 'getMapTileSize');
+      return (wPtr.value, hPtr.value);
+    } finally {
+      calloc.free(wPtr);
+      calloc.free(hPtr);
+    }
+  }
+
+  /// Row-major megatile index per tile position (widthTiles * heightTiles
+  /// entries); pass each value to decodeMegatile.
+  Uint16List getTileGrid(int widthTiles, int heightTiles) {
+    final n = widthTiles * heightTiles;
+    final buf = calloc<ffi.Uint16>(n);
+    try {
+      _check(_bindings.bw_bridge_get_tile_grid(_handle, buf, n), 'getTileGrid');
+      return Uint16List.fromList(buf.asTypedList(n));
+    } finally {
+      calloc.free(buf);
+    }
+  }
+
+  /// 32*32 = 1024 palette-index bytes for one megatile (no player-color
+  /// remap — terrain isn't owned by a player).
+  Uint8List decodeMegatile(int megatileIndex) {
+    const size = 32 * 32;
+    final buf = calloc<ffi.Uint8>(size);
+    try {
+      _check(_bindings.bw_bridge_decode_megatile(_handle, megatileIndex, buf, size), 'decodeMegatile');
+      return Uint8List.fromList(buf.asTypedList(size));
+    } finally {
+      calloc.free(buf);
+    }
+  }
+
+  /// Finds a unit whose sprite covers map position (x, y), or 0 if none.
+  int pickUnitAt(int x, int y) => _bindings.bw_bridge_pick_unit_at(_handle, x, y);
+
+  /// Replaces the player's selection (not a shift-add).
+  void selectUnits(int owner, List<int> unitIds) {
+    if (unitIds.isEmpty) {
+      _check(_bindings.bw_bridge_select_units(_handle, owner, ffi.nullptr, 0), 'selectUnits');
+      return;
+    }
+    final buf = calloc<ffi.Int32>(unitIds.length);
+    try {
+      for (int i = 0; i != unitIds.length; ++i) {
+        buf[i] = unitIds[i];
+      }
+      _check(_bindings.bw_bridge_select_units(_handle, owner, buf, unitIds.length), 'selectUnits');
+    } finally {
+      calloc.free(buf);
+    }
+  }
+
+  List<int> getSelectedUnits(int owner, {int maxCount = 12}) {
+    final buf = calloc<ffi.Int32>(maxCount);
+    try {
+      final n = _bindings.bw_bridge_get_selected_units(_handle, owner, buf, maxCount);
+      if (n < 0) throw BwBridgeException('getSelectedUnits failed');
+      return List<int>.generate(n, (i) => buf[i]);
+    } finally {
+      calloc.free(buf);
+    }
+  }
+
+  void orderMove(int owner, int x, int y, {bool queue = false}) {
+    _check(_bindings.bw_bridge_order_move(_handle, owner, x, y, queue ? 1 : 0), 'orderMove');
+  }
+
+  /// "Smart click": attack/gather/follow/move, resolved by the engine based
+  /// on what's at (x, y) — see bw_bridge.h.
+  void orderRightClick(int owner, int x, int y, {int targetUnitId = 0, bool queue = false}) {
+    _check(
+      _bindings.bw_bridge_order_right_click(_handle, owner, x, y, targetUnitId, queue ? 1 : 0),
+      'orderRightClick',
+    );
+  }
+
+  void orderStop(int owner, {bool queue = false}) {
+    _check(_bindings.bw_bridge_order_stop(_handle, owner, queue ? 1 : 0), 'orderStop');
+  }
+
+  void train(int owner, int unitTypeId) {
+    _check(_bindings.bw_bridge_train(_handle, owner, unitTypeId), 'train');
   }
 
   void dispose() {
