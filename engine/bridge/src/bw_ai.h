@@ -6,11 +6,15 @@
 // researches a few key upgrades, trains an army, defends its bases, attacks
 // in growing waves and takes expansions.
 //
-// Diplomacy (bw_alliances.h) weighs the situation like a player would:
-// neighbours make useful allies, a player losing a fight at home asks for
-// peace or for help, a common stronger enemy brings others together, a
-// dominant player doesn't need anyone and may drop an ally once the war is
-// won. A personality (trust) colours every decision.
+// Diplomacy (bw_alliances.h) aims at the best final score and weighs the
+// situation like a player would: neighbours make useful allies, a common
+// stronger enemy brings others together, partners who mine a lot are worth
+// more (allies share mining points). A player losing a fight at home asks
+// for peace or for help and, turned down, offers to surrender. Surrenders
+// are accepted when a vassal's tribute is worth more than finishing it off.
+// Once no meaningful enemy is left, a player strong enough turns on its
+// weaker ally to conquer it. A personality (trust) colours every decision.
+// Vassals keep playing for their lord but no longer negotiate.
 //
 // It only ever commands its own units: OpenBW refuses orders for anyone
 // else's, and only the human player is given allies' units to command (in
@@ -62,6 +66,9 @@ struct player {
 	std::array<int, 8> pressure{};  // decaying value lost to each player
 	std::array<int, 8> lost_seen{};
 	std::array<int, 8> asked_at{}; // frame we last invited each player (+1; 0 = never)
+	int losing_since = -1;
+	int next_surrender = 0;
+	int focus = -1; // a former ally we turned on: attack it first
 
 	uint32_t next() {
 		rng = rng * 1103515245u + 12345u;
@@ -579,6 +586,15 @@ private:
 			if (beating > 0 && p.pressure[(size_t)g.front()] == 0 && beating > 400) u -= 20;
 		}
 		if (strongest * 10 > mine * 13 && strongest > theirs) u += 25; // a common stronger enemy
+		// Allies share mining points: partners who mine a lot are worth more.
+		int my_rate = 0, their_rate = 0;
+		for (int m : my_group) {
+			if (!al.vassal(m)) my_rate += al.mineral_rate[m] + al.gas_rate[m];
+		}
+		for (int m : g) {
+			if (!al.vassal(m)) their_rate += al.mineral_rate[m] + al.gas_rate[m];
+		}
+		if (their_rate > 0) u += std::min(25, their_rate * 20 / std::max(1, my_rate));
 		if (theirs > mine * 2 && !p.losing) u += 10;                    // safety with the strong
 		return u;
 	}
@@ -586,7 +602,7 @@ private:
 	void diplomacy(action_functions& f, player& p) {
 		auto& al = *allies;
 		state& st = f.st;
-		if (!al.active(st, p.owner)) return;
+		if (!al.active(st, p.owner) || al.vassal(p.owner)) return;
 		int frame = st.current_frame;
 		if (!p.diplomacy_started) {
 			p.diplomacy_started = true;
@@ -617,6 +633,9 @@ private:
 		}
 		// Invaders at home that the defenders can't stop.
 		p.losing = threat > 300 && threat * 10 > a.my_home_army * 13 && recent > 150;
+		if (!p.losing) p.losing_since = -1;
+		else if (p.losing_since < 0) p.losing_since = frame;
+		if (p.attacker >= 0 && al.vassal(p.attacker)) p.attacker = al.lord[p.attacker];
 
 		a_vector<int> my_group = al.members(al.group[p.owner]);
 		int mine = strength(a, my_group);
@@ -647,13 +666,69 @@ private:
 			al.respond(st, p.owner, from, yes);
 		}
 
-		// Drop an ally once the war is as good as won (the distrustful only).
-		if (my_group.size() > 1 && frame >= p.next_betrayal_check) {
-			p.next_betrayal_check = frame + 24 * 120;
-			int alone = a.army[(size_t)p.owner] + a.economy[(size_t)p.owner] / 4;
-			if (p.trust < 40 && !p.losing && others_best * 2 < alone && frame > 24 * 60 * 10) {
-				al.leave(st, p.owner);
+		// Surrenders offered to us: a vassal's tribute (half its mining for
+		// the rest of the game, its army on our side) against the score for
+		// destroying what it has left.
+		for (int from = 0; from != bw_alliances::max_players; ++from) {
+			int sent = al.surrender_frame[p.owner][from];
+			if (sent < 0 || frame - sent < 24 * (2 + p.trust % 3)) continue;
+			bool yes = false;
+			if (al.surrender_allowed(st, from, p.owner)) {
+				int conquest = 0;
+				for (unit_t* u : ptr(st.player_units.at(from))) {
+					if (!f.unit_dead(u)) conquest += u->unit_type->destroy_score;
+				}
+				int tribute = (al.mineral_rate[from] + al.gas_rate[from]) * 5 + a.army[(size_t)from] / 2;
+				bool busy = (al.fighting[p.owner] & ~(1u << from)) != 0;
+				yes = tribute + (busy ? conquest / 2 : 0) + p.trust * 20 >= conquest * 6 / 10;
+			}
+			al.answer_surrender(st, p.owner, from, yes);
+		}
+
+		// Losing at home and turned down by the others: offer to surrender to
+		// whoever is winning (also after a long hopeless defence).
+		if (p.losing && p.attacker >= 0 && frame >= p.next_surrender) {
+			bool refused = frame - al.last_declined[p.owner] < 24 * 120;
+			bool hopeless = p.losing_since >= 0 && frame - p.losing_since > 24 * 75;
+			if ((refused || hopeless) && al.surrender_allowed(st, p.owner, p.attacker) && al.surrender_frame[p.attacker][p.owner] < 0) {
+				al.offer_surrender(st, p.owner, p.attacker);
+				p.next_surrender = frame + 24 * 60;
 				return;
+			}
+		}
+
+		// The best score comes from winning: once no meaningful enemy is left,
+		// turn on a clearly weaker ally (the more trusting wait for a bigger
+		// edge) to conquer it.
+		if (my_group.size() > 1 && frame >= p.next_betrayal_check && frame > 24 * 60 * 8) {
+			p.next_betrayal_check = frame + 24 * 60;
+			int outside = 0;
+			for (int q = 0; q != 8; ++q) {
+				if (al.active(st, q) && !al.same_group(q, p.owner)) outside += a.army[(size_t)q] + a.economy[(size_t)q] / 4;
+			}
+			auto with_vassals = [&](int who) {
+				int v = a.army[(size_t)who] + a.economy[(size_t)who] / 4;
+				for (int m : my_group) {
+					if (al.lord[m] == who) v += a.army[(size_t)m] + a.economy[(size_t)m] / 4;
+				}
+				return v;
+			};
+			int me_strength = with_vassals(p.owner);
+			int weakest = -1, weakest_strength = 0;
+			for (int m : my_group) {
+				if (m == p.owner || al.vassal(m)) continue;
+				int sm = with_vassals(m);
+				if (weakest < 0 || sm < weakest_strength) {
+					weakest = m;
+					weakest_strength = sm;
+				}
+			}
+			int edge = 140 + p.trust; // percent
+			if (weakest >= 0 && !p.losing && outside * 4 < mine && me_strength * 100 > weakest_strength * edge) {
+				if (al.leave(st, p.owner)) {
+					p.focus = weakest;
+					return;
+				}
 			}
 		}
 
@@ -1134,7 +1209,22 @@ private:
 			p.wave_size = std::min(40, p.wave_size + 4);
 			return;
 		}
-		unit_t* target = nearest_enemy(f, p, p.home, true, 0);
+		unit_t* target = nullptr;
+		// A former ally we turned on comes first.
+		if (p.focus >= 0 && is_enemy(f, p.owner, p.focus)) {
+			int best = 0;
+			for (unit_t* u : ptr(f.st.player_units.at(p.focus))) {
+				if (f.unit_dead(u) || !u->sprite || !f.ut_building(u)) continue;
+				int d = dist2(u->sprite->position, p.home);
+				if (!target || d < best) {
+					target = u;
+					best = d;
+				}
+			}
+		} else {
+			p.focus = -1;
+		}
+		if (!target) target = nearest_enemy(f, p, p.home, true, 0);
 		if (!target) target = nearest_enemy(f, p, p.home, false, 0);
 		if (!target) return;
 		bool refresh = frame - p.last_attack_order > 24 * 20;

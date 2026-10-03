@@ -253,7 +253,8 @@ static int play_ai_game(const char* dd, const char* mf, const int* teams, uint32
 			}
 		}
 		{
-			static const char* kinds[] = {"", "invited", "declined", "formed (b joined a)", "left", "open", "closed"};
+			static const char* kinds[] = {"", "invited", "declined", "formed (b joined a)", "left", "open", "closed",
+			                              "offers surrender (a to b)", "SURRENDERED (a to b)", "surrender refused", "vassal moved (a now serves b)"};
 			bw_alliance_event ev[64];
 			int n = bw_bridge_poll_alliance_events(b, ev, 64);
 			for (int i = 0; i != n; ++i) {
@@ -501,6 +502,67 @@ static void test_alliances(const char* dd, const char* mf) {
 	printf("bridge_smoke_test: alliances: replay matches\n");
 	free(log);
 	bw_bridge_destroy(c);
+	bw_bridge_destroy(b);
+}
+
+/* Surrender: a computer surrenders to the human (both sides driven through
+ * the API), is locked in, pays half its mining to its lord; then the human
+ * surrenders to the other computer and the vassal passes along. */
+static void test_surrender(const char* dd, const char* mf) {
+	bw_game_setup setup;
+	memset(&setup, 0, sizeof(setup));
+	setup.player_count = 3;
+	setup.controller[0] = BW_PLAYER_HUMAN; setup.race[0] = 1;
+	setup.controller[1] = BW_PLAYER_COMPUTER; setup.race[1] = 1;
+	setup.controller[2] = BW_PLAYER_COMPUTER; setup.race[2] = 2;
+	setup.seed = 4242;
+	int32_t slots[8];
+	bw_bridge_t* b = bw_bridge_create();
+	CHECK(b && bw_bridge_load_assets(b, dd) == BW_OK && bw_bridge_new_game(b, mf, &setup, slots) == BW_OK, "surrender: new game");
+	int me = slots[0], x = slots[1], z = slots[2];
+	bw_bridge_step(b, 1);
+	send_workers_mining(b, me, TERRAN_SCV);
+	bw_bridge_step(b, 24 * 30);
+	CHECK(bw_bridge_alliance_surrender(b, x, me) == BW_OK, "surrender: offer");
+	bw_alliance_player al[8];
+	alliance_state(b, al);
+	CHECK(al[me].surrender_from & (1 << x), "surrender: offer not pending");
+	CHECK(bw_bridge_alliance_answer_surrender(b, me, x, 1) == BW_OK, "surrender: accept");
+	alliance_state(b, al);
+	CHECK(al[x].lord == me && al[x].group == al[me].group, "surrender: not a vassal (lord %d)", al[x].lord);
+	CHECK(al[me].name >= 0, "surrender: the new alliance has no name");
+	CHECK(bw_bridge_minerals(b, x) == bw_bridge_minerals(b, me), "surrender: treasury not shared");
+	CHECK(bw_bridge_alliance_leave(b, x) == BW_ERR_REJECTED, "surrender: a vassal left");
+	CHECK(bw_bridge_alliance_invite(b, x, z) == BW_ERR_REJECTED, "surrender: a vassal invited");
+	CHECK(bw_bridge_alliance_invite(b, z, x) == BW_ERR_REJECTED, "surrender: a vassal was invited");
+	/* Tribute: the vassal keeps half its mining, the lord gets the rest. */
+	int64_t px = al[x].points, pm = al[me].points, ox = al[x].own_points, om = al[me].own_points;
+	bw_bridge_step(b, 24 * 60);
+	alliance_state(b, al);
+	long long vassal_gain = (long long)(al[x].points - px), vassal_mined = (long long)(al[x].own_points - ox);
+	long long lord_gain = (long long)(al[me].points - pm), lord_mined = (long long)(al[me].own_points - om);
+	printf("bridge_smoke_test: surrender: vassal mined %lld kept %lld; lord mined %lld gained %lld\n", vassal_mined, vassal_gain, lord_mined, lord_gain);
+	CHECK(vassal_mined > 0 && vassal_gain * 2 <= vassal_mined + 30 && vassal_gain * 2 >= vassal_mined - 30, "surrender: vassal did not keep half");
+	CHECK(lord_gain == lord_mined + vassal_mined - vassal_gain, "surrender: tribute not paid to the lord");
+	printf("bridge_smoke_test: surrender: army %d/%d, mining %d+%d per minute\n", al[me].army_value, al[x].army_value, al[x].mineral_rate, al[x].gas_rate);
+	CHECK(al[x].mineral_rate > 100, "surrender: mining rate not measured");
+	/* The lord surrenders in turn: its vassal passes to the conqueror. */
+	CHECK(bw_bridge_alliance_surrender(b, me, z) == BW_ERR_REJECTED, "surrender: allowed although nobody would be left outside");
+	bw_bridge_destroy(b);
+
+	/* Four players so someone stays outside. */
+	setup.player_count = 4;
+	setup.controller[3] = BW_PLAYER_COMPUTER; setup.race[3] = 0;
+	b = bw_bridge_create();
+	CHECK(b && bw_bridge_load_assets(b, dd) == BW_OK && bw_bridge_new_game(b, mf, &setup, slots) == BW_OK, "surrender: new game 2");
+	me = slots[0]; x = slots[1]; z = slots[2];
+	bw_bridge_step(b, 24 * 10);
+	CHECK(bw_bridge_alliance_surrender(b, x, me) == BW_OK && bw_bridge_alliance_answer_surrender(b, me, x, 1) == BW_OK, "surrender: x to me");
+	CHECK(bw_bridge_alliance_surrender(b, me, z) == BW_OK && bw_bridge_alliance_answer_surrender(b, z, me, 1) == BW_OK, "surrender: me to z");
+	alliance_state(b, al);
+	CHECK(al[me].lord == z && al[x].lord == z, "surrender: vassal did not pass to the conqueror (me %d, x %d)", al[me].lord, al[x].lord);
+	CHECK(al[x].group == al[z].group, "surrender: vassal not in the conqueror's alliance");
+	printf("bridge_smoke_test: surrender: vassal passed to the conqueror\n");
 	bw_bridge_destroy(b);
 }
 
@@ -814,6 +876,7 @@ int main(int argc, char** argv) {
 	test_zerg(dd, mf);
 	test_save_replay(dd, mf);
 	test_alliances(dd, mf);
+	test_surrender(dd, mf);
 	test_ai(dd, mf);
 	printf("bridge_smoke_test: OK\n");
 	return 0;

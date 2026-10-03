@@ -193,7 +193,7 @@ class _AllianceButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final waiting = c.invitationsForMe.length;
+    final waiting = c.invitationsForMe.length + c.surrendersForMe.length;
     final allies = c.myAllies;
     return Tooltip(
       message: 'Alliances (F9)',

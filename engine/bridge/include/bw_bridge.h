@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 14
+#define BW_BRIDGE_ABI_VERSION 15
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -107,7 +107,14 @@ typedef struct bw_alliance_player {
 	int32_t units_killed;     // enemy units destroyed
 	int32_t buildings_razed;  // enemy buildings destroyed
 	int32_t units_lost;
-	int32_t reserved;
+	int32_t lord;           // -1, or the slot this player surrendered to (permanent ally)
+	int32_t surrender_from; // bit mask of slots offering to surrender to this player
+	int32_t fighting;       // bit mask of slots this player is clashing with right now
+	int32_t name;           // its alliance's name code (word a * 64 + word b), -1 when alone
+	int32_t army_value;     // mineral + gas value of its combat units
+	int32_t workers;
+	int32_t mineral_rate;   // minerals mined per minute (last minute)
+	int32_t gas_rate;       // gas mined per minute
 	int64_t points;     // mining: everything mined by its alliance while it was a member, plus its own
 	int64_t own_points; // mined by this player's own workers
 	int64_t kill_score; // destroy_score of everything it destroyed
@@ -121,8 +128,15 @@ bw_status bw_bridge_alliance_set_open(bw_bridge_t* bridge, int player_slot, int 
 // `from`, this accepts that invitation instead.
 bw_status bw_bridge_alliance_invite(bw_bridge_t* bridge, int from, int to);
 bw_status bw_bridge_alliance_respond(bw_bridge_t* bridge, int player_slot, int from, int accept);
-// Leaves the alliance, taking an equal share of its treasury.
+// Leaves the alliance, taking an equal share of its treasury (with its
+// vassals, if it has any). Vassals can't leave.
 bw_status bw_bridge_alliance_leave(bw_bridge_t* bridge, int player_slot);
+
+// Surrender: `from` offers to become `to`'s permanent ally (a vassal: no
+// leaving, no other alliances, half of its points go to `to`; it passes to
+// whoever conquers `to`). `to` answers.
+bw_status bw_bridge_alliance_surrender(bw_bridge_t* bridge, int from, int to);
+bw_status bw_bridge_alliance_answer_surrender(bw_bridge_t* bridge, int player_slot, int from, int accept);
 
 #define BW_ALLIANCE_INVITED 1  // a invited b
 #define BW_ALLIANCE_DECLINED 2 // b declined a's invitation
@@ -130,6 +144,10 @@ bw_status bw_bridge_alliance_leave(bw_bridge_t* bridge, int player_slot);
 #define BW_ALLIANCE_LEFT 4     // a left its alliance
 #define BW_ALLIANCE_OPEN 5     // a accepts invitations now
 #define BW_ALLIANCE_CLOSED 6   // a no longer does
+#define BW_ALLIANCE_SURRENDER_OFFER 7   // a offered to surrender to b
+#define BW_ALLIANCE_SURRENDERED 8       // a surrendered to b
+#define BW_ALLIANCE_SURRENDER_REFUSED 9 // b refused a's surrender
+#define BW_ALLIANCE_VASSAL_MOVED 10     // a's lord was conquered: a now serves b
 
 typedef struct bw_alliance_event {
 	int32_t frame;

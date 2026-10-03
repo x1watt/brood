@@ -148,6 +148,8 @@ struct bw_bridge {
 		op_alliance_invite,
 		op_alliance_respond,
 		op_alliance_leave,
+		op_alliance_surrender,
+		op_alliance_answer_surrender,
 	};
 	a_vector<int32_t> cmd_log;
 	void log(int32_t op, std::initializer_list<int32_t> args, const int32_t* extra = nullptr, int extra_n = 0) {
@@ -458,7 +460,7 @@ bw_status bw_bridge_new_game(bw_bridge_t* bridge, const char* map_file, const bw
 		for (int k = 0; k != count; ++k) {
 			if (slot_of[(size_t)k] >= 0) team_of_slot[(size_t)slot_of[(size_t)k]] = setup->team[k];
 		}
-		b->alliances.reset(st, team_of_slot);
+		b->alliances.reset(st, team_of_slot, setup->seed);
 		b->alliances_on = count > 1;
 		b->sim->allies = b->alliances_on ? &b->alliances : nullptr;
 		b->ai.allies = b->alliances_on ? &b->alliances : nullptr;
@@ -555,6 +557,8 @@ bw_status bw_bridge_replay_commands(bw_bridge_t* bridge, const int32_t* log, int
 			case bw_bridge::op_alliance_invite: bw_bridge_alliance_invite(bridge, arg(0), arg(1)); break;
 			case bw_bridge::op_alliance_respond: bw_bridge_alliance_respond(bridge, arg(0), arg(1), arg(2)); break;
 			case bw_bridge::op_alliance_leave: bw_bridge_alliance_leave(bridge, arg(0)); break;
+			case bw_bridge::op_alliance_surrender: bw_bridge_alliance_surrender(bridge, arg(0), arg(1)); break;
+			case bw_bridge::op_alliance_answer_surrender: bw_bridge_alliance_answer_surrender(bridge, arg(0), arg(1), arg(2)); break;
 			default: return BW_ERR_INVALID_ARGUMENT;
 			}
 			i += 3 + (size_t)n;
@@ -1838,6 +1842,18 @@ int bw_bridge_alliances(bw_bridge_t* bridge, bw_alliance_player* out, int max_co
 		o.units_killed = al.units_killed[p];
 		o.buildings_razed = al.buildings_razed[p];
 		o.units_lost = al.units_lost[p];
+		o.lord = al.lord[p];
+		int offers = 0;
+		for (int q = 0; q != bw_alliances::max_players; ++q) {
+			if (al.surrender_frame[p][q] >= 0) offers |= 1 << q;
+		}
+		o.surrender_from = offers;
+		o.fighting = (int32_t)al.fighting[p];
+		o.name = b->alliances_on ? al.name_of_group[al.group[p]] : -1;
+		o.army_value = al.army_value[p];
+		o.workers = al.workers[p];
+		o.mineral_rate = al.mineral_rate[p];
+		o.gas_rate = al.gas_rate[p];
 	}
 	return bw_alliances::max_players;
 }
@@ -1872,6 +1888,20 @@ bw_status bw_bridge_alliance_leave(bw_bridge_t* bridge, int player_slot) {
 	bw_bridge* b = B(bridge);
 	b->log(bw_bridge::op_alliance_leave, {player_slot});
 	return b->alliances.leave(b->player->st(), player_slot) ? BW_OK : BW_ERR_REJECTED;
+}
+
+bw_status bw_bridge_alliance_surrender(bw_bridge_t* bridge, int from, int to) {
+	if (!bridge || !alliance_slot_ok(B(bridge), from) || !alliance_slot_ok(B(bridge), to)) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	b->log(bw_bridge::op_alliance_surrender, {from, to});
+	return b->alliances.offer_surrender(b->player->st(), from, to) ? BW_OK : BW_ERR_REJECTED;
+}
+
+bw_status bw_bridge_alliance_answer_surrender(bw_bridge_t* bridge, int player_slot, int from, int accept) {
+	if (!bridge || !alliance_slot_ok(B(bridge), player_slot) || !alliance_slot_ok(B(bridge), from)) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	b->log(bw_bridge::op_alliance_answer_surrender, {player_slot, from, accept});
+	return b->alliances.answer_surrender(b->player->st(), player_slot, from, accept != 0) ? BW_OK : BW_ERR_REJECTED;
 }
 
 int bw_bridge_poll_alliance_events(bw_bridge_t* bridge, bw_alliance_event* out, int max_count) {

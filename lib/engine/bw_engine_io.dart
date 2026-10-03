@@ -508,6 +508,14 @@ class BwEngine {
         unitsKilled: a.units_killed,
         buildingsRazed: a.buildings_razed,
         unitsLost: a.units_lost,
+        lord: a.lord,
+        surrenderFrom: a.surrender_from,
+        fighting: a.fighting,
+        name: a.name,
+        armyValue: a.army_value,
+        workers: a.workers,
+        mineralRate: a.mineral_rate,
+        gasRate: a.gas_rate,
       );
     }, growable: false);
   }
@@ -516,6 +524,8 @@ class BwEngine {
   bool allianceInvite(int from, int to) => _ok(_b.bw_bridge_alliance_invite(_h, from, to));
   bool allianceRespond(int slot, int from, bool accept) => _ok(_b.bw_bridge_alliance_respond(_h, slot, from, accept ? 1 : 0));
   bool allianceLeave(int slot) => _ok(_b.bw_bridge_alliance_leave(_h, slot));
+  bool offerSurrender(int from, int to) => _ok(_b.bw_bridge_alliance_surrender(_h, from, to));
+  bool answerSurrender(int slot, int from, bool accept) => _ok(_b.bw_bridge_alliance_answer_surrender(_h, slot, from, accept ? 1 : 0));
 
   List<AllianceEvent> pollAllianceEvents() {
     final n = _b.bw_bridge_poll_alliance_events(_h, _allianceEvents, 64);

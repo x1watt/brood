@@ -188,6 +188,17 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
 
   bool get _outcomeVisible => _outcomeShown && _c.paused;
 
+  bool get _panelLeft => widget.settings.alliancePanelLeft;
+
+  // The panel can sit on either side, so it doesn't hide your base.
+  void _togglePanelSide() {
+    widget.settings
+      ..alliancePanelLeft = !widget.settings.alliancePanelLeft
+      ..save();
+    setState(() {});
+    _focus.requestFocus();
+  }
+
   void _toggleAlliances() {
     if (!_c.ready) return;
     setState(() => _alliancesOpen = !_alliancesOpen);
@@ -402,8 +413,8 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                           // Invitations wait at the top of the view until answered.
                           Positioned(
                             top: 0,
-                            left: 0,
-                            right: _alliancesOpen ? 440 : 0,
+                            left: _alliancesOpen && _panelLeft ? 440 : 0,
+                            right: _alliancesOpen && !_panelLeft ? 440 : 0,
                             child: Center(child: ListenableBuilder(listenable: _c.hud, builder: (_, _) => InvitationCards(c: _c))),
                           ),
                           AnimatedPositioned(
@@ -411,11 +422,17 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                             curve: Curves.easeOutCubic,
                             top: 0,
                             bottom: 0,
-                            right: _alliancesOpen ? 0 : -450,
+                            left: _panelLeft ? (_alliancesOpen ? 0 : -450) : null,
+                            right: _panelLeft ? null : (_alliancesOpen ? 0 : -450),
                             width: 440,
                             child: ListenableBuilder(
                               listenable: _c.hud,
-                              builder: (_, _) => AlliancePanel(c: _c, onClose: _toggleAlliances),
+                              builder: (_, _) => AlliancePanel(
+                                c: _c,
+                                onClose: _toggleAlliances,
+                                dockedLeft: _panelLeft,
+                                onToggleSide: _togglePanelSide,
+                              ),
                             ),
                           ),
                           if (_showPerf)

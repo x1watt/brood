@@ -93,36 +93,55 @@ class _Pill extends StatelessWidget {
   );
 }
 
+const _fight = Color(0xFFFF4D3D);
+const _vassalColor = Color(0xFFFFA24D);
+
+/// The players a group is clashing with right now (outside the group).
+Set<int> _clashes(GameController c, List<AlliancePlayer> members) {
+  final ids = {for (final m in members) m.slot};
+  final out = <int>{};
+  for (final m in members) {
+    for (int s = 0; s < 8; ++s) {
+      if (m.fightingSlot(s) && !ids.contains(s)) out.add(s);
+    }
+  }
+  return out;
+}
+
 class AlliancePanel extends StatelessWidget {
   final GameController c;
   final VoidCallback onClose;
-  const AlliancePanel({super.key, required this.c, required this.onClose});
+  final bool dockedLeft;
+  final VoidCallback onToggleSide;
+  const AlliancePanel({super.key, required this.c, required this.onClose, this.dockedLeft = false, required this.onToggleSide});
 
   @override
   Widget build(BuildContext context) {
     final me = c.me;
-    // Groups of players still in the game: mine first, then in player
-    // order. A stable order, so buttons never move under the pointer.
     final groups = <int, List<AlliancePlayer>>{};
     for (final a in c.alliance) {
       if (a.playing && a.active) groups.putIfAbsent(a.group, () => []).add(a);
     }
+    // Groups at war right now first (red), then mine, then player order.
+    final fighting = {for (final g in groups.keys) g: _clashes(c, groups[g]!).isNotEmpty};
     final order = groups.keys.toList()
       ..sort((x, y) {
+        if (fighting[x]! != fighting[y]!) return fighting[x]! ? -1 : 1;
         if (me != null && x == me.group) return -1;
         if (me != null && y == me.group) return 1;
         return groups[x]!.first.slot.compareTo(groups[y]!.first.slot);
       });
     final out = [for (final a in c.alliance) if (a.playing && !a.active) a];
+    final lord = me != null && me.isVassal ? me.lord : -1;
 
     return ClipRect(
       child: BackdropFilter(
         filter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
         child: Container(
           width: 440,
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: _panel,
-            border: Border(left: BorderSide(color: _line)),
+            border: dockedLeft ? const Border(right: BorderSide(color: _line)) : const Border(left: BorderSide(color: _line)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -136,6 +155,11 @@ class AlliancePanel extends StatelessWidget {
                     const Expanded(
                       child: Text('Alliances', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white)),
                     ),
+                    IconButton(
+                      tooltip: dockedLeft ? 'Move this panel to the right side' : 'Move this panel to the left side',
+                      onPressed: onToggleSide,
+                      icon: Icon(dockedLeft ? Icons.keyboard_double_arrow_right : Icons.keyboard_double_arrow_left, color: _dim, size: 20),
+                    ),
                     IconButton(tooltip: 'Close (F9)', onPressed: onClose, icon: const Icon(Icons.close, color: _dim, size: 20)),
                   ],
                 ),
@@ -143,11 +167,12 @@ class AlliancePanel extends StatelessWidget {
               const Padding(
                 padding: EdgeInsets.fromLTRB(18, 0, 18, 10),
                 child: Text(
-                  'Allies share one treasury, their technology and their points, and each can command the others\' units.',
+                  'Allies share one treasury, their technology and their points, and each can command the others\' units. '
+                  'A player who surrenders becomes a permanent ally and pays half its points to its conqueror.',
                   style: TextStyle(fontSize: 12, color: _dim, height: 1.35),
                 ),
               ),
-              _openSwitch(),
+              if (lord >= 0) _vassalBanner(lord) else _openSwitch(),
               const Divider(height: 1, color: _line),
               Expanded(
                 child: ListView(
@@ -155,7 +180,7 @@ class AlliancePanel extends StatelessWidget {
                   children: [
                     _Scoreboard(c: c),
                     const SizedBox(height: 14),
-                    for (final g in order) _GroupCard(c: c, members: groups[g]!, mine: me != null && g == me.group, otherGroups: groups),
+                    for (final g in order) _GroupCard(c: c, members: groups[g]!, mine: me != null && g == me.group),
                     if (out.isNotEmpty) ...[
                       _heading('Out of the game'),
                       for (final a in out)
@@ -173,7 +198,7 @@ class AlliancePanel extends StatelessWidget {
                     ],
                     if (c.allianceFeed.isNotEmpty) ...[
                       _heading('History'),
-                      for (final n in c.allianceFeed.take(12))
+                      for (final n in c.allianceFeed.take(14))
                         Padding(
                           padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 4),
                           child: Row(
@@ -201,6 +226,29 @@ class AlliancePanel extends StatelessWidget {
   Widget _heading(String text) => Padding(
     padding: const EdgeInsets.fromLTRB(4, 16, 4, 6),
     child: Text(text.toUpperCase(), style: const TextStyle(fontSize: 11, letterSpacing: 1.2, color: _dim, fontWeight: FontWeight.w600)),
+  );
+
+  Widget _vassalBanner(int lord) => Container(
+    margin: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: const Color(0x1AFFA24D),
+      borderRadius: BorderRadius.circular(6),
+      border: Border.all(color: const Color(0x66FFA24D)),
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.flag_outlined, color: _vassalColor, size: 18),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            'You surrendered to ${c.nameOf(lord)}. You are their permanent ally: no leaving and no other alliances, '
+            'and half of your points go to them.',
+            style: const TextStyle(fontSize: 12, color: _text, height: 1.35),
+          ),
+        ),
+      ],
+    ),
   );
 
   Widget _openSwitch() {
@@ -239,16 +287,18 @@ class _GroupCard extends StatelessWidget {
   final GameController c;
   final List<AlliancePlayer> members;
   final bool mine;
-  final Map<int, List<AlliancePlayer>> otherGroups;
-  const _GroupCard({required this.c, required this.members, required this.mine, required this.otherGroups});
+  const _GroupCard({required this.c, required this.members, required this.mine});
 
   @override
   Widget build(BuildContext context) {
     final alliance = members.length > 1;
-    final accent = c.colorOf(members.first.slot);
-    final title = mine
-        ? (alliance ? 'Your alliance' : 'You, on your own')
-        : (alliance ? 'Alliance of ${members.length}' : c.nameOf(members.first.slot));
+    final name = c.allianceNameOf(members.first.slot);
+    final title = alliance && name.isNotEmpty ? name : (mine ? 'You, on your own' : c.nameOf(members.first.slot));
+    final subtitle = alliance
+        ? '${mine ? 'Your alliance' : 'Enemy alliance'} of ${members.length}'
+        : (mine ? 'No alliance' : 'Enemy');
+    final clashes = _clashes(c, members);
+    final atWar = clashes.isNotEmpty;
     // You first, then the others in player order.
     final sorted = [...members]..sort((a, b) {
       if (a.slot == c.myPlayer) return -1;
@@ -259,9 +309,10 @@ class _GroupCard extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
-        color: _card,
+        color: atWar ? const Color(0xFF140808) : _card,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: mine ? const Color(0xFF3A3A3A) : _line),
+        border: Border.all(color: atWar ? _fight : (mine ? const Color(0xFF3A3A3A) : _line), width: atWar ? 1.5 : 1),
+        boxShadow: atWar ? [BoxShadow(color: _fight.withValues(alpha: 0.25), blurRadius: 14, spreadRadius: 1)] : null,
       ),
       clipBehavior: Clip.antiAlias,
       child: IntrinsicHeight(
@@ -274,7 +325,7 @@ class _GroupCard extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [for (final m in members) c.colorOf(m.slot)] + (members.length == 1 ? [accent] : []),
+                  colors: [for (final m in members) c.colorOf(m.slot)] + (members.length == 1 ? [c.colorOf(members.first.slot)] : []),
                 ),
               ),
             ),
@@ -285,21 +336,50 @@ class _GroupCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
-                          child: Text(
-                            title,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: mine ? Colors.white : _text),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                title,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: alliance ? 15 : 14,
+                                  fontWeight: FontWeight.w800,
+                                  color: mine ? Colors.white : _text,
+                                  letterSpacing: alliance ? 0.3 : 0,
+                                ),
+                              ),
+                              Text(subtitle, style: TextStyle(fontSize: 11, color: mine ? _dim : _danger.withValues(alpha: 0.85))),
+                            ],
                           ),
                         ),
-                        if (!mine) Text(alliance ? 'enemy alliance' : 'enemy', style: const TextStyle(fontSize: 11, color: _danger)),
+                        _totals(),
                       ],
                     ),
+                    if (atWar)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.local_fire_department, size: 14, color: _fight),
+                            const SizedBox(width: 5),
+                            Expanded(
+                              child: Text(
+                                'Fighting ${clashes.map(c.nameOf).join(', ')}',
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 12, color: _fight, fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     if (mine && alliance) _treasury(),
                     const SizedBox(height: 6),
                     for (final m in sorted) _member(m),
-                    ..._actions(context),
+                    ..._actions(context, clashes),
                   ],
                 ),
               ),
@@ -309,6 +389,49 @@ class _GroupCard extends StatelessWidget {
       ),
     );
   }
+
+  // Combined power of the group: army value, minerals and gas per minute.
+  Widget _totals() {
+    int army = 0, minerals = 0, gas = 0;
+    for (final m in members) {
+      army += m.armyValue;
+      minerals += m.mineralRate;
+      gas += m.gasRate;
+    }
+    return Tooltip(
+      message: '${members.length > 1 ? 'Combined: ' : ''}army worth ${formatPoints(army)} (minerals and gas spent on combat units), '
+          'mining ${formatPoints(minerals)} minerals and ${formatPoints(gas)} gas per minute',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _stat(const Icon(Icons.shield_outlined, size: 13, color: Color(0xFFFF8A65)), compactPoints(army), const Color(0xFFFF8A65), bold: true),
+          const SizedBox(height: 2),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _stat(_resIcon(0), '${compactPoints(minerals)}/min', _mineral),
+              const SizedBox(width: 8),
+              _stat(_resIcon(1 + c.myRace), '${compactPoints(gas)}/min', _gasColor),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _resIcon(int i) {
+    final img = c.icons?.resource(i);
+    return SizedBox(width: 12, height: 12, child: img == null ? null : RawImage(image: img, filterQuality: FilterQuality.medium));
+  }
+
+  static Widget _stat(Widget icon, String text, Color color, {bool bold = false}) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      icon,
+      const SizedBox(width: 3),
+      Text(text, style: TextStyle(fontSize: 11, color: color, fontWeight: bold ? FontWeight.w700 : FontWeight.w500, fontFeatures: const [FontFeature.tabularFigures()])),
+    ],
+  );
 
   Widget _treasury() {
     Widget res(ui.Image? icon, Color color, int value) => Row(
@@ -335,36 +458,51 @@ class _GroupCard extends StatelessWidget {
 
   Widget _member(AlliancePlayer m) {
     final isMe = m.slot == c.myPlayer;
+    final me = c.me;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          PlayerSwatch(c.colorOf(m.slot)),
-          const SizedBox(width: 10),
-          Flexible(
-            child: Text(
-              c.nameOf(m.slot),
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: isMe ? Colors.white : _text, fontWeight: isMe ? FontWeight.w700 : FontWeight.w500),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Text(raceName(m.race), style: const TextStyle(fontSize: 11, color: _faint)),
-          if (m.open && !isMe) const _Pill('open', Color(0xFF7CD992)),
-          if (!isMe && c.me != null && c.me!.invitedBySlot(m.slot)) const _Pill('invited you', _allyColor),
-          const Spacer(),
-          Tooltip(
-            message: scoreBreakdown(m, allied: members.length > 1),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.emoji_events_outlined, size: 14, color: _gold),
-                const SizedBox(width: 4),
-                Text(
-                  formatPoints(m.score),
-                  style: const TextStyle(color: _text, fontWeight: FontWeight.w700, fontFeatures: [FontFeature.tabularFigures()]),
+          Row(
+            children: [
+              PlayerSwatch(c.colorOf(m.slot)),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Text(
+                  c.nameOf(m.slot),
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: isMe ? Colors.white : _text, fontWeight: isMe ? FontWeight.w700 : FontWeight.w500),
                 ),
-              ],
+              ),
+              const SizedBox(width: 6),
+              Text(raceName(m.race), style: const TextStyle(fontSize: 11, color: _faint)),
+              if (m.isVassal) _Pill('surrendered to ${m.lord == c.myPlayer ? 'you' : c.nameOf(m.lord)}', _vassalColor),
+              if (m.open && !isMe && !m.isVassal) const _Pill('open', Color(0xFF7CD992)),
+              if (!isMe && me != null && me.invitedBySlot(m.slot)) const _Pill('invited you', _allyColor),
+              if (!isMe && me != null && me.offersSurrender(m.slot)) const _Pill('offers surrender', _vassalColor),
+              const Spacer(),
+              Tooltip(
+                message: scoreBreakdown(m, allied: members.length > 1),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.emoji_events_outlined, size: 14, color: _gold),
+                    const SizedBox(width: 4),
+                    Text(
+                      formatPoints(m.score),
+                      style: const TextStyle(color: _text, fontWeight: FontWeight.w700, fontFeatures: [FontFeature.tabularFigures()]),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 22, top: 1),
+            child: Text(
+              'army ${formatPoints(m.armyValue)}  ·  ${m.workers} workers  ·  ${formatPoints(m.mineralRate)} minerals/min  ·  ${formatPoints(m.gasRate)} gas/min',
+              style: const TextStyle(fontSize: 10.5, color: _faint, fontFeatures: [FontFeature.tabularFigures()]),
             ),
           ),
         ],
@@ -372,10 +510,13 @@ class _GroupCard extends StatelessWidget {
     );
   }
 
-  List<Widget> _actions(BuildContext context) {
+  List<Widget> _actions(BuildContext context, Set<int> clashes) {
+    final me = c.me;
+    if (me == null || !me.active || me.isVassal) return const [];
     if (mine) {
-      if (!(c.me?.active ?? false)) return const [];
-      if (members.length < 2) return const [];
+      // Leaving needs someone to leave: a free member who isn't my vassal.
+      final others = members.where((m) => m.slot != c.myPlayer && m.lord != c.myPlayer);
+      if (others.isEmpty) return const [];
       return [
         const SizedBox(height: 8),
         Align(
@@ -393,54 +534,95 @@ class _GroupCard extends StatelessWidget {
         ),
       ];
     }
-    final me = c.me;
-    if (me == null || !me.active) return const [];
+    // Who speaks for this group: its first free member.
+    final lead = members.firstWhere((m) => !m.isVassal, orElse: () => members.first);
+    final surrendering = members.where((m) => me.offersSurrender(m.slot)).firstOrNull;
     final inviter = members.where((m) => me.invitedBySlot(m.slot)).firstOrNull;
     final sent = members.any((m) => c.invitedByMe(m.slot));
-    // Someone must be left to fight: not my group, not this one.
     final allowed = c.alliance.any((a) => a.active && a.group != me.group && a.group != members.first.group);
-    final Widget action;
-    if (inviter != null) {
-      action = Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          TextButton(onPressed: () => c.answerInvitation(inviter.slot, false), child: const Text('Decline')),
-          const SizedBox(width: 6),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(backgroundColor: _allyColor, foregroundColor: Colors.black, visualDensity: VisualDensity.compact),
-            onPressed: () => c.answerInvitation(inviter.slot, true),
-            icon: const Icon(Icons.handshake, size: 16),
-            label: const Text('Accept'),
+    final widgets = <Widget>[];
+    if (surrendering != null) {
+      widgets.addAll([
+        TextButton(onPressed: () => c.answerSurrender(surrendering.slot, false), child: const Text('Refuse')),
+        const SizedBox(width: 6),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(backgroundColor: _vassalColor, foregroundColor: Colors.black, visualDensity: VisualDensity.compact),
+          onPressed: () => c.answerSurrender(surrendering.slot, true),
+          icon: const Icon(Icons.flag, size: 16),
+          label: const Text('Accept surrender'),
+        ),
+      ]);
+    } else if (inviter != null) {
+      widgets.addAll([
+        TextButton(onPressed: () => c.answerInvitation(inviter.slot, false), child: const Text('Decline')),
+        const SizedBox(width: 6),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(backgroundColor: _allyColor, foregroundColor: Colors.black, visualDensity: VisualDensity.compact),
+          onPressed: () => c.answerInvitation(inviter.slot, true),
+          icon: const Icon(Icons.handshake, size: 16),
+          label: const Text('Accept'),
+        ),
+      ]);
+    } else {
+      // Surrender is there when they are beating you.
+      if (clashes.contains(c.myPlayer) && c.canSurrenderTo(lead.slot)) {
+        widgets.addAll([
+          TextButton.icon(
+            style: TextButton.styleFrom(foregroundColor: _vassalColor, visualDensity: VisualDensity.compact),
+            onPressed: () => _confirmSurrender(context, lead.slot),
+            icon: const Icon(Icons.flag_outlined, size: 16),
+            label: const Text('Surrender'),
           ),
-        ],
-      );
-    } else if (sent) {
-      action = const Align(
-        alignment: Alignment.centerRight,
-        child: Row(
+          const SizedBox(width: 6),
+        ]);
+      }
+      if (sent) {
+        widgets.add(const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.5, color: _dim)),
             SizedBox(width: 8),
-            Text('Invitation sent, waiting for an answer', style: TextStyle(fontSize: 12, color: _dim)),
+            Text('Invitation sent', style: TextStyle(fontSize: 12, color: _dim)),
           ],
-        ),
-      );
-    } else {
-      action = Align(
-        alignment: Alignment.centerRight,
-        child: Tooltip(
+        ));
+      } else {
+        widgets.add(Tooltip(
           message: allowed ? 'Ask to join forces' : "An alliance can't include every player still in the game.",
           child: OutlinedButton.icon(
             style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
-            onPressed: allowed ? () => c.inviteToAlliance(members.first.slot) : null,
+            onPressed: allowed ? () => c.inviteToAlliance(lead.slot) : null,
             icon: const Icon(Icons.handshake_outlined, size: 16),
             label: Text(members.length > 1 ? 'Invite to join' : 'Invite'),
           ),
-        ),
-      );
+        ));
+      }
     }
-    return [const SizedBox(height: 8), action];
+    return [const SizedBox(height: 8), Row(mainAxisAlignment: MainAxisAlignment.end, children: widgets)];
+  }
+
+  Future<void> _confirmSurrender(BuildContext context, int to) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Surrender to ${c.nameOf(to)}?'),
+        content: const SizedBox(
+          width: 400,
+          child: Text(
+            'If they accept, you become their permanent ally: the fighting stops, you keep playing at their side, '
+            'but you can no longer leave or join other alliances, and half of your points go to them.',
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Keep fighting')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: _vassalColor, foregroundColor: Colors.black),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Offer surrender'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) c.offerSurrender(to);
   }
 
   Future<void> _confirmLeave(BuildContext context) async {
@@ -476,11 +658,72 @@ class InvitationCards extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final from = c.invitationsForMe.take(2).toList();
-    if (from.isEmpty) return const SizedBox.shrink();
+    final surrenders = c.surrendersForMe.take(2).toList();
+    final from = c.invitationsForMe.take(2 - surrenders.length).toList();
+    if (from.isEmpty && surrenders.isEmpty) return const SizedBox.shrink();
     return Column(
       mainAxisSize: MainAxisSize.min,
-      children: [for (final s in from) _card(s)],
+      children: [for (final s in surrenders) _surrenderCard(s), for (final s in from) _card(s)],
+    );
+  }
+
+  Widget _surrenderCard(int slot) {
+    final a = c.alliance[slot];
+    return Container(
+      width: 460,
+      margin: const EdgeInsets.only(top: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xF20A0A0A),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _vassalColor.withValues(alpha: 0.6)),
+        boxShadow: [BoxShadow(color: _vassalColor.withValues(alpha: 0.12), blurRadius: 24, spreadRadius: 2)],
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 12, 12, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.flag_outlined, color: _vassalColor, size: 22),
+              const SizedBox(width: 10),
+              PlayerSwatch(c.colorOf(slot)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text.rich(
+                  TextSpan(children: [
+                    TextSpan(text: c.nameOf(slot), style: const TextStyle(fontWeight: FontWeight.w700, color: Colors.white)),
+                    TextSpan(text: ' (${raceName(a.race)})', style: const TextStyle(color: _dim)),
+                    const TextSpan(text: ' offers to surrender to you'),
+                  ]),
+                  style: const TextStyle(color: _text, fontSize: 14),
+                ),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 32, top: 4),
+            child: Text(
+              'They become your permanent ally and pay you half of their points. '
+              'Army ${formatPoints(a.armyValue)}, mining ${formatPoints(a.mineralRate + a.gasRate)} per minute.',
+              style: const TextStyle(fontSize: 12, color: _dim),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(onPressed: () => c.answerSurrender(slot, false), child: const Text('Refuse')),
+              const SizedBox(width: 6),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(backgroundColor: _vassalColor, foregroundColor: Colors.black),
+                onPressed: () => c.answerSurrender(slot, true),
+                icon: const Icon(Icons.flag, size: 18),
+                label: const Text('Accept surrender'),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 

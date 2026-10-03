@@ -14,8 +14,9 @@ class Settings {
   bool muted;
   bool fullscreen;
   Map<String, dynamic>? lastSetup; // GameSetup.toJson() of the last new game
+  bool alliancePanelLeft; // dock the alliance panel on the left
 
-  Settings._(this.file, {this.volume = 0.7, this.muted = false, this.fullscreen = false, this.lastSetup});
+  Settings._(this.file, {this.volume = 0.7, this.muted = false, this.fullscreen = false, this.lastSetup, this.alliancePanelLeft = false});
 
   static File defaultFile() {
     final env = Platform.environment;
@@ -36,6 +37,7 @@ class Settings {
           muted: j['muted'] == true,
           fullscreen: j['fullscreen'] == true,
           lastSetup: j['lastSetup'] is Map<String, dynamic> ? j['lastSetup'] as Map<String, dynamic> : null,
+          alliancePanelLeft: j['alliancePanelLeft'] == true,
         );
       }
     } catch (_) {
@@ -53,6 +55,7 @@ class Settings {
         'muted': muted,
         'fullscreen': fullscreen,
         if (lastSetup != null) 'lastSetup': lastSetup,
+        'alliancePanelLeft': alliancePanelLeft,
       }));
       tmp.renameSync(file.path);
     } catch (_) {

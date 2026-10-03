@@ -237,6 +237,14 @@ class AlliancePlayer {
   final int unitsKilled;
   final int buildingsRazed;
   final int unitsLost;
+  final int lord; // -1, or whom this player surrendered to
+  final int surrenderFrom; // bit mask of slots offering to surrender to this player
+  final int fighting; // bit mask of slots it is clashing with right now
+  final int name; // its alliance's name code, -1 when alone
+  final int armyValue; // mineral + gas value of its combat units
+  final int workers;
+  final int mineralRate; // per minute
+  final int gasRate; // per minute
   const AlliancePlayer({
     required this.slot,
     required this.playing,
@@ -255,7 +263,19 @@ class AlliancePlayer {
     required this.unitsKilled,
     required this.buildingsRazed,
     required this.unitsLost,
+    this.lord = -1,
+    this.surrenderFrom = 0,
+    this.fighting = 0,
+    this.name = -1,
+    this.armyValue = 0,
+    this.workers = 0,
+    this.mineralRate = 0,
+    this.gasRate = 0,
   });
+
+  bool get isVassal => lord >= 0;
+  bool fightingSlot(int slot) => fighting & (1 << slot) != 0;
+  bool offersSurrender(int slot) => surrenderFrom & (1 << slot) != 0;
 
   /// Overall score: mining (shared with allies) + building + destroying.
   int get score => points + productionScore + killScore;
@@ -263,7 +283,7 @@ class AlliancePlayer {
   bool invitedBySlot(int slot) => invitedBy & (1 << slot) != 0;
 }
 
-enum AllianceEventKind { none, invited, declined, formed, left, open, closed }
+enum AllianceEventKind { none, invited, declined, formed, left, open, closed, surrenderOffer, surrendered, surrenderRefused, vassalMoved }
 
 class AllianceEvent {
   final int frame;

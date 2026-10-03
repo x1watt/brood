@@ -21,6 +21,7 @@ import '../engine/models.dart';
 import '../rendering/icon_atlas.dart';
 import '../rendering/sprite_atlas.dart';
 import '../rendering/terrain_layer.dart';
+import 'alliance_names.dart';
 import 'command_cards.dart';
 import 'game_setup.dart';
 import 'saved_games.dart';
@@ -284,6 +285,29 @@ class GameController {
 
   bool invitedByMe(int slot) => alliance.length == 8 && alliance[slot].invitedBySlot(myPlayer);
 
+  /// Players offering to surrender to me.
+  List<int> get surrendersForMe {
+    final m = me;
+    if (m == null) return const [];
+    return [for (int s = 0; s < 8; ++s) if (m.offersSurrender(s) && alliance[s].active) s];
+  }
+
+  bool surrenderOfferedBy(int slot) => alliance.length == 8 && alliance[slot].offersSurrender(myPlayer);
+
+  bool get iAmVassal => me?.isVassal ?? false;
+
+  /// The alliance's name (two words), '' when alone.
+  String allianceNameOf(int slot) => alliance.length == 8 ? allianceName(alliance[slot].name) : '';
+
+  /// Whether I could surrender to `slot`: someone must stay outside.
+  bool canSurrenderTo(int slot) {
+    final m = me;
+    if (m == null || !m.active || m.isVassal || alliance.length != 8) return false;
+    final t = alliance[slot];
+    if (!t.active || t.isVassal || t.group == m.group) return false;
+    return alliance.any((a) => a.active && a.slot != myPlayer && a.lord != myPlayer && a.group != t.group);
+  }
+
   /// The other players of my alliance (active ones).
   List<int> get myAllies => [for (final a in alliance) if (a.slot != myPlayer && a.active && relation(a.slot) == Relation.ally) a.slot];
 
@@ -330,6 +354,13 @@ class GameController {
       AllianceEventKind.left => e.a == myPlayer ? 'You left your alliance.' : '$a left ${myAllies.contains(e.a) ? 'your' : 'their'} alliance.',
       AllianceEventKind.open => e.a == myPlayer ? 'You are open to alliances.' : '$a is open to alliances.',
       AllianceEventKind.closed => e.a == myPlayer ? 'You no longer accept alliances.' : '$a no longer accepts alliances.',
+      AllianceEventKind.surrenderOffer =>
+        e.b == myPlayer ? '$a offers to surrender to you.' : (e.a == myPlayer ? 'You offered to surrender to ${nameOf(e.b)}.' : '$a offers to surrender to ${nameOf(e.b)}.'),
+      AllianceEventKind.surrendered =>
+        e.b == myPlayer ? '$a surrendered to you.' : (e.a == myPlayer ? 'You surrendered to ${nameOf(e.b)}.' : '$a surrendered to ${nameOf(e.b)}.'),
+      AllianceEventKind.surrenderRefused =>
+        e.a == myPlayer ? '${nameOf(e.b)} refused your surrender.' : (e.b == myPlayer ? "You refused $a's surrender." : "${nameOf(e.b)} refused $a's surrender."),
+      AllianceEventKind.vassalMoved => e.a == myPlayer ? 'Your lord was conquered: you now serve ${nameOf(e.b)}.' : '$a now serves ${nameOf(e.b)}.',
       AllianceEventKind.none => null,
     };
   }
@@ -349,6 +380,18 @@ class GameController {
   void answerInvitation(int from, bool accept) {
     if (!ready) return;
     engine.allianceRespond(myPlayer, from, accept);
+    _allianceChanged();
+  }
+
+  void offerSurrender(int slot) {
+    if (!ready) return;
+    if (!engine.offerSurrender(myPlayer, slot)) showMessage("You can't surrender to ${nameOf(slot)} now.");
+    _allianceChanged();
+  }
+
+  void answerSurrender(int from, bool accept) {
+    if (!ready) return;
+    engine.answerSurrender(myPlayer, from, accept);
     _allianceChanged();
   }
 

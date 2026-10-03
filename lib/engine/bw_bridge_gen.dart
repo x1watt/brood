@@ -258,7 +258,8 @@ class BwBridgeBindings {
   late final _bw_bridge_alliance_respond = _bw_bridge_alliance_respondPtr
       .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int, int)>();
 
-  /// Leaves the alliance, taking an equal share of its treasury.
+  /// Leaves the alliance, taking an equal share of its treasury (with its
+  /// vassals, if it has any). Vassals can't leave.
   bw_status bw_bridge_alliance_leave(
     ffi.Pointer<bw_bridge_t> bridge,
     int player_slot,
@@ -272,6 +273,47 @@ class BwBridgeBindings {
       >('bw_bridge_alliance_leave');
   late final _bw_bridge_alliance_leave = _bw_bridge_alliance_leavePtr
       .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int)>();
+
+  /// Surrender: `from` offers to become `to`'s permanent ally (a vassal: no
+  /// leaving, no other alliances, half of its points go to `to`; it passes to
+  /// whoever conquers `to`). `to` answers.
+  bw_status bw_bridge_alliance_surrender(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int from,
+    int to,
+  ) {
+    return bw_status.fromValue(_bw_bridge_alliance_surrender(bridge, from, to));
+  }
+
+  late final _bw_bridge_alliance_surrenderPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_alliance_surrender');
+  late final _bw_bridge_alliance_surrender = _bw_bridge_alliance_surrenderPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int)>();
+
+  bw_status bw_bridge_alliance_answer_surrender(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int player_slot,
+    int from,
+    int accept,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_alliance_answer_surrender(bridge, player_slot, from, accept),
+    );
+  }
+
+  late final _bw_bridge_alliance_answer_surrenderPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_alliance_answer_surrender');
+  late final _bw_bridge_alliance_answer_surrender =
+      _bw_bridge_alliance_answer_surrenderPtr
+          .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int, int)>();
 
   /// Drains alliance events (oldest first). Returns the count written.
   int bw_bridge_poll_alliance_events(
@@ -2008,8 +2050,36 @@ final class bw_alliance_player extends ffi.Struct {
   @ffi.Int32()
   external int units_lost;
 
+  /// -1, or the slot this player surrendered to (permanent ally)
   @ffi.Int32()
-  external int reserved;
+  external int lord;
+
+  /// bit mask of slots offering to surrender to this player
+  @ffi.Int32()
+  external int surrender_from;
+
+  /// bit mask of slots this player is clashing with right now
+  @ffi.Int32()
+  external int fighting;
+
+  /// its alliance's name code (word a * 64 + word b), -1 when alone
+  @ffi.Int32()
+  external int name;
+
+  /// mineral + gas value of its combat units
+  @ffi.Int32()
+  external int army_value;
+
+  @ffi.Int32()
+  external int workers;
+
+  /// minerals mined per minute (last minute)
+  @ffi.Int32()
+  external int mineral_rate;
+
+  /// gas mined per minute
+  @ffi.Int32()
+  external int gas_rate;
 
   /// mining: everything mined by its alliance while it was a member, plus its own
   @ffi.Int64()
@@ -2346,7 +2416,7 @@ final class bw_sound_info extends ffi.Struct {
   external ffi.Array<ffi.Char> filename;
 }
 
-const int BW_BRIDGE_ABI_VERSION = 14;
+const int BW_BRIDGE_ABI_VERSION = 15;
 
 const int BW_MAX_PLAYERS = 8;
 
@@ -2365,6 +2435,14 @@ const int BW_ALLIANCE_LEFT = 4;
 const int BW_ALLIANCE_OPEN = 5;
 
 const int BW_ALLIANCE_CLOSED = 6;
+
+const int BW_ALLIANCE_SURRENDER_OFFER = 7;
+
+const int BW_ALLIANCE_SURRENDERED = 8;
+
+const int BW_ALLIANCE_SURRENDER_REFUSED = 9;
+
+const int BW_ALLIANCE_VASSAL_MOVED = 10;
 
 const int BW_DRAW_IMAGE = 0;
 

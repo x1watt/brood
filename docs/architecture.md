@@ -101,6 +101,17 @@ those units alone for a minute. Computers never command the human's units.
 An alliance can never hold every player still in the game. Leaving takes an
 equal share of the treasury. Setup teams start as alliances.
 
+Surrender: a player offers to surrender to another, who accepts or refuses.
+A vassal joins its lord's alliance for good (no leaving, inviting or being
+invited), keeps half of its mining and destroy points and pays the other
+half to its lord; when the lord surrenders or is destroyed, its vassals pass
+to the conqueror. Alliances get two-word names drawn by the bridge (word
+lists in lib/game/alliance_names.dart). The bridge also measures each
+player's army value, workers and mining rate per minute, and who is
+fighting whom (recent kills either way, or an army at the other's
+buildings); fighting groups are listed first with red borders. The panel can
+be docked left or right (remembered in settings).
+
 Score per player: mining (shared with allies while allied), Brood War's own
 production score (unit_score + building_score) and destroy score (credited
 to the unit's last attacker through OpenBW's on_kill_unit hook).
@@ -108,8 +119,12 @@ to the unit's last attacker through OpenBW's on_kill_unit hook).
 Computer diplomacy weighs the situation: losses and enemy armies at its
 base (it asks the attacker for peace or a strong neighbour for help when it
 can't hold), proximity (neighbours make useful allies), a common stronger
-enemy, its own dominance (then it needs nobody, and a distrustful one may
-leave an alliance once the war is won), and a personality (trust).
+enemy, how much the partner mines (shared points), its own dominance and a
+personality (trust). Refused while losing (or after a long hopeless
+defence) it offers to surrender to the attacker; offered a surrender it
+weighs the vassal's tribute against the score for destroying what is left.
+Every free player aims at the best score: once no meaningful enemy is left,
+one clearly stronger than an ally leaves the alliance and goes after it.
 
 Fog of war: bw_bridge_set_viewer filters the draw list, unit list and
 picking to what the player sees (neutral resources stay on explored

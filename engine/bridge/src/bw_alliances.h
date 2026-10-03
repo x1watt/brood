@@ -6,13 +6,23 @@
 //   - one treasury: every member sees and spends the same minerals and gas,
 //   - its technology: researched techs and upgrade levels,
 //   - control: a member may command the others' units (see bw_bridge.cpp),
-//   - points: everything any member mines is credited to every member.
-// It also keeps the military side of the score: what each player destroyed
-// (Brood War's destroy_score per unit type) and who killed whose units, which
-// the computer players use to notice they are losing a fight.
+//   - points: everything any free member mines is credited to every free
+//     member.
 // Members are allied in OpenBW's sense too (st.alliances = 2 both ways and
 // shared vision), so melee victory is shared. A group can never hold every
-// player still in the game, otherwise the game would end at once.
+// player still in the game, otherwise the game would end at once. Every
+// group of two or more carries a name (two words, picked by the UI from a
+// code drawn here).
+//
+// Surrender: a player losing a war may offer to surrender to the player
+// beating it. Accepted, it joins its conqueror's group for good: it can't
+// leave, invite, be invited or take surrenders, and half of what it earns
+// (mining and destroying) goes to its lord. If the lord surrenders or is
+// conquered in turn, its vassals pass to the new conqueror.
+//
+// Also kept here: the military side of the score (Brood War's destroy_score
+// credited to whoever attacked last), who killed whose units, who is
+// fighting whom right now, and each player's army value and mining rate.
 //
 // Everything here is driven by logged bridge commands and deterministic
 // computer decisions, so saved games replay it exactly.
@@ -32,14 +42,20 @@ namespace bw_alliances {
 using namespace bwgame;
 
 static const int max_players = 8;
+static const int name_words = 64; // per word list in the UI
+static const int rate_window = 60; // seconds of history for mining rates
 
 enum event_kind : int32_t {
-	event_invited = 1, // a invited b
-	event_declined,    // b declined a's invitation
-	event_formed,      // b joined a's alliance
-	event_left,        // a left its alliance
-	event_open,        // a is open to alliances now
-	event_closed,      // a no longer accepts alliances
+	event_invited = 1,     // a invited b
+	event_declined,        // b declined a's invitation
+	event_formed,          // b joined a's alliance
+	event_left,            // a left its alliance
+	event_open,            // a is open to alliances now
+	event_closed,          // a no longer accepts alliances
+	event_surrender_offer, // a offered to surrender to b
+	event_surrendered,     // a surrendered to b
+	event_surrender_refused, // b refused a's surrender
+	event_vassal_moved,    // a, a vassal, now serves b (its lord was conquered)
 };
 
 struct event {
@@ -49,43 +65,64 @@ struct event {
 	int32_t b;
 };
 
+using matrix = std::array<std::array<int, max_players>, max_players>;
+
 struct alliance_system {
-	std::array<int, max_players> group{};       // group id: the slot of its founder
+	std::array<int, max_players> group{};       // group id: the slot of one of its members
 	std::array<bool, max_players> open{};       // accepting invitations
 	std::array<bool, max_players> playing{};    // part of this game
-	// invite_frame[to][from]: frame `from` invited `to`, -1 for none.
-	std::array<std::array<int, max_players>, max_players> invite_frame{};
+	std::array<int, max_players> lord{};        // -1, or whom this player surrendered to
+	matrix invite_frame{};                      // [to][from]: frame `from` invited `to`, -1 none
+	matrix surrender_frame{};                   // [to][from]: frame `from` offered to surrender, -1 none
+	std::array<int, max_players> last_declined{}; // last frame someone declined this player's invitation
+	std::array<int, max_players> name_of_group{}; // by group id: name code, -1 for none
+	uint32_t name_rng = 1;
+
 	std::array<int, max_players> synced_minerals{};
 	std::array<int, max_players> synced_gas{};
 	std::array<int, max_players> gathered_seen{};
-	std::array<int64_t, max_players> points{};
+	std::array<int64_t, max_players> points{};     // mining points (see score())
 	std::array<int64_t, max_players> own_points{}; // mined by this player alone
-	std::array<int64_t, max_players> kill_score{};   // destroy_score of enemy units and buildings
+	std::array<int64_t, max_players> kill_score{}; // destroy_score of enemy units and buildings
 	std::array<int, max_players> units_killed{};
 	std::array<int, max_players> buildings_razed{};
 	std::array<int, max_players> units_lost{};
-	// Mineral + gas value of units each player lost to each other player:
-	// value_lost_to[victim][killer].
-	std::array<std::array<int, max_players>, max_players> value_lost_to{};
-	a_vector<event> events;                      // for the UI, drained by polling
+	matrix value_lost_to{}; // mineral + gas value lost: [victim][killer]
+	matrix recent_lost{};   // the same, fading over about half a minute
+	std::array<uint32_t, max_players> fighting{}; // players each one is clashing with now
 
-	void reset(state& st, const std::array<int, max_players>& team_of_slot) {
+	std::array<int, max_players> army_value{}; // mineral + gas value of combat units
+	std::array<int, max_players> workers{};
+	std::array<std::array<int, rate_window>, max_players> mineral_history{};
+	std::array<std::array<int, rate_window>, max_players> gas_history{};
+	std::array<int, max_players> mineral_rate{}; // per minute
+	std::array<int, max_players> gas_rate{};
+	int samples = 0;
+
+	a_vector<event> events; // for the UI, drained by polling
+
+	void reset(state& st, const std::array<int, max_players>& team_of_slot, uint32_t seed) {
+		name_rng = seed * 2246822519u + 3266489917u;
 		for (int p = 0; p != max_players; ++p) {
 			group[p] = p;
 			open[p] = false;
+			lord[p] = -1;
 			playing[p] = st.players[p].controller == player_t::controller_occupied;
 			for (auto& f : invite_frame[p]) f = -1;
+			for (auto& f : surrender_frame[p]) f = -1;
+			last_declined[p] = -100000;
+			name_of_group[p] = -1;
 			synced_minerals[p] = st.current_minerals[p];
 			synced_gas[p] = st.current_gas[p];
 			gathered_seen[p] = st.total_minerals_gathered[p] + st.total_gas_gathered[p];
-			points[p] = 0;
-			own_points[p] = 0;
-			kill_score[p] = 0;
-			units_killed[p] = 0;
-			buildings_razed[p] = 0;
-			units_lost[p] = 0;
+			points[p] = own_points[p] = kill_score[p] = 0;
+			units_killed[p] = buildings_razed[p] = units_lost[p] = 0;
 			value_lost_to[p] = {};
+			recent_lost[p] = {};
+			fighting[p] = 0;
+			army_value[p] = workers[p] = mineral_rate[p] = gas_rate[p] = 0;
 		}
+		samples = 0;
 		events.clear();
 		// Teams chosen before the game start as alliances.
 		for (int a = 0; a != max_players; ++a) {
@@ -106,6 +143,7 @@ struct alliance_system {
 				gas += st.current_gas[p];
 			}
 			for (int p : members(g)) set_money(st, p, m, gas);
+			name_group(g);
 		}
 		apply_relations(st);
 	}
@@ -113,6 +151,10 @@ struct alliance_system {
 	bool active(const state& st, int p) const {
 		return p >= 0 && p < max_players && playing[p] && st.players[p].controller == player_t::controller_occupied &&
 		       st.players[p].victory_state == 0;
+	}
+
+	bool vassal(int p) const {
+		return p >= 0 && p < max_players && lord[p] >= 0;
 	}
 
 	a_vector<int> members(int g) const {
@@ -133,11 +175,29 @@ struct alliance_system {
 		return same_group(owner, other) && active(st, owner) && active(st, other);
 	}
 
-	// Merging a's and b's groups must leave someone to fight.
-	bool merge_allowed(const state& st, int a, int b) const {
-		if (!active(st, a) || !active(st, b) || same_group(a, b)) return false;
+	// Someone outside the given groups (ids) is still in the game.
+	bool someone_outside(const state& st, int g1, int g2, int also_excluded = -1) const {
 		for (int p = 0; p != max_players; ++p) {
-			if (active(st, p) && group[p] != group[a] && group[p] != group[b]) return true;
+			if (!active(st, p) || group[p] == g1 || group[p] == g2) continue;
+			if (also_excluded >= 0 && (p == also_excluded || lord[p] == also_excluded)) continue;
+			return true;
+		}
+		return false;
+	}
+
+	// Merging a's and b's groups must leave someone to fight. Vassals don't
+	// make alliances of their own.
+	bool merge_allowed(const state& st, int a, int b) const {
+		if (!active(st, a) || !active(st, b) || same_group(a, b) || vassal(a) || vassal(b)) return false;
+		return someone_outside(st, group[a], group[b]);
+	}
+
+	// `from` (with its own vassals) joining `to`'s group must leave someone.
+	bool surrender_allowed(const state& st, int from, int to) const {
+		if (from == to || !active(st, from) || !active(st, to) || vassal(from) || vassal(to) || same_group(from, to)) return false;
+		for (int p = 0; p != max_players; ++p) {
+			if (!active(st, p) || p == from || lord[p] == from || group[p] == group[to]) continue;
+			return true;
 		}
 		return false;
 	}
@@ -152,6 +212,31 @@ struct alliance_system {
 	void push_event(const state& st, int kind, int a, int b) {
 		if (events.size() >= 256) events.erase(events.begin());
 		events.push_back({(int32_t)st.current_frame, kind, a, b});
+	}
+
+	void name_group(int g) {
+		if (name_of_group[g] >= 0) return;
+		name_rng = name_rng * 1103515245u + 12345u;
+		int first = (int)((name_rng >> 16) % name_words);
+		name_rng = name_rng * 1103515245u + 12345u;
+		int second = (int)((name_rng >> 16) % name_words);
+		name_of_group[g] = first * name_words + second;
+	}
+
+	// Keeps names attached to groups as their ids change and they grow or
+	// shrink below two members.
+	void tidy_names() {
+		for (int g = 0; g != max_players; ++g) {
+			int n = (int)members(g).size();
+			if (n < 2) name_of_group[g] = -1;
+			else name_group(g);
+		}
+	}
+
+	void move_group(int from_id, int to_id) {
+		if (from_id == to_id) return;
+		if (name_of_group[to_id] < 0) name_of_group[to_id] = name_of_group[from_id];
+		name_of_group[from_id] = -1;
 	}
 
 	// OpenBW's view: same group = allied with shared vision, others enemies.
@@ -172,12 +257,47 @@ struct alliance_system {
 			f.action_set_alliances(a, rel);
 			st.shared_vision[a] = (st.shared_vision[a] & ~0xffu) | vision;
 		}
+		tidy_names();
+	}
+
+	void clear_offers(int p) {
+		for (int x = 0; x != max_players; ++x) {
+			invite_frame[p][x] = invite_frame[x][p] = -1;
+			surrender_frame[p][x] = surrender_frame[x][p] = -1;
+		}
+	}
+
+	// Moves `movers` (all in one group) into group `target`, pooling money.
+	void join(state& st, const a_vector<int>& movers, int target) {
+		sync(st);
+		int old = group[movers.front()];
+		a_vector<int> stay;
+		for (int m : members(old)) {
+			if (std::find(movers.begin(), movers.end(), m) == movers.end()) stay.push_back(m);
+		}
+		// What the movers take along: their share of their old treasury.
+		int minerals = st.current_minerals[movers.front()], gas = st.current_gas[movers.front()];
+		int n = (int)(stay.size() + movers.size());
+		int take_m = minerals * (int)movers.size() / n, take_g = gas * (int)movers.size() / n;
+		if (!stay.empty()) {
+			int id = std::find(stay.begin(), stay.end(), old) != stay.end() ? old : stay.front();
+			move_group(old, id);
+			for (int m : stay) {
+				group[m] = id;
+				set_money(st, m, minerals - take_m, gas - take_g);
+			}
+		}
+		a_vector<int> joined = members(target);
+		int tm = st.current_minerals[joined.front()] + take_m;
+		int tg = st.current_gas[joined.front()] + take_g;
+		for (int m : movers) group[m] = target;
+		for (int m : members(target)) set_money(st, m, tm, tg);
 	}
 
 	// --- commands -------------------------------------------------------------
 
 	bool set_open(state& st, int p, bool on) {
-		if (!active(st, p) || open[p] == on) return false;
+		if (!active(st, p) || vassal(p) || open[p] == on) return false;
 		open[p] = on;
 		push_event(st, on ? event_open : event_closed, p, -1);
 		return true;
@@ -198,6 +318,7 @@ struct alliance_system {
 		if (invite_frame[p][from] < 0) return false;
 		invite_frame[p][from] = -1;
 		if (!accept || !merge_allowed(st, from, p)) {
+			last_declined[from] = st.current_frame;
 			push_event(st, event_declined, from, p);
 			return true;
 		}
@@ -207,11 +328,14 @@ struct alliance_system {
 		a_vector<int> a_members = members(ga), b_members = members(gb);
 		int minerals = st.current_minerals[a_members.front()] + st.current_minerals[b_members.front()];
 		int gas = st.current_gas[a_members.front()] + st.current_gas[b_members.front()];
+		// The larger alliance's name lives on.
+		if (name_of_group[ga] < 0 || (b_members.size() > a_members.size() && name_of_group[gb] >= 0)) name_of_group[ga] = name_of_group[gb];
+		name_of_group[gb] = -1;
 		for (int m : b_members) group[m] = ga;
 		for (int m : members(ga)) set_money(st, m, minerals, gas);
 		// Invitations between the new partners are settled.
 		for (int x : members(ga)) {
-			for (int y : members(ga)) invite_frame[x][y] = -1;
+			for (int y : members(ga)) invite_frame[x][y] = surrender_frame[x][y] = -1;
 		}
 		push_event(st, event_formed, from, p);
 		apply_relations(st);
@@ -220,50 +344,116 @@ struct alliance_system {
 	}
 
 	bool leave(state& st, int p) {
-		if (!active(st, p)) return false;
+		if (!active(st, p) || vassal(p)) return false;
 		a_vector<int> mates = members(group[p]);
-		if (mates.size() < 2) return false;
+		// A lord leaves with its vassals.
+		a_vector<int> movers{p};
+		for (int m : mates) {
+			if (lord[m] == p) movers.push_back(m);
+		}
+		if (movers.size() >= mates.size()) return false;
 		sync(st);
+		int old = group[p];
 		a_vector<int> rest;
 		for (int m : mates) {
-			if (m != p) rest.push_back(m);
+			if (std::find(movers.begin(), movers.end(), m) == movers.end()) rest.push_back(m);
 		}
-		// Group ids are a member's slot: if the founder leaves, the next
-		// member's slot names what remains.
-		int remaining = group[p] == p ? rest.front() : group[p];
+		// Group ids are a member's slot.
+		int remaining = std::find(rest.begin(), rest.end(), old) != rest.end() ? old : rest.front();
+		move_group(old, remaining);
 		for (int m : rest) group[m] = remaining;
-		group[p] = p;
-		// The leaver takes an equal share of the treasury.
+		for (int m : movers) group[m] = p;
+		// The leavers take their share of the treasury.
 		int minerals = st.current_minerals[p], gas = st.current_gas[p];
-		int share_m = minerals / (int)mates.size(), share_g = gas / (int)mates.size();
-		set_money(st, p, share_m, share_g);
+		int share_m = minerals * (int)movers.size() / (int)mates.size(), share_g = gas * (int)movers.size() / (int)mates.size();
+		for (int m : movers) set_money(st, m, share_m, share_g);
 		for (int m : rest) set_money(st, m, minerals - share_m, gas - share_g);
-		for (int x = 0; x != max_players; ++x) {
-			invite_frame[p][x] = -1;
-			invite_frame[x][p] = -1;
-		}
+		for (int m : movers) clear_offers(m);
 		push_event(st, event_left, p, -1);
 		apply_relations(st);
 		return true;
 	}
 
-	// Takes a player who is out of the game out of its group.
+	bool offer_surrender(state& st, int from, int to) {
+		if (!surrender_allowed(st, from, to) || surrender_frame[to][from] >= 0) return false;
+		surrender_frame[to][from] = st.current_frame;
+		push_event(st, event_surrender_offer, from, to);
+		return true;
+	}
+
+	// `from` becomes `to`'s vassal, with its own vassals.
+	void make_vassal(state& st, int from, int to) {
+		a_vector<int> movers{from};
+		for (int m = 0; m != max_players; ++m) {
+			if (lord[m] == from) movers.push_back(m);
+		}
+		// They leave whatever alliance they were in.
+		join(st, movers, group[to]);
+		for (int m : movers) {
+			lord[m] = to;
+			open[m] = false;
+			clear_offers(m);
+		}
+		for (int m : movers) {
+			if (m != from) push_event(st, event_vassal_moved, m, to);
+		}
+		apply_relations(st);
+		share_technology(st);
+	}
+
+	bool answer_surrender(state& st, int p, int from, bool accept) {
+		if (p < 0 || p >= max_players || from < 0 || from >= max_players) return false;
+		if (surrender_frame[p][from] < 0) return false;
+		surrender_frame[p][from] = -1;
+		if (!accept || !surrender_allowed(st, from, p)) {
+			push_event(st, event_surrender_refused, from, p);
+			return true;
+		}
+		push_event(st, event_surrendered, from, p);
+		make_vassal(st, from, p);
+		return true;
+	}
+
+	// Takes a player who is out of the game out of its group; its vassals
+	// pass to whoever destroyed most of it, if that player is still in.
 	void drop(state& st, int p) {
 		a_vector<int> mates = members(group[p]);
-		if (mates.size() < 2) return;
-		int remaining = -1;
-		for (int m : mates) {
-			if (m != p) {
-				remaining = group[p] == p ? m : group[p];
-				break;
+		if (mates.size() >= 2) {
+			int old = group[p];
+			a_vector<int> rest;
+			for (int m : mates) {
+				if (m != p) rest.push_back(m);
+			}
+			int remaining = std::find(rest.begin(), rest.end(), old) != rest.end() ? old : rest.front();
+			move_group(old, remaining);
+			for (int m : rest) group[m] = remaining;
+			group[p] = p;
+			synced_minerals[p] = st.current_minerals[p];
+			synced_gas[p] = st.current_gas[p];
+		}
+		lord[p] = -1;
+		tidy_names();
+		a_vector<int> vassals;
+		for (int m = 0; m != max_players; ++m) {
+			if (lord[m] == p && active(st, m)) vassals.push_back(m);
+		}
+		if (vassals.empty()) return;
+		int conqueror = -1, best = 0;
+		for (int k = 0; k != max_players; ++k) {
+			if (!active(st, k) || lord[k] == p || same_group(k, vassals.front())) continue;
+			if (value_lost_to[p][k] > best) {
+				best = value_lost_to[p][k];
+				conqueror = k;
 			}
 		}
-		for (int m : mates) {
-			if (m != p) group[m] = remaining;
-		}
-		group[p] = p;
-		synced_minerals[p] = st.current_minerals[p];
-		synced_gas[p] = st.current_gas[p];
+		if (conqueror >= 0 && vassal(conqueror)) conqueror = lord[conqueror];
+		for (int v : vassals) lord[v] = -1;
+		if (conqueror < 0) return; // free again, still with their allies
+		// They follow one another: the first takes the others along.
+		for (int v : vassals) lord[v] = vassals.front();
+		lord[vassals.front()] = -1;
+		make_vassal(st, vassals.front(), conqueror);
+		push_event(st, event_vassal_moved, vassals.front(), conqueror);
 	}
 
 	// A unit died (OpenBW's on_kill_unit): credit whoever attacked it last.
@@ -274,10 +464,18 @@ struct alliance_system {
 		bool building = (u->unit_type->group_flags & GroupFlags::Building) != 0;
 		if (!building) ++units_lost[victim];
 		if (killer < 0 || killer >= max_players || killer == victim) return;
-		kill_score[killer] += u->unit_type->destroy_score;
+		int score = u->unit_type->destroy_score;
+		// A vassal's tribute: half to its lord.
+		if (vassal(killer)) {
+			kill_score[lord[killer]] += score - score / 2;
+			score /= 2;
+		}
+		kill_score[killer] += score;
 		if (building) ++buildings_razed[killer];
 		else ++units_killed[killer];
-		value_lost_to[victim][killer] += u->unit_type->mineral_cost + u->unit_type->gas_cost;
+		int value = u->unit_type->mineral_cost + u->unit_type->gas_cost;
+		value_lost_to[victim][killer] += value;
+		recent_lost[victim][killer] += std::max(25, value);
 	}
 
 	// --- per frame ------------------------------------------------------------
@@ -296,8 +494,7 @@ struct alliance_system {
 				synced_gas[p] = st.current_gas[p];
 				continue;
 			}
-			int base_m = synced_minerals[mates.front()], base_g = synced_gas[mates.front()];
-			int m = base_m, gas = base_g;
+			int m = synced_minerals[mates.front()], gas = synced_gas[mates.front()];
 			for (int q : mates) {
 				m += st.current_minerals[q] - synced_minerals[q];
 				gas += st.current_gas[q] - synced_gas[q];
@@ -341,7 +538,9 @@ struct alliance_system {
 		}
 	}
 
-	// Points: everything mined, credited to the whole group.
+	// Mining points. Free members of a group are each credited with all the
+	// free members mined; a vassal keeps half of its own mining and pays the
+	// other half to its lord.
 	void score(state& st) {
 		std::array<int64_t, max_players> group_gain{};
 		std::array<int64_t, max_players> gain{};
@@ -351,21 +550,107 @@ struct alliance_system {
 			gain[(size_t)p] = total - gathered_seen[p];
 			gathered_seen[p] = total;
 			own_points[p] += gain[(size_t)p];
-			group_gain[(size_t)group[p]] += gain[(size_t)p];
+			if (!vassal(p)) group_gain[(size_t)group[p]] += gain[(size_t)p];
 		}
 		for (int p = 0; p != max_players; ++p) {
-			if (active(st, p)) points[p] += group_gain[(size_t)group[p]];
+			if (!active(st, p)) continue;
+			if (vassal(p)) {
+				int64_t g = gain[(size_t)p];
+				points[p] += g / 2;
+				points[lord[p]] += g - g / 2;
+			} else {
+				points[p] += group_gain[(size_t)group[p]];
+			}
 		}
+	}
+
+	// Once a second: army values, mining rates and who is fighting whom.
+	void survey(state& st) {
+		action_state scratch;
+		action_functions f(st, scratch);
+		std::array<a_vector<xy>, max_players> bases;
+		for (int p = 0; p != max_players; ++p) {
+			army_value[p] = workers[p] = 0;
+			if (!playing[p]) continue;
+			for (unit_t* u : ptr(st.player_units.at(p))) {
+				if (f.unit_dead(u) || !u->sprite) continue;
+				if (f.ut_building(u)) bases[(size_t)p].push_back(u->sprite->position);
+				else if (f.ut_worker(u)) ++workers[p];
+				else if (f.u_completed(u) && !f.ut_turret(u) && u->unit_type->id != UnitTypes::Zerg_Larva && u->unit_type->id != UnitTypes::Zerg_Egg &&
+				         u->unit_type->id != UnitTypes::Zerg_Overlord && u->unit_type->id != UnitTypes::Protoss_Interceptor &&
+				         u->unit_type->id != UnitTypes::Protoss_Scarab) {
+					army_value[p] += u->unit_type->mineral_cost + u->unit_type->gas_cost;
+				}
+			}
+		}
+		// Mining rate over the last minute (less at the start of the game).
+		int slot = samples % rate_window;
+		int span = std::min(samples, rate_window - 1);
+		for (int p = 0; p != max_players; ++p) {
+			if (!playing[p]) continue;
+			int m = st.total_minerals_gathered[p], g = st.total_gas_gathered[p];
+			mineral_history[p][(size_t)slot] = m;
+			gas_history[p][(size_t)slot] = g;
+			int then = (samples - span) % rate_window;
+			if (span > 0) {
+				mineral_rate[p] = (m - mineral_history[p][(size_t)then]) * 60 / span;
+				gas_rate[p] = (g - gas_history[p][(size_t)then]) * 60 / span;
+			}
+		}
+		++samples;
+		// Clashes: recent kills either way, or an army at the other's buildings.
+		for (int a = 0; a != max_players; ++a) {
+			fighting[a] = 0;
+			for (int b = 0; b != max_players; ++b) recent_lost[a][b] = recent_lost[a][b] * 15 / 16;
+		}
+		for (int a = 0; a != max_players; ++a) {
+			for (int b = 0; b != max_players; ++b) {
+				if (a == b || !active(st, a) || !active(st, b) || same_group(a, b)) continue;
+				if (recent_lost[a][b] + recent_lost[b][a] >= 40) {
+					fighting[a] |= 1u << b;
+					fighting[b] |= 1u << a;
+				}
+			}
+		}
+		for (int b = 0; b != max_players; ++b) {
+			if (!active(st, b)) continue;
+			for (unit_t* u : ptr(st.player_units.at(b))) {
+				if (f.unit_dead(u) || !u->sprite || f.ut_building(u) || f.ut_worker(u) || !f.unit_can_attack(u)) continue;
+				for (int a = 0; a != max_players; ++a) {
+					if (a == b || !active(st, a) || same_group(a, b) || (fighting[a] & (1u << b))) continue;
+					for (xy pos : bases[(size_t)a]) {
+						if (dist2(pos, u->sprite->position) < 320 * 320) {
+							fighting[a] |= 1u << b;
+							fighting[b] |= 1u << a;
+							break;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	static int dist2(xy a, xy b) {
+		int dx = a.x - b.x, dy = a.y - b.y;
+		return dx * dx + dy * dy;
 	}
 
 	void after_frame(state& st) {
 		// A defeated player drops out of its group.
 		for (int p = 0; p != max_players; ++p) {
-			if (playing[p] && !active(st, p) && members(group[p]).size() > 1) drop(st, p);
+			if (playing[p] && !active(st, p) && (members(group[p]).size() > 1 || lord[p] >= 0 || has_vassals(p))) drop(st, p);
 		}
 		sync(st);
 		score(st);
 		if (st.current_frame % 8 == 0) share_technology(st);
+		if (st.current_frame % 24 == 0) survey(st);
+	}
+
+	bool has_vassals(int p) const {
+		for (int m = 0; m != max_players; ++m) {
+			if (lord[m] == p) return true;
+		}
+		return false;
 	}
 };
 
