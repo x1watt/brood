@@ -28,7 +28,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 5
+#define BW_BRIDGE_ABI_VERSION 6
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -127,6 +127,13 @@ bw_status bw_bridge_get_player_colors(bw_bridge_t* bridge, uint8_t* out_colors, 
 // Frame dimensions for a given image type's frame, needed to size the
 // buffer passed to bw_bridge_decode_image_frame.
 bw_status bw_bridge_get_image_frame_size(bw_bridge_t* bridge, int image_type_id, int frame_index, int* out_width, int* out_height);
+
+// Number of animation frames a GRP has — lets the host batch-decode a
+// unit's whole frame set the first time it's seen, instead of decoding one
+// animation frame at a time as new ones appear during play (which pops the
+// sprite out for a tick on every still-undecoded frame — visible as
+// flicker on any animating unit).
+bw_status bw_bridge_get_image_frame_count(bw_bridge_t* bridge, int image_type_id, int* out_count);
 
 // Decodes one GRP frame into out_pixels as width*height palette-index bytes
 // (0-255, use bw_bridge_get_palette to turn these into colors; index 0 is

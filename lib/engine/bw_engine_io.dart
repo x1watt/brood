@@ -157,6 +157,16 @@ class BwEngine {
     }
   }
 
+  int getImageFrameCount(int imageTypeId) {
+    final countPtr = calloc<ffi.Int>();
+    try {
+      _check(_bindings.bw_bridge_get_image_frame_count(_handle, imageTypeId, countPtr), 'getImageFrameCount');
+      return countPtr.value;
+    } finally {
+      calloc.free(countPtr);
+    }
+  }
+
   (int width, int height) getImageFrameSize(int imageTypeId, int frameIndex) {
     final wPtr = calloc<ffi.Int>();
     final hPtr = calloc<ffi.Int>();

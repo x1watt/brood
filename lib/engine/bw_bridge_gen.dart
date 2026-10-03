@@ -353,6 +353,37 @@ class BwBridgeBindings {
             )
           >();
 
+  /// Number of animation frames a GRP has — lets the host batch-decode a
+  /// unit's whole frame set the first time it's seen, instead of decoding one
+  /// animation frame at a time as new ones appear during play (which pops the
+  /// sprite out for a tick on every still-undecoded frame — visible as
+  /// flicker on any animating unit).
+  bw_status bw_bridge_get_image_frame_count(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int image_type_id,
+    ffi.Pointer<ffi.Int> out_count,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_get_image_frame_count(bridge, image_type_id, out_count),
+    );
+  }
+
+  late final _bw_bridge_get_image_frame_countPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Pointer<ffi.Int>,
+          )
+        >
+      >('bw_bridge_get_image_frame_count');
+  late final _bw_bridge_get_image_frame_count =
+      _bw_bridge_get_image_frame_countPtr
+          .asFunction<
+            int Function(ffi.Pointer<bw_bridge_t>, int, ffi.Pointer<ffi.Int>)
+          >();
+
   /// Decodes one GRP frame into out_pixels as width*height palette-index bytes
   /// (0-255, use bw_bridge_get_palette to turn these into colors; index 0 is
   /// BW's transparent index). out_cap must be >= width*height from
@@ -885,4 +916,4 @@ final class bw_sprite_info extends ffi.Struct {
   external int unit_id;
 }
 
-const int BW_BRIDGE_ABI_VERSION = 5;
+const int BW_BRIDGE_ABI_VERSION = 6;

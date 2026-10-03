@@ -4,11 +4,22 @@
 // tables into real ui.Image tiles Flutter can draw, caching one image per
 // (imageTypeId, frameIndex, flipped, owner) combination actually seen.
 //
-// This is the seam where custom/HD texture replacement plugs in later:
-// resolve() below is the only place that decides "what picture represents
-// this (imageTypeId, frameIndex, flipped, owner)" — swap its body for a
-// lookup into a user-supplied texture pack, falling back to the original
-// decode, and nothing else in the rendering pipeline needs to change.
+// Decoding happens in batches keyed by (imageTypeId, owner): the first time
+// a unit type is seen, every one of its animation frames (both flip
+// states) is decoded up front, not just the single frame currently on
+// screen. Animating units cycle through many distinct frame indices as
+// they walk/attack/idle — decoding one frame at a time on first sight
+// meant every still-undecoded frame popped the sprite out for a tick,
+// which read as constant flicker on any moving unit. Batching removes
+// that: once a unit type has been seen once, all its frames are already
+// cached before they're needed.
+//
+// This is also the seam where custom/HD texture replacement plugs in
+// later: resolve() below is the only place that decides "what picture
+// represents this (imageTypeId, frameIndex, flipped, owner)" — swap its
+// body for a lookup into a user-supplied texture pack, falling back to the
+// original decode, and nothing else in the rendering pipeline needs to
+// change.
 
 import 'dart:async';
 import 'dart:typed_data';
@@ -22,7 +33,7 @@ class SpriteAtlas {
   final Uint8List _playerColors; // 16 * 8
 
   final Map<String, ui.Image> _cache = {};
-  final Map<String, Future<ui.Image>> _pending = {};
+  final Set<String> _batchesStarted = {};
 
   SpriteAtlas(this._engine)
     : _palette = _engine.getPalette(),
@@ -31,29 +42,47 @@ class SpriteAtlas {
   static String _key(int imageTypeId, int frameIndex, bool flipped, int owner) =>
       '$imageTypeId:$frameIndex:${flipped ? 1 : 0}:$owner';
 
-  /// Returns the cached image for this sprite identity if already decoded,
-  /// kicking off a decode for next time if not. Returns null on a cache
-  /// miss so the first frame or two of a never-before-seen sprite can be
-  /// skipped rather than block the paint call on an async decode.
+  static String _batchKey(int imageTypeId, int owner) => '$imageTypeId:$owner';
+
+  /// Returns the cached image for this sprite identity if already decoded.
+  /// On a miss, kicks off decoding every frame of this (imageTypeId, owner)
+  /// pair (not just this one) and returns null for this call — the sprite
+  /// is skipped for a tick or two the very first time its unit type is
+  /// ever seen, then never again.
   ui.Image? resolve(int imageTypeId, int frameIndex, bool flipped, int owner) {
     final key = _key(imageTypeId, frameIndex, flipped, owner);
     final cached = _cache[key];
     if (cached != null) return cached;
-    if (!_pending.containsKey(key)) {
-      _pending[key] = _decode(imageTypeId, frameIndex, flipped, owner).then((image) {
-        _cache[key] = image;
-        _pending.remove(key);
-        return image;
-      });
+
+    final batchKey = _batchKey(imageTypeId, owner);
+    if (_batchesStarted.add(batchKey)) {
+      unawaited(_decodeAllFrames(imageTypeId, owner));
     }
     return null;
   }
 
-  Future<ui.Image> _decode(int imageTypeId, int frameIndex, bool flipped, int owner) async {
+  Future<void> _decodeAllFrames(int imageTypeId, int owner) async {
+    final frameCount = _engine.getImageFrameCount(imageTypeId);
+    final colors = _playerColors.sublist(owner * 8, owner * 8 + 8);
+
+    for (int frameIndex = 0; frameIndex != frameCount; ++frameIndex) {
+      for (final flipped in const [false, true]) {
+        final image = await _decodeOne(imageTypeId, frameIndex, flipped, owner, colors);
+        _cache[_key(imageTypeId, frameIndex, flipped, owner)] = image;
+      }
+    }
+  }
+
+  Future<ui.Image> _decodeOne(
+    int imageTypeId,
+    int frameIndex,
+    bool flipped,
+    int owner,
+    Uint8List colors,
+  ) async {
     final (width, height) = _engine.getImageFrameSize(imageTypeId, frameIndex);
     final indexed = _engine.decodeImageFrame(imageTypeId, frameIndex, flipped);
 
-    final colors = _playerColors.sublist(owner * 8, owner * 8 + 8);
     final rgba = Uint8List(width * height * 4);
     for (int i = 0; i != width * height; ++i) {
       int idx = indexed[i];

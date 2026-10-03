@@ -269,6 +269,18 @@ static const grp_t::frame_t* get_frame(bw_bridge* b, int image_type_id, int fram
 	return &grp->frames.at((size_t)frame_index);
 }
 
+bw_status bw_bridge_get_image_frame_count(bw_bridge_t* bridge, int image_type_id, int* out_count) {
+	if (!bridge || !out_count) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = reinterpret_cast<bw_bridge*>(bridge);
+	if (!b->game_started || !b->player) return BW_ERR_NO_GAME;
+	state& st = b->player->st();
+	if (image_type_id < 0 || (size_t)image_type_id >= st.global->image_grp.size()) return BW_ERR_INVALID_ARGUMENT;
+	const grp_t* grp = st.global->image_grp[(size_t)image_type_id];
+	if (!grp) return BW_ERR_INVALID_ARGUMENT;
+	*out_count = (int)grp->frames.size();
+	return BW_OK;
+}
+
 bw_status bw_bridge_get_image_frame_size(bw_bridge_t* bridge, int image_type_id, int frame_index, int* out_width, int* out_height) {
 	if (!bridge || !out_width || !out_height) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = reinterpret_cast<bw_bridge*>(bridge);
