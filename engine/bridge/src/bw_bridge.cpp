@@ -150,6 +150,7 @@ struct bw_bridge {
 		op_alliance_leave,
 		op_alliance_surrender,
 		op_alliance_answer_surrender,
+		op_autoplay,
 	};
 	a_vector<int32_t> cmd_log;
 	void log(int32_t op, std::initializer_list<int32_t> args, const int32_t* extra = nullptr, int extra_n = 0) {
@@ -281,6 +282,10 @@ static bw_status for_commanded(bw_bridge* b, int owner, F&& fn) {
 		if (!controls(b, owner, u->owner)) continue;
 		seen[(size_t)u->owner] = true;
 		actors.push_back(u->owner);
+	}
+	// The human's own units too: auto-play leaves them alone for a while.
+	for (unit_t* u : all) {
+		if (u && u->owner == owner) b->ai.human_commanded(u, st.current_frame);
 	}
 	if (actors.empty() || (actors.size() == 1 && actors[0] == owner)) return fn(owner);
 	bw_status result = BW_ERR_REJECTED;
@@ -464,6 +469,7 @@ bw_status bw_bridge_new_game(bw_bridge_t* bridge, const char* map_file, const bw
 		b->alliances_on = count > 1;
 		b->sim->allies = b->alliances_on ? &b->alliances : nullptr;
 		b->ai.allies = b->alliances_on ? &b->alliances : nullptr;
+		b->ai.groups = &b->groups;
 		return BW_OK;
 	} catch (...) {
 		b->game_started = false;
@@ -559,6 +565,7 @@ bw_status bw_bridge_replay_commands(bw_bridge_t* bridge, const int32_t* log, int
 			case bw_bridge::op_alliance_leave: bw_bridge_alliance_leave(bridge, arg(0)); break;
 			case bw_bridge::op_alliance_surrender: bw_bridge_alliance_surrender(bridge, arg(0), arg(1)); break;
 			case bw_bridge::op_alliance_answer_surrender: bw_bridge_alliance_answer_surrender(bridge, arg(0), arg(1), arg(2)); break;
+			case bw_bridge::op_autoplay: bw_bridge_set_autoplay(bridge, arg(0), arg(1)); break;
 			default: return BW_ERR_INVALID_ARGUMENT;
 			}
 			i += 3 + (size_t)n;
@@ -1916,4 +1923,24 @@ int bw_bridge_poll_alliance_events(bw_bridge_t* bridge, bw_alliance_event* out, 
 	}
 	events.erase(events.begin(), events.begin() + n);
 	return n;
+}
+
+// --- Auto-play -------------------------------------------------------------------
+
+bw_status bw_bridge_set_autoplay(bw_bridge_t* bridge, int player_slot, int modes) {
+	if (!bridge || player_slot < 0 || player_slot > 7 || modes < 0 || modes > BW_AUTOPLAY_ALL) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	b->log(bw_bridge::op_autoplay, {player_slot, modes});
+	state& st = b->player->st();
+	if (st.players[(size_t)player_slot].controller != player_t::controller_occupied) return BW_ERR_REJECTED;
+	b->ai.groups = &b->groups;
+	b->ai.set_autoplay(player_slot, st.players[(size_t)player_slot].race, (uint32_t)st.current_frame * 7919u + 17u,
+	                   st.game->start_locations[(size_t)player_slot], modes);
+	return BW_OK;
+}
+
+int bw_bridge_get_autoplay(bw_bridge_t* bridge, int player_slot) {
+	if (!bridge || player_slot < 0 || player_slot > 7 || !B(bridge)->in_game()) return 0;
+	return B(bridge)->ai.autoplay(player_slot);
 }

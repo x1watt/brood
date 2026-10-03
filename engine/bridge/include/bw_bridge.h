@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 15
+#define BW_BRIDGE_ABI_VERSION 16
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -158,6 +158,23 @@ typedef struct bw_alliance_event {
 
 // Drains alliance events (oldest first). Returns the count written.
 int bw_bridge_poll_alliance_events(bw_bridge_t* bridge, bw_alliance_event* out, int max_count);
+
+// --- Auto-play ------------------------------------------------------------------
+//
+// The computer player can play alongside a human, limited to chosen parts of
+// the game. It leaves alone every unit the human commanded in the last
+// minute or keeps in a control group, never changes the human's selection
+// and doesn't negotiate alliances. Logged for saved games.
+
+#define BW_AUTOPLAY_RESOURCES 1  // workers on minerals and gas, balanced over bases, more workers
+#define BW_AUTOPLAY_BUILDING 2   // buildings of the build order as soon as possible, upgrades
+#define BW_AUTOPLAY_ATTACKING 4  // army, base defence and attack waves
+#define BW_AUTOPLAY_COLONIZING 8 // new bases with workers and defences
+#define BW_AUTOPLAY_ALL 15       // all of it: plays like a computer player
+
+// modes: a combination of BW_AUTOPLAY_* (0 turns auto-play off).
+bw_status bw_bridge_set_autoplay(bw_bridge_t* bridge, int player_slot, int modes);
+int bw_bridge_get_autoplay(bw_bridge_t* bridge, int player_slot);
 
 // --- Fog of war ----------------------------------------------------------------
 

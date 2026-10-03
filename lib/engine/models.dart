@@ -292,3 +292,16 @@ class AllianceEvent {
   final int b;
   const AllianceEvent(this.frame, this.kind, this.a, this.b);
 }
+
+/// What auto-play takes care of (BW_AUTOPLAY_* bits).
+enum AutoplayMode {
+  resources(1),
+  building(2),
+  attacking(4),
+  colonizing(8);
+
+  final int bit;
+  const AutoplayMode(this.bit);
+
+  static const int all = 15;
+}

@@ -12,6 +12,7 @@ import '../game/command_cards.dart';
 import '../game/game_controller.dart';
 import '../rendering/icon_atlas.dart';
 import 'alliance_panel.dart';
+import 'autoplay_panel.dart';
 
 const _panelColor = Color(0xFF000000);
 const _borderColor = Color(0xFF2A2A2A);
@@ -30,12 +31,16 @@ class TopBar extends StatelessWidget {
   final VoidCallback onMenu;
   final VoidCallback onAlliances;
   final bool alliancesOpen;
+  final VoidCallback onAutoplay;
+  final bool autoplayOpen;
   const TopBar({
     super.key,
     required this.c,
     required this.onMenu,
     required this.onAlliances,
     required this.alliancesOpen,
+    required this.onAutoplay,
+    required this.autoplayOpen,
     required this.fullscreen,
     required this.onToggleFullscreen,
     required this.onToggleMute,
@@ -120,6 +125,8 @@ class TopBar extends StatelessWidget {
               style: TextStyle(color: c.message != null ? const Color(0xFFFFD54F) : _textColor),
             ),
           ),
+          AutoplayButton(c: c, open: autoplayOpen, onPressed: onAutoplay),
+          const SizedBox(width: 6),
           _AllianceButton(c: c, open: alliancesOpen, onPressed: onAlliances),
           const SizedBox(width: 6),
           IconButton(

@@ -344,6 +344,37 @@ class BwBridgeBindings {
             )
           >();
 
+  /// modes: a combination of BW_AUTOPLAY_* (0 turns auto-play off).
+  bw_status bw_bridge_set_autoplay(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int player_slot,
+    int modes,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_set_autoplay(bridge, player_slot, modes),
+    );
+  }
+
+  late final _bw_bridge_set_autoplayPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_set_autoplay');
+  late final _bw_bridge_set_autoplay = _bw_bridge_set_autoplayPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int)>();
+
+  int bw_bridge_get_autoplay(ffi.Pointer<bw_bridge_t> bridge, int player_slot) {
+    return _bw_bridge_get_autoplay(bridge, player_slot);
+  }
+
+  late final _bw_bridge_get_autoplayPtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int)>
+      >('bw_bridge_get_autoplay');
+  late final _bw_bridge_get_autoplay = _bw_bridge_get_autoplayPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int)>();
+
   /// Whose eyes the draw list, unit list and unit picking use: other players'
   /// units are left out unless that player can see them, neutral ones unless
   /// their ground is explored. -1 (the default) shows everything.
@@ -2416,7 +2447,7 @@ final class bw_sound_info extends ffi.Struct {
   external ffi.Array<ffi.Char> filename;
 }
 
-const int BW_BRIDGE_ABI_VERSION = 15;
+const int BW_BRIDGE_ABI_VERSION = 16;
 
 const int BW_MAX_PLAYERS = 8;
 
@@ -2443,6 +2474,16 @@ const int BW_ALLIANCE_SURRENDERED = 8;
 const int BW_ALLIANCE_SURRENDER_REFUSED = 9;
 
 const int BW_ALLIANCE_VASSAL_MOVED = 10;
+
+const int BW_AUTOPLAY_RESOURCES = 1;
+
+const int BW_AUTOPLAY_BUILDING = 2;
+
+const int BW_AUTOPLAY_ATTACKING = 4;
+
+const int BW_AUTOPLAY_COLONIZING = 8;
+
+const int BW_AUTOPLAY_ALL = 15;
 
 const int BW_DRAW_IMAGE = 0;
 

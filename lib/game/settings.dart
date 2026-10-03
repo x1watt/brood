@@ -16,8 +16,17 @@ class Settings {
   Map<String, dynamic>? lastSetup; // GameSetup.toJson() of the last new game
   bool alliancePanelLeft; // dock the alliance panel on the left
   bool autosave; // save a point in time every few minutes of play
+  int autoplayModes; // what auto-play does when switched on (AutoplayMode bits)
 
-  Settings._(this.file, {this.volume = 0.7, this.muted = false, this.fullscreen = false, this.lastSetup, this.alliancePanelLeft = false, this.autosave = true});
+  Settings._(this.file, {
+    this.volume = 0.7,
+    this.muted = false,
+    this.fullscreen = false,
+    this.lastSetup,
+    this.alliancePanelLeft = false,
+    this.autosave = true,
+    this.autoplayModes = 15,
+  });
 
   static File defaultFile() {
     final env = Platform.environment;
@@ -40,6 +49,7 @@ class Settings {
           lastSetup: j['lastSetup'] is Map<String, dynamic> ? j['lastSetup'] as Map<String, dynamic> : null,
           alliancePanelLeft: j['alliancePanelLeft'] == true,
           autosave: j['autosave'] != false,
+          autoplayModes: ((j['autoplayModes'] as num?)?.toInt() ?? 15).clamp(1, 15),
         );
       }
     } catch (_) {
@@ -59,6 +69,7 @@ class Settings {
         if (lastSetup != null) 'lastSetup': lastSetup,
         'alliancePanelLeft': alliancePanelLeft,
         'autosave': autosave,
+        'autoplayModes': autoplayModes,
       }));
       tmp.renameSync(file.path);
     } catch (_) {

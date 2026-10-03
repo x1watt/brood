@@ -19,6 +19,7 @@ import '../game/play_stats.dart';
 import '../game/saved_games.dart';
 import '../game/settings.dart';
 import 'alliance_panel.dart';
+import 'autoplay_panel.dart';
 import 'game_viewport.dart';
 import 'hud.dart';
 import 'minimap_view.dart';
@@ -43,6 +44,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
   bool _fullscreen = false;
   bool _menuOpen = false;
   bool _alliancesOpen = false;
+  bool _autoplayOpen = false;
   bool _outcomeShown = false;
   Timer? _statsTimer;
   int _countedFrames = 0;
@@ -202,6 +204,12 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       ..alliancePanelLeft = !widget.settings.alliancePanelLeft
       ..save();
     setState(() {});
+    _focus.requestFocus();
+  }
+
+  void _toggleAutoplay() {
+    if (!_c.ready) return;
+    setState(() => _autoplayOpen = !_autoplayOpen);
     _focus.requestFocus();
   }
 
@@ -413,6 +421,10 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       _toggleAlliances();
       return KeyEventResult.handled;
     }
+    if (e is KeyDownEvent && key == LogicalKeyboardKey.f8) {
+      _toggleAutoplay();
+      return KeyEventResult.handled;
+    }
 
     final arrow = _arrows[key];
     if (arrow != null) {
@@ -501,6 +513,8 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                         onMenu: _openMenu,
                         onAlliances: _toggleAlliances,
                         alliancesOpen: _alliancesOpen,
+                        onAutoplay: _toggleAutoplay,
+                        autoplayOpen: _autoplayOpen,
                         onToggleFullscreen: _toggleFullscreen,
                         onToggleMute: _toggleMute,
                         onVolume: _setVolume,
@@ -536,6 +550,25 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                               ),
                             ),
                           ),
+                          if (_autoplayOpen)
+                            Positioned(
+                              top: 6,
+                              right: 200,
+                              child: ListenableBuilder(
+                                listenable: _c.hud,
+                                builder: (_, _) => AutoplayPanel(
+                                  c: _c,
+                                  chosen: widget.settings.autoplayModes,
+                                  onChoose: (m) {
+                                    widget.settings
+                                      ..autoplayModes = m
+                                      ..save();
+                                    setState(() {});
+                                  },
+                                  onClose: _toggleAutoplay,
+                                ),
+                              ),
+                            ),
                           if (_showPerf)
                             Positioned(
                               right: 8,

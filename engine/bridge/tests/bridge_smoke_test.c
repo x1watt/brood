@@ -566,6 +566,165 @@ static void test_surrender(const char* dd, const char* mf) {
 	bw_bridge_destroy(b);
 }
 
+/* Auto-play for the human: resources only, then building too; units kept in
+ * a control group are left alone and the selection is untouched; full auto
+ * holds its own against a computer player; all of it replays. */
+static void test_autoplay(const char* dd, const char* mf) {
+	enum { BARRACKS = 111, DEPOT = 109 };
+	bw_game_setup setup;
+	memset(&setup, 0, sizeof(setup));
+	setup.player_count = 2;
+	setup.controller[0] = BW_PLAYER_HUMAN; setup.race[0] = 1; setup.team[0] = 1;
+	setup.controller[1] = BW_PLAYER_COMPUTER; setup.race[1] = 1; setup.team[1] = 1; /* allied: no war while we look */
+	setup.player_count = 3;
+	setup.controller[2] = BW_PLAYER_COMPUTER; setup.race[2] = 2; setup.team[2] = 2;
+	setup.seed = 99;
+	int32_t slots[8];
+	bw_bridge_t* b = bw_bridge_create();
+	CHECK(b && bw_bridge_load_assets(b, dd) == BW_OK && bw_bridge_new_game(b, mf, &setup, slots) == BW_OK, "autoplay: new game");
+	int me = slots[0];
+	bw_bridge_step(b, 1);
+	CHECK(bw_bridge_set_autoplay(b, me, BW_AUTOPLAY_RESOURCES) == BW_OK && bw_bridge_get_autoplay(b, me) == BW_AUTOPLAY_RESOURCES, "autoplay: on");
+	int32_t cc[1], scvs[64];
+	CHECK(find_units(b, me, TERRAN_COMMAND_CENTER, cc, 1) == 1, "autoplay: cc");
+	/* Keep one SCV for ourselves: group 1, sent away. */
+	CHECK(find_units(b, me, TERRAN_SCV, scvs, 64) == 4, "autoplay: scvs");
+	bw_unit_info c0;
+	bw_bridge_get_unit(b, cc[0], &c0);
+	bw_bridge_select_units(b, me, &scvs[0], 1);
+	bw_bridge_control_group(b, me, 1, BW_GROUP_ASSIGN);
+	int mw, mh;
+	bw_bridge_get_map_tile_size(b, &mw, &mh);
+	int px = c0.x + (mw * 16 > c0.x ? 320 : -320), py = c0.y + (mh * 16 > c0.y ? 320 : -320);
+	bw_bridge_order(b, me, BW_ORDER_MOVE, px, py, 0, 0);
+	/* The selection we leave: the command center. */
+	bw_bridge_select_units(b, me, cc, 1);
+	int32_t kept_id = scvs[0];
+	bw_bridge_step(b, 24 * 60 * 3);
+	int n_scv = find_units(b, me, TERRAN_SCV, scvs, 64);
+	int32_t tmp[8];
+	int barracks = find_units(b, me, BARRACKS, tmp, 8), depots = find_units(b, me, DEPOT, tmp, 8);
+	bw_unit_info kept;
+	bw_bridge_get_unit(b, kept_id, &kept);
+	int32_t sel[12];
+	int nsel = bw_bridge_get_selected_units(b, me, sel, 12);
+	printf("bridge_smoke_test: autoplay: resources mode after 3 min: %d SCVs, %d depots, %d barracks; kept SCV at %d,%d (sent to %d,%d)\n",
+	       n_scv, depots, barracks, kept.x, kept.y, px, py);
+	CHECK(n_scv >= 10, "autoplay: resources mode didn't train workers (%d)", n_scv);
+	CHECK(barracks == 0, "autoplay: resources mode built barracks");
+	CHECK(abs(kept.x - px) < 64 && abs(kept.y - py) < 64, "autoplay: the grouped SCV was taken over");
+	CHECK(nsel == 1 && sel[0] == cc[0], "autoplay: the human's selection changed");
+	/* Building too. */
+	CHECK(bw_bridge_set_autoplay(b, me, BW_AUTOPLAY_RESOURCES | BW_AUTOPLAY_BUILDING) == BW_OK, "autoplay: building");
+	bw_bridge_step(b, 24 * 60 * 3);
+	barracks = find_units(b, me, BARRACKS, tmp, 8);
+	printf("bridge_smoke_test: autoplay: with building, %d barracks after 3 more min\n", barracks);
+	CHECK(barracks >= 1, "autoplay: building mode built nothing");
+	/* Off again: nothing more happens on its own (no new workers queued). */
+	CHECK(bw_bridge_set_autoplay(b, me, 0) == BW_OK && bw_bridge_get_autoplay(b, me) == 0, "autoplay: off");
+	int end_frame = bw_bridge_current_frame(b);
+	unsigned long long h = state_hash(b);
+	int len = bw_bridge_command_log(b, NULL, 0);
+	int32_t* log = (int32_t*)malloc((size_t)len * sizeof(int32_t));
+	bw_bridge_command_log(b, log, len);
+	bw_bridge_t* c = bw_bridge_create();
+	int32_t slots2[8];
+	CHECK(c && bw_bridge_load_assets(c, dd) == BW_OK && bw_bridge_new_game(c, mf, &setup, slots2) == BW_OK, "autoplay: replay game");
+	CHECK(bw_bridge_replay_commands(c, log, len, end_frame) == BW_OK && state_hash(c) == h, "autoplay: replay diverged");
+	printf("bridge_smoke_test: autoplay: replay matches\n");
+	free(log);
+	bw_bridge_destroy(c);
+	bw_bridge_destroy(b);
+
+	/* Colonizing: new bases with defences (allied with a computer, so no
+	 * war distracts it). */
+	for (int race = 0; race != 3; ++race) {
+		static const int depot_types[3] = {131, 106, 154};
+		static const int defense_types[3][2] = {{143, 146}, {124, 125}, {162, 162}}; /* creep/sunken, turret/bunker, cannon */
+		memset(&setup, 0, sizeof(setup));
+		setup.player_count = 3;
+		setup.controller[0] = BW_PLAYER_HUMAN; setup.race[0] = race; setup.team[0] = 1;
+		setup.controller[1] = BW_PLAYER_COMPUTER; setup.race[1] = 1; setup.team[1] = 1;
+		setup.controller[2] = BW_PLAYER_COMPUTER; setup.race[2] = 2; setup.team[2] = 2;
+		setup.seed = 31;
+		b = bw_bridge_create();
+		CHECK(b && bw_bridge_load_assets(b, dd) == BW_OK && bw_bridge_new_game(b, mf, &setup, slots) == BW_OK, "autoplay: colonizing game");
+		bw_bridge_step(b, 1);
+		CHECK(bw_bridge_set_autoplay(b, slots[0], BW_AUTOPLAY_RESOURCES | BW_AUTOPLAY_BUILDING | BW_AUTOPLAY_COLONIZING) == BW_OK, "autoplay: colonizing on");
+		int32_t ids[32];
+		int max_halls = 0, max_defenses = 0;
+		for (int m = 1; m <= 14; ++m) {
+			bw_bridge_step(b, 24 * 60);
+			int h = find_units(b, slots[0], depot_types[race], ids, 32);
+			int d = find_units(b, slots[0], defense_types[race][0], ids, 32);
+			if (defense_types[race][1] != defense_types[race][0]) d += find_units(b, slots[0], defense_types[race][1], ids, 32);
+			if (h > max_halls) max_halls = h;
+			if (d > max_defenses) max_defenses = d;
+		}
+		printf("bridge_smoke_test: autoplay: colonizing as race %d: up to %d town halls and %d defences in 14 min\n", race, max_halls, max_defenses);
+		CHECK(max_halls >= 2, "autoplay: colonizing never expanded (race %d)", race);
+		CHECK(max_defenses >= 1, "autoplay: colonizing never defended a new base (race %d)", race);
+		bw_bridge_destroy(b);
+	}
+
+	/* Survival first: in resources mode only, once attacked it starts
+	 * production, trains an army and fights back (an idle human just falls,
+	 * see test_ai). */
+	{
+		memset(&setup, 0, sizeof(setup));
+		setup.player_count = 2;
+		setup.controller[0] = BW_PLAYER_HUMAN; setup.race[0] = 1;
+		setup.controller[1] = BW_PLAYER_COMPUTER; setup.race[1] = 1;
+		setup.seed = 12345;
+		b = bw_bridge_create();
+		CHECK(b && bw_bridge_load_assets(b, dd) == BW_OK && bw_bridge_new_game(b, mf, &setup, slots) == BW_OK, "autoplay: survival game");
+		bw_bridge_step(b, 1);
+		CHECK(bw_bridge_set_autoplay(b, slots[0], BW_AUTOPLAY_RESOURCES) == BW_OK, "autoplay: survival on");
+		int max_army = 0, fell = 0, barracks = 0;
+		int32_t tmp2[8];
+		bw_alliance_player al[8];
+		for (int q = 1; q <= 12 * 4 && !fell; ++q) {
+			int m = (q + 3) / 4;
+			bw_bridge_step(b, 24 * 15);
+			int w, bl, a;
+			count_owned(b, slots[0], &w, &bl, &a);
+			if (a > max_army) max_army = a;
+			int br = find_units(b, slots[0], BARRACKS, tmp2, 8);
+			if (br > barracks) barracks = br;
+			if (bw_bridge_victory_state(b, slots[0]) == 2) fell = m;
+		}
+		alliance_state(b, al);
+		printf("bridge_smoke_test: autoplay: resources mode under attack: built %d barracks, up to %d army units, destroyed %d units, %s\n", barracks, max_army,
+		       al[slots[0]].units_killed, fell ? "fell" : "still standing after 12 min");
+		CHECK(barracks > 0 && max_army > 0, "autoplay: resources mode didn't start defending itself");
+		bw_bridge_destroy(b);
+	}
+
+	/* Full auto against a computer player, one on one. */
+	memset(&setup, 0, sizeof(setup));
+	setup.player_count = 2;
+	setup.controller[0] = BW_PLAYER_HUMAN; setup.race[0] = 2;
+	setup.controller[1] = BW_PLAYER_COMPUTER; setup.race[1] = 0;
+	setup.seed = 5;
+	b = bw_bridge_create();
+	CHECK(b && bw_bridge_load_assets(b, dd) == BW_OK && bw_bridge_new_game(b, mf, &setup, slots) == BW_OK, "autoplay: 1v1");
+	bw_bridge_step(b, 1);
+	CHECK(bw_bridge_set_autoplay(b, slots[0], BW_AUTOPLAY_ALL) == BW_OK, "autoplay: all");
+	int minute = 0, v0 = 0, v1 = 0;
+	for (minute = 1; minute <= 40; ++minute) {
+		bw_bridge_step(b, 24 * 60);
+		v0 = bw_bridge_victory_state(b, slots[0]);
+		v1 = bw_bridge_victory_state(b, slots[1]);
+		if (v0 || v1) break;
+	}
+	int w, bl, a;
+	count_owned(b, slots[0], &w, &bl, &a);
+	printf("bridge_smoke_test: autoplay: full auto vs computer: minute %d, auto-play state %d, computer state %d (auto-play has %d workers, %d buildings)\n",
+	       minute, v0, v1, w, bl);
+	CHECK(v0 != 2 || minute > 12, "autoplay: full auto collapsed early");
+	bw_bridge_destroy(b);
+}
+
 int main(int argc, char** argv) {
 	char data_dir[1024], map_file[1100];
 	const char* home = getenv("HOME");
@@ -877,6 +1036,7 @@ int main(int argc, char** argv) {
 	test_save_replay(dd, mf);
 	test_alliances(dd, mf);
 	test_surrender(dd, mf);
+	test_autoplay(dd, mf);
 	test_ai(dd, mf);
 	printf("bridge_smoke_test: OK\n");
 	return 0;

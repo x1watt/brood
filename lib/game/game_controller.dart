@@ -396,6 +396,18 @@ class GameController {
     _allianceChanged();
   }
 
+  // --- auto-play ---
+
+  /// AutoplayMode bits running for me now (0 = off).
+  int autoplay = 0;
+
+  void setAutoplay(int modes) {
+    if (!ready) return;
+    engine.setAutoplay(myPlayer, modes);
+    autoplay = engine.autoplay(myPlayer);
+    _notifyHud(force: true);
+  }
+
   void leaveAlliance() {
     if (!ready) return;
     engine.allianceLeave(myPlayer);
@@ -585,6 +597,7 @@ class GameController {
 
   void _refreshUnits() {
     _refreshAlliance();
+    autoplay = engine.autoplay(myPlayer);
     units = engine.getUnits();
     unitsById = {for (final u in units) u.unitId: u};
     final previous = selection;

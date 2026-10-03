@@ -537,6 +537,12 @@ class BwEngine {
     }, growable: false);
   }
 
+  // --- auto-play ---
+
+  /// [modes]: AutoplayMode bits (0 turns auto-play off).
+  bool setAutoplay(int slot, int modes) => _ok(_b.bw_bridge_set_autoplay(_h, slot, modes));
+  int autoplay(int slot) => _b.bw_bridge_get_autoplay(_h, slot);
+
   // --- arbitrary UI graphics ---
 
   int grpLoad(String path) {

@@ -16,6 +16,12 @@
 // weaker ally to conquer it. A personality (trust) colours every decision.
 // Vassals keep playing for their lord but no longer negotiate.
 //
+// Auto-play: the same player can run for a human, limited to the parts the
+// human picks (modes below: resources, building, attacking, colonizing, or
+// all of them). It then leaves alone every unit the human commanded in the
+// last minute or keeps in a control group, never touches the human's
+// selection and doesn't negotiate alliances.
+//
 // It only ever commands its own units: OpenBW refuses orders for anyone
 // else's, and only the human player is given allies' units to command (in
 // bw_bridge.cpp). Units a human ally took over recently are left alone, and
@@ -45,6 +51,15 @@ using namespace bwgame;
 static const int think_interval = 12; // frames between decisions (about 0.5 s)
 static const int human_command_hold = 24 * 60; // frames a human-commanded unit is left alone
 
+// What a player (or auto-play) takes care of. Mirrors BW_AUTOPLAY_* in bw_bridge.h.
+enum mode : int {
+	mode_resources = 1,  // workers on minerals and gas, more workers, supply
+	mode_building = 2,   // the build order, upgrades, supply
+	mode_attacking = 4,  // army, defence and attack waves
+	mode_colonizing = 8, // new bases with workers and defences
+	mode_all = 15,
+};
+
 struct player {
 	int owner = -1;
 	race_t race = race_t::terran;
@@ -69,6 +84,12 @@ struct player {
 	int losing_since = -1;
 	int next_surrender = 0;
 	int focus = -1; // a former ally we turned on: attack it first
+	bool human = false; // auto-play for a human player
+	int modes = mode_all;
+	int next_balance = 0;
+	int next_defense = 0;
+	int militia_until = -1; // workers pulled into a fight: send them back afterwards
+	int threat_until = -1;  // the base was attacked recently
 
 	uint32_t next() {
 		rng = rng * 1103515245u + 12345u;
@@ -97,6 +118,30 @@ struct ai_system {
 	// Frame a human last commanded each unit (by unit index), for allied
 	// units a human player took over.
 	a_vector<int> human_frame;
+	// The bridge's control groups: units a human keeps in one are theirs.
+	const std::array<std::array<a_vector<unit_id>, 10>, 8>* groups = nullptr;
+	a_vector<size_t> grouped; // unit indices in the thinking human's groups
+
+	// Turns auto-play for a human player on (with modes) or off (0).
+	void set_autoplay(int owner, race_t race, uint32_t seed, xy home, int modes) {
+		for (auto& p : players) {
+			if (p.owner != owner) continue;
+			if (!p.human) return; // a computer player plays everything anyway
+			p.modes = modes;
+			return;
+		}
+		if (modes == 0) return;
+		add(owner, race, seed, home);
+		players.back().human = true;
+		players.back().modes = modes;
+	}
+
+	int autoplay(int owner) const {
+		for (auto& p : players) {
+			if (p.owner == owner && p.human) return p.modes;
+		}
+		return 0;
+	}
 
 	void human_commanded(const unit_t* u, int frame) {
 		if (human_frame.size() <= u->index) human_frame.resize(u->index + 1, -100000);
@@ -104,7 +149,8 @@ struct ai_system {
 	}
 
 	bool held_by_human(const unit_t* u, int frame) const {
-		return u->index < human_frame.size() && frame - human_frame[u->index] < human_command_hold;
+		if (u->index < human_frame.size() && frame - human_frame[u->index] < human_command_hold) return true;
+		return std::find(grouped.begin(), grouped.end(), u->index) != grouped.end();
 	}
 
 	void add(int owner, race_t race, uint32_t seed, xy home) {
@@ -133,14 +179,27 @@ struct ai_system {
 		int frame = st.current_frame;
 		for (auto& p : players) {
 			if ((frame + p.owner * 3) % think_interval != 0) continue;
+			if (p.human && p.modes == 0) continue;
 			// Defeated (its units turned neutral) or already won.
 			if (st.players[p.owner].controller != player_t::controller_occupied || st.players[p.owner].victory_state >= 3) continue;
+			// A human's selection stays as the human left it.
+			auto selection = action_st.selection.at(p.owner);
+			grouped.clear();
+			if (p.human && groups) {
+				for (auto& g : groups->at(p.owner)) {
+					for (unit_id id : g) {
+						if (unit_t* u = f.get_unit(id)) grouped.push_back(u->index);
+					}
+				}
+			}
 			try {
-				if (allies) diplomacy(f, p);
+				if (allies && !p.human) diplomacy(f, p);
 				think(f, p);
 			} catch (...) {
 				// A failed decision must never stop the game; try again next time.
 			}
+			action_st.selection.at(p.owner) = selection;
+			grouped.clear();
 			// Fold this player's spending into its alliance's treasury
 			// before the next one decides.
 			if (allies) allies->sync(st);
@@ -268,6 +327,8 @@ private:
 		std::array<int, (size_t)UnitTypes::None> planned{}; // existing, queued and ordered
 		std::array<int, (size_t)UnitTypes::None> done{};    // completed
 		int gas_workers = 0;
+		int reserved_minerals = 0; // buildings whose worker is still on the way
+		int reserved_gas = 0;
 		int minerals = 0;
 		int gas = 0;
 		int supply_used = 0; // whole supply units
@@ -297,7 +358,12 @@ private:
 				if (!completed || held) continue;
 				s.workers.push_back(u);
 				if (is_gas_order(u->order_type->id)) ++s.gas_workers;
-				if (is_build_order(u->order_type->id) && !u->build_queue.empty()) bump(s.planned, u->build_queue.front());
+				if (is_build_order(u->order_type->id) && !u->build_queue.empty()) {
+					bump(s.planned, u->build_queue.front());
+					// Paid only when placed: keep the money for it.
+					s.reserved_minerals += u->build_queue.front()->mineral_cost;
+					s.reserved_gas += u->build_queue.front()->gas_cost;
+				}
 			} else if (f.ut_building(u)) {
 				s.buildings.push_back(u);
 				if (completed && f.ut_resource_depot(u)) s.depots.push_back(u);
@@ -466,16 +532,19 @@ private:
 	// Places a building of type `type` near the home base. Returns true when
 	// an order was issued.
 	bool place(action_functions& f, player& p, snapshot& s, UnitTypes type) {
-		const unit_type_t* ut = f.get_unit_type(type);
 		xy center = s.depots.empty() ? p.home : s.depots.front()->sprite->position;
+		return place_near(f, p, s, type, center, type == supply_of(p.race) ? 3 : 4, 16);
+	}
+
+	bool place_near(action_functions& f, player& p, snapshot& s, UnitTypes type, xy center, int min_r, int max_r) {
+		const unit_type_t* ut = f.get_unit_type(type);
 		unit_t* builder = pick_builder(f, s, center);
 		if (!builder) return false;
 		xy_t<size_t> tile;
 		if (type == gas_of(p.race)) {
 			if (!find_geyser(f, p, s, ut, tile)) return false;
 		} else {
-			int min_r = type == supply_of(p.race) ? 3 : 4;
-			if (!find_spot(f, p, builder, ut, center, min_r, 16, tile)) return false;
+			if (!find_spot(f, p, builder, ut, center, min_r, max_r, tile)) return false;
 		}
 		if (!select(f, p, builder)) return false;
 		return f.action_build(p.owner, build_order_for(f, builder), ut, tile);
@@ -773,17 +842,26 @@ private:
 		if (s.depots.empty() && s.workers.empty() && s.army.empty()) return;
 		if (!s.depots.empty() && p.rally == p.home) p.rally = rally_point(f, p);
 
-		manage_workers(f, p, s);
+		bool resources = p.modes & mode_resources, building = p.modes & mode_building;
+		bool attacking = p.modes & mode_attacking, colonizing = p.modes & mode_colonizing;
+		// Survival comes before the chosen job (see defend()).
+		unit_t* intruder = p.human ? find_intruder(f, p, s) : nullptr;
+		// Warned early by an enemy army on its way, not just at the gates.
+		if (intruder || (p.human && find_intruder(f, p, s, 1100))) p.threat_until = f.st.current_frame + 24 * 90;
+		// Under attack (and for a while after): army, and what makes one.
+		bool threatened = f.st.current_frame < p.threat_until;
+		if (resources || f.st.current_frame < p.militia_until + 24 * 30) manage_workers(f, p, s);
+		if (resources) balance_workers(f, p, s);
 
 		// Money still uncommitted after this round's decisions. With human
 		// allies the treasury is common: use only the computers' share.
-		int minerals = s.minerals, gas = s.gas;
-		if (allies) {
+		int minerals = s.minerals - s.reserved_minerals, gas = s.gas - s.reserved_gas;
+		if (allies && !p.human) {
 			auto mates = allies->members(allies->group[p.owner]);
 			int computers = 0;
 			for (int m : mates) {
 				for (auto& o : players) {
-					if (o.owner == m) ++computers;
+					if (o.owner == m && !o.human) ++computers;
 				}
 			}
 			if (computers < (int)mates.size()) {
@@ -793,12 +871,16 @@ private:
 		}
 
 		bool supply_ordered = keep_supply(f, p, s, minerals, gas);
-		train_workers(f, p, s, minerals, gas);
-		if (!supply_ordered) follow_build_order(f, p, s, minerals, gas);
-		maybe_expand(f, p, s, minerals, gas);
-		research(f, p, s, minerals, gas);
-		train_army(f, p, s, minerals, gas);
-		command_army(f, p, s);
+		if (resources || colonizing) train_workers(f, p, s, minerals, gas);
+		// Defences for new bases come before the next building of the build
+		// order (which would otherwise keep the money reserved); new bases
+		// after it, since defences need its buildings.
+		if (colonizing) build_defenses(f, p, s, minerals, gas);
+		if ((building || threatened) && !supply_ordered) follow_build_order(f, p, s, minerals, gas);
+		if (colonizing) maybe_expand(f, p, s, minerals, gas);
+		if (building) research(f, p, s, minerals, gas);
+		if (attacking || threatened) train_army(f, p, s, minerals, gas);
+		if (attacking || threatened || !s.army.empty()) command_army(f, p, s, attacking);
 	}
 
 	xy rally_point(action_functions& f, player& p) {
@@ -983,6 +1065,13 @@ private:
 				}
 			}
 		}
+		// Colonizing picked for a human (rather than full auto, which plays
+		// like any computer player): a new base as soon as the current ones
+		// are well worked or money piles up.
+		if (p.human && p.modes != mode_all && frame > 24 * 60 * 3) {
+			bool saturated = (int)s.workers.size() >= std::max(1, owned_sites) * 14;
+			wanted_bases = std::min(6, owned_sites + (saturated || s.minerals >= 500 ? 1 : 0));
+		}
 		if (owned_sites >= wanted_bases) return;
 		// A town hall already on its way?
 		for (unit_t* w : s.workers) {
@@ -1046,6 +1135,129 @@ private:
 		}
 		if (!have || !select(f, p, builder)) return;
 		if (f.action_build(p.owner, build_order_for(f, builder), ut, tile)) minerals -= ut->mineral_cost;
+	}
+
+	// Moves miners from crowded bases to ones with free mineral patches.
+	void balance_workers(action_functions& f, player& p, snapshot& s) {
+		int frame = f.st.current_frame;
+		if (frame < p.next_balance || s.depots.size() < 2) return;
+		p.next_balance = frame + 24 * 10;
+		struct base_load {
+			unit_t* depot;
+			int patches = 0;
+			a_vector<unit_t*> miners;
+		};
+		a_vector<base_load> bases;
+		for (unit_t* d : s.depots) bases.push_back({d});
+		for (unit_t* m : ptr(f.st.player_units.at(11))) {
+			if (f.unit_dead(m) || !f.unit_is_mineral_field(m)) continue;
+			for (auto& b : bases) {
+				if (dist2(m->sprite->position, b.depot->sprite->position) < 320 * 320) {
+					++b.patches;
+					break;
+				}
+			}
+		}
+		for (unit_t* w : s.workers) {
+			auto id = w->order_type->id;
+			if (id != Orders::MoveToMinerals && id != Orders::WaitForMinerals && id != Orders::MiningMinerals) continue;
+			base_load* best = nullptr;
+			int best_d = 0;
+			for (auto& b : bases) {
+				int d = dist2(w->sprite->position, b.depot->sprite->position);
+				if (!best || d < best_d) {
+					best = &b;
+					best_d = d;
+				}
+			}
+			if (best) best->miners.push_back(w);
+		}
+		// Two miners per patch is the sweet spot.
+		for (auto& from : bases) {
+			int surplus = (int)from.miners.size() - from.patches * 2;
+			for (auto& to : bases) {
+				if (surplus <= 0) break;
+				if (&to == &from || to.patches == 0) continue;
+				int room = to.patches * 2 - (int)to.miners.size();
+				while (room > 0 && surplus > 0 && !from.miners.empty()) {
+					unit_t* w = from.miners.back();
+					from.miners.pop_back();
+					unit_t* patch = nullptr;
+					for (unit_t* m : ptr(f.st.player_units.at(11))) {
+						if (!f.unit_dead(m) && f.unit_is_mineral_field(m) && dist2(m->sprite->position, to.depot->sprite->position) < 320 * 320) {
+							patch = m;
+							if (!m->building.resource.is_being_gathered) break;
+						}
+					}
+					if (!patch) break;
+					if (select(f, p, w)) f.action_default_order(p.owner, patch->sprite->position, patch, nullptr, false);
+					to.miners.push_back(w);
+					--room;
+					--surplus;
+				}
+			}
+		}
+	}
+
+	static bool is_defense(UnitTypes t) {
+		return t == UnitTypes::Terran_Bunker || t == UnitTypes::Terran_Missile_Turret || t == UnitTypes::Protoss_Photon_Cannon ||
+		       t == UnitTypes::Zerg_Creep_Colony || t == UnitTypes::Zerg_Sunken_Colony || t == UnitTypes::Zerg_Spore_Colony;
+	}
+
+	// Two defences at every base other than the main one.
+	void build_defenses(action_functions& f, player& p, snapshot& s, int& minerals, int& gas) {
+		if (f.st.current_frame < p.next_defense) return;
+		// New bases get their defences while the town hall is still going up.
+		for (unit_t* d : s.buildings) {
+			if (!f.ut_resource_depot(d)) continue;
+			xy at = d->sprite->position;
+			if (dist2(at, p.home) < 320 * 320) continue;
+			int defenses = 0;
+			unit_t* pylon = nullptr;
+			unit_t* creep_colony = nullptr;
+			for (unit_t* b : s.buildings) {
+				if (dist2(b->sprite->position, at) > 288 * 288) continue;
+				if (is_defense(b->unit_type->id)) ++defenses;
+				// A finished pylon powers cannons; an unfinished one is waited for.
+				if (f.unit_is(b, UnitTypes::Protoss_Pylon) && (!pylon || f.u_completed(b))) pylon = b;
+				if (f.unit_is(b, UnitTypes::Zerg_Creep_Colony) && f.u_completed(b) && b->build_queue.empty()) creep_colony = b;
+			}
+			if (defenses >= 2 && !creep_colony) continue;
+			UnitTypes type = UnitTypes::None;
+			if (p.race == race_t::terran) {
+				if (s.done[(size_t)UnitTypes::Terran_Engineering_Bay]) type = UnitTypes::Terran_Missile_Turret;
+				else if (s.done[(size_t)UnitTypes::Terran_Barracks]) type = UnitTypes::Terran_Bunker;
+			} else if (p.race == race_t::protoss) {
+				if (!pylon) type = UnitTypes::Protoss_Pylon;
+				else if (!f.u_completed(pylon)) continue;
+				else if (s.done[(size_t)UnitTypes::Protoss_Forge]) type = UnitTypes::Protoss_Photon_Cannon;
+				else if (!s.planned[(size_t)UnitTypes::Protoss_Forge]) {
+					const unit_type_t* forge = f.get_unit_type(UnitTypes::Protoss_Forge);
+					if (affordable(forge, minerals, gas) && place(f, p, s, UnitTypes::Protoss_Forge)) minerals -= forge->mineral_cost;
+					return;
+				}
+			} else {
+				// Creep colonies grow into sunken colonies once the pool is up.
+				if (creep_colony && s.done[(size_t)UnitTypes::Zerg_Spawning_Pool]) {
+					const unit_type_t* sunken = f.get_unit_type(UnitTypes::Zerg_Sunken_Colony);
+					if (affordable(sunken, minerals, gas) && select(f, p, creep_colony) && f.action_morph_building(p.owner, sunken)) minerals -= sunken->mineral_cost;
+					return;
+				}
+				if (defenses < 2) type = UnitTypes::Zerg_Creep_Colony;
+			}
+			if (type == UnitTypes::None || defenses >= 2) continue;
+			const unit_type_t* ut = f.get_unit_type(type);
+			if (!affordable(ut, minerals, gas)) return;
+			// Cannons must stand in the pylon's power field.
+			xy center = type == UnitTypes::Protoss_Photon_Cannon && pylon ? pylon->sprite->position : at;
+			if (place_near(f, p, s, type, center, type == UnitTypes::Protoss_Photon_Cannon ? 1 : 2, 8)) {
+				minerals -= ut->mineral_cost;
+				gas -= ut->gas_cost;
+				// Give the worker time to walk there before asking again.
+				p.next_defense = f.st.current_frame + 24 * 20;
+			}
+			return; // one at a time
+		}
 	}
 
 	void research(action_functions& f, player& p, snapshot& s, int& minerals, int& gas) {
@@ -1170,21 +1382,65 @@ private:
 		return best;
 	}
 
-	void command_army(action_functions& f, player& p, snapshot& s) {
+	// An enemy close to any of our buildings (within `range`), or null.
+	unit_t* find_intruder(action_functions& f, player& p, snapshot& s, int range = 512) {
+		for (unit_t* b : s.buildings) {
+			if (unit_t* e = nearest_enemy(f, p, b->sprite->position, false, range)) {
+				// Further out, only an armed force counts (not a scout or an Overlord).
+				if (range <= 512 || (!f.ut_worker(e) && f.unit_can_attack(e))) return e;
+			}
+		}
+		return nullptr;
+	}
+
+	// Survival first: with the base under attack every unit defends (an
+	// attack wave out in the field is called back), and if there is no army
+	// to answer a small raid, the nearby workers fight it off.
+	void defend(action_functions& f, player& p, snapshot& s, unit_t* intruder) {
+		p.attacking = false;
+		a_vector<unit_t*> army;
+		for (unit_t* u : s.army) {
+			if (is_idle(u) || u->order_type->id == Orders::Move || u->order_type->id == Orders::AttackMove) army.push_back(u);
+		}
+		if (!army.empty()) order_group(f, p, army, Orders::AttackMove, intruder->sprite->position);
+		int ours = 0, theirs = 0;
+		for (unit_t* u : s.army) ours += u->unit_type->mineral_cost + u->unit_type->gas_cost;
+		for (int o = 0; o != 8; ++o) {
+			if (!is_enemy(f, p.owner, o)) continue;
+			for (unit_t* u : ptr(f.st.player_units.at(o))) {
+				if (f.unit_dead(u) || !u->sprite || f.ut_worker(u) || f.ut_building(u)) continue;
+				if (dist2(u->sprite->position, intruder->sprite->position) < 384 * 384) theirs += u->unit_type->mineral_cost + u->unit_type->gas_cost;
+			}
+		}
+		// Workers can't hit air, and an army of our own does better.
+		if (ours >= theirs || f.u_flying(intruder)) return;
+		size_t pull = ours == 0 ? 12 : 6;
+		a_vector<unit_t*> militia;
+		for (unit_t* w : s.workers) {
+			if (militia.size() >= pull) break;
+			if (dist2(w->sprite->position, intruder->sprite->position) < 320 * 320) militia.push_back(w);
+		}
+		if (militia.empty()) return;
+		order_group(f, p, militia, Orders::AttackMove, intruder->sprite->position);
+		p.militia_until = f.st.current_frame + 24 * 20;
+	}
+
+	void command_army(action_functions& f, player& p, snapshot& s, bool may_attack = true) {
 		int frame = f.st.current_frame;
 
-		// Defend: enemies close to any of our buildings.
-		unit_t* intruder = nullptr;
-		for (unit_t* b : s.buildings) {
-			intruder = nearest_enemy(f, p, b->sprite->position, false, 512);
-			if (intruder) break;
+		unit_t* intruder = find_intruder(f, p, s);
+		if (intruder) {
+			defend(f, p, s, intruder);
+			return;
 		}
-		if (intruder && !p.attacking) {
-			a_vector<unit_t*> idle;
+
+		if (!may_attack) {
+			// Not our job to attack: wait at the rally point.
+			a_vector<unit_t*> stray;
 			for (unit_t* u : s.army) {
-				if (is_idle(u) || u->order_type->id == Orders::Move) idle.push_back(u);
+				if (is_idle(u) && dist2(u->sprite->position, p.rally) > 192 * 192) stray.push_back(u);
 			}
-			if (!idle.empty()) order_group(f, p, idle, Orders::AttackMove, intruder->sprite->position);
+			if (!stray.empty()) order_group(f, p, stray, Orders::Move, p.rally);
 			return;
 		}
 

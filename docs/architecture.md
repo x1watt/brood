@@ -126,6 +126,19 @@ weighs the vassal's tribute against the score for destroying what is left.
 Every free player aims at the best score: once no meaningful enemy is left,
 one clearly stronger than an ally leaves the alliance and goes after it.
 
+Auto-play (lib/ui/autoplay_panel.dart, F8): the computer player of bw_ai.h
+runs for the human too, limited to chosen modes: resources (workers on
+minerals and gas, balanced across bases), building (the build order and
+upgrades), attacking (army and attack waves), colonizing (new bases with
+workers and defences) or auto (all of them, at a normal computer's pace).
+It leaves alone units the human commanded in the last minute or keeps in a
+control group, restores the human's selection after deciding, and doesn't
+negotiate alliances. Survival comes first in every mode: an army approaching
+or at the base turns on production and defence (workers fight too when
+there is no army) until the threat is over. Logged for saved games
+(bw_bridge_set_autoplay). Computer players reserve money for buildings
+whose worker is still walking to the site.
+
 Fog of war: bw_bridge_set_viewer filters the draw list, unit list and
 picking to what the player sees (neutral resources stay on explored
 ground); bw_bridge_get_fog gives per-tile state, drawn as a one-texel-per-
