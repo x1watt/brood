@@ -6,7 +6,7 @@
 
 import 'dart:typed_data';
 
-const int BW_BRIDGE_ABI_VERSION = 17;
+const int BW_BRIDGE_ABI_VERSION = 18;
 const int BW_MAX_PLAYERS = 8;
 const int BW_PLAYER_HUMAN = 1;
 const int BW_PLAYER_COMPUTER = 2;
@@ -149,6 +149,8 @@ abstract class BridgeRaw {
   int bw_bridge_grp_frame_size(int bridge, int handle, int frame, int out_width, int out_height);
   int bw_bridge_grp_decode(int bridge, int handle, int frame, int out_pixels, int out_cap);
   int bw_bridge_load_pcx(int bridge, int path, int out_pixels, int out_cap, int out_width, int out_height);
+  int bw_bridge_read_file(int bridge, int path, int out_data, int out_cap, int out_len);
+  int bw_bridge_load_pcx_rgba(int bridge, int path, int out_rgba, int out_cap, int out_width, int out_height);
   int bw_bridge_cursor_marker_image();
   int bw_bridge_get_selection_circle(int bridge, int unit_id, int out_image_type_id, int out_x, int out_y);
   int bw_bridge_sound_count(int bridge);

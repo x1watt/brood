@@ -229,6 +229,14 @@ creep and blockers on every tile.
 The browser's own right-click menu is disabled (web/index.html and
 BrowserContextMenu), so right click gives orders.
 
+The start screen wears the original's menu look with art read from the
+player's own files at startup (lib/ui/menu_art.dart, bw_bridge_load_pcx_rgba
+and bw_bridge_read_file): the title screen once per run, the room of the
+chosen race behind the menu (glue\\PalRz/Rt/Rp\\Backgnd.pcx, the planet of
+glue\\Palmm for Random and saved games), the menus' green, and their button
+sounds (sound\\glue). Nothing from the game is bundled. The menu music was
+on the CD, not in the archives, so there is none.
+
 Still missing: lift off/land and nukes.
 
 ## Layers

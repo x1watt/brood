@@ -3,9 +3,18 @@
 // Before a game: pick a map (most played first, with a search box), set up the players (you
 // plus computer opponents, their races and alliances), or load a saved
 // game.
+//
+// Dressed like the original's menus with art from the player's own game
+// files (lib/ui/menu_art.dart): the title screen once at startup, then the
+// room of the race you pick behind the menu (the planet for Random), the
+// menus' green, and their button sounds.
+
+import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show KeyDownEvent;
 
 import '../game/game_data.dart';
 import '../game/game_setup.dart';
@@ -13,9 +22,16 @@ import '../game/play_stats.dart';
 import '../game/saved_games.dart';
 import '../game/settings.dart';
 import 'game_screen.dart';
+import 'menu_art.dart';
 import 'window_control.dart';
 
 const _line = Color(0xFF2A2A2A);
+// The original menus' colors: green text and frames, yellow for what's
+// highlighted.
+const _scGreen = Color(0xFF32D25A);
+const _scGreenDim = Color(0xFF1C7A36);
+const _scYellow = Color(0xFFFCE45C);
+const _panel = Color(0xC4000000);
 const _dim = Color(0xFF8C8C8C);
 const _faint = Color(0xFF5E5E5E);
 
@@ -33,6 +49,11 @@ class _StartScreenState extends State<StartScreen> {
   GameMap? _map;
   List<SaveSession> _saves = const [];
   bool _loadTab = false;
+  MenuArt? _art;
+  // The title screen shows once per run, when the app starts.
+  static bool _titleShown = false;
+  bool _showTitle = false;
+  Timer? _titleTimer;
   final _mapSearch = TextEditingController();
   final _saveSearch = TextEditingController();
 
@@ -46,6 +67,17 @@ class _StartScreenState extends State<StartScreen> {
   @override
   void initState() {
     super.initState();
+    _art = MenuArt.current;
+    if (_art == null) {
+      MenuArt.load().then((art) {
+        if (!mounted || art == null) return;
+        setState(() {
+          _art = art;
+          _showTitle = !_titleShown && art.title != null;
+        });
+        if (_showTitle) _titleTimer = Timer(const Duration(seconds: 4), _hideTitle);
+      });
+    }
     final maps = GameMap.list();
     // Most played first (by total time), then the rest alphabetically.
     maps.sort((a, b) {
@@ -53,15 +85,14 @@ class _StartScreenState extends State<StartScreen> {
       return t != 0 ? t : a.name.compareTo(b.name);
     });
     _maps = maps;
-    _map = (maps.isNotEmpty && _seconds(maps.first) > 0 ? maps.first : null) ??
-        maps.where((m) => m.name == '(4)Lost Temple').firstOrNull ??
-        maps.firstOrNull;
+    _map = (maps.isNotEmpty && _seconds(maps.first) > 0 ? maps.first : null) ?? maps.where((m) => m.name == '(4)Lost Temple').firstOrNull ?? maps.firstOrNull;
     _saves = SaveSession.list();
     _restoreLastSetup();
   }
 
   @override
   void dispose() {
+    _titleTimer?.cancel();
     _mapSearch.dispose();
     _saveSearch.dispose();
     super.dispose();
@@ -92,8 +123,14 @@ class _StartScreenState extends State<StartScreen> {
                 icon: const Icon(Icons.close, size: 16, color: _dim),
                 onPressed: () => setState(controller.clear),
               ),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: _line)),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: _line)),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(6),
+          borderSide: const BorderSide(color: _line),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(6),
+          borderSide: const BorderSide(color: _line),
+        ),
       ),
     ),
   );
@@ -110,7 +147,10 @@ class _StartScreenState extends State<StartScreen> {
       final s = GameSetup.fromJson(j);
       final me = s.players.firstWhere((p) => p.human);
       _myRace = me.race;
-      _opponentRaces = [for (final p in s.players) if (!p.human) p.race];
+      _opponentRaces = [
+        for (final p in s.players)
+          if (!p.human) p.race,
+      ];
       if (_opponentRaces.isEmpty) _opponentRaces = [randomRace];
       _alliances = s.alliances;
     } catch (_) {
@@ -153,7 +193,9 @@ class _StartScreenState extends State<StartScreen> {
 
   void _open(GameLaunch launch) {
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => GameScreen(launch: launch, stats: _stats, settings: _settings)),
+      MaterialPageRoute(
+        builder: (_) => GameScreen(launch: launch, stats: _stats, settings: _settings),
+      ),
     );
   }
 
@@ -163,52 +205,162 @@ class _StartScreenState extends State<StartScreen> {
   // its scrollbar so the options below the fold are found.
   bool get _short => MediaQuery.sizeOf(context).height < 500;
 
+  void _hideTitle() {
+    _titleTimer?.cancel();
+    if (!_showTitle) return;
+    _titleShown = true;
+    setState(() => _showTitle = false);
+    _art?.play('swishin', startAudio: true);
+  }
+
+  void _click() => _art?.play('mousedown2', startAudio: true);
+  void _hover() => _art?.play('mouseover');
+
+  // The race whose room is behind the menu.
+  int get _shownRace => _loadTab ? -1 : _myRace;
+
+  // Material widgets in the menus' green.
+  ThemeData _menuTheme(BuildContext context) {
+    final t = Theme.of(context);
+    return t.copyWith(
+      colorScheme: t.colorScheme.copyWith(
+        primary: _scGreen,
+        onPrimary: Colors.black,
+        secondaryContainer: const Color(0xFF123A1E),
+        onSecondaryContainer: _scYellow,
+        outline: _scGreenDim,
+      ),
+      listTileTheme: t.listTileTheme.copyWith(selectedColor: _scYellow, selectedTileColor: const Color(0x3332D25A)),
+      segmentedButtonTheme: SegmentedButtonThemeData(
+        style: ButtonStyle(
+          side: const WidgetStatePropertyAll(BorderSide(color: _scGreenDim)),
+          foregroundColor: WidgetStateProperty.resolveWith(
+            (s) => s.contains(WidgetState.selected) ? _scYellow : (s.contains(WidgetState.disabled) ? _faint : _scGreen),
+          ),
+          backgroundColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? const Color(0xFF123A1E) : Colors.transparent),
+        ),
+      ),
+      radioTheme: RadioThemeData(fillColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? _scYellow : _scGreen)),
+      iconButtonTheme: IconButtonThemeData(
+        style: ButtonStyle(
+          foregroundColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.disabled) ? _faint : _scGreen),
+          side: WidgetStateProperty.resolveWith((s) => BorderSide(color: s.contains(WidgetState.disabled) ? _line : _scGreenDim)),
+        ),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: ButtonStyle(
+          backgroundColor: WidgetStateProperty.resolveWith(
+            (s) => s.contains(WidgetState.disabled)
+                ? const Color(0xFF1A1A1A)
+                : (s.contains(WidgetState.hovered) ? const Color(0xFF1F6B33) : const Color(0xFF15502A)),
+          ),
+          foregroundColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.disabled) ? _faint : _scYellow),
+          side: WidgetStateProperty.resolveWith((s) => BorderSide(color: s.contains(WidgetState.disabled) ? _line : _scGreen, width: 1.5)),
+          shape: WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.circular(4))),
+          textStyle: const WidgetStatePropertyAll(TextStyle(fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+        ),
+      ),
+      textSelectionTheme: const TextSelectionThemeData(cursorColor: _scGreen),
+      inputDecorationTheme: t.inputDecorationTheme.copyWith(
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(6),
+          borderSide: const BorderSide(color: _scGreen),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1040, maxHeight: 760),
-          child: Padding(
-            padding: EdgeInsets.all(_short ? 12 : 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    const Text('Brood', style: TextStyle(fontSize: 34, fontWeight: FontWeight.w700, color: Colors.white)),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.only(bottom: 7),
-                        child: Text('Game data: ${GameFiles.instance.description}', style: const TextStyle(color: _faint, fontSize: 12), overflow: TextOverflow.ellipsis),
-                      ),
-                    ),
-                    if (!kIsWeb) ...[
-                      IconButton(
-                        tooltip: 'Quit Brood',
-                        onPressed: WindowControl.quit,
-                        icon: const Icon(Icons.power_settings_new, color: _dim),
-                      ),
-                      const SizedBox(width: 8),
-                    ],
-                    SegmentedButton<bool>(
-                      showSelectedIcon: false,
-                      segments: [
-                        const ButtonSegment(value: false, label: Text('New game')),
-                        ButtonSegment(value: true, label: Text('Load game (${_saves.length})'), enabled: _saves.isNotEmpty),
-                      ],
-                      selected: {_loadTab},
-                      onSelectionChanged: (s) => setState(() => _loadTab = s.first),
-                    ),
-                  ],
-                ),
-                SizedBox(height: _short ? 10 : 20),
-                Expanded(child: _loadTab ? _savedGames() : _newGame()),
-              ],
+    final art = _art;
+    final background = art?.backgroundFor(_shownRace);
+    return Theme(
+      data: _menuTheme(context),
+      child: Scaffold(
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            // The race's room, cross-fading when you pick another race.
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 600),
+              // Every picture fills the screen, the old one fading under the new.
+              layoutBuilder: (current, previous) => Stack(fit: StackFit.expand, children: [...previous, ?current]),
+              child: background == null
+                  ? const SizedBox.expand(key: ValueKey('none'))
+                  : RawImage(key: ValueKey(_shownRace), image: background, fit: BoxFit.cover, filterQuality: FilterQuality.medium),
             ),
-          ),
+            // Darker toward the edges so the menu stays readable.
+            const DecoratedBox(
+              decoration: BoxDecoration(gradient: RadialGradient(radius: 1.1, colors: [Color(0x66000000), Color(0xDD000000)])),
+            ),
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1040, maxHeight: 760),
+                child: Padding(
+                  padding: EdgeInsets.all(_short ? 12 : 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          const _Logo(),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.only(bottom: 7),
+                              child: Text(
+                                'Game data: ${GameFiles.instance.description}',
+                                style: const TextStyle(color: _faint, fontSize: 12),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                          if (!kIsWeb) ...[
+                            IconButton(
+                              tooltip: 'Quit Brood',
+                              onPressed: () {
+                                _click();
+                                WindowControl.quit();
+                              },
+                              icon: const Icon(Icons.power_settings_new),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+                          MouseRegion(
+                            onEnter: (_) => _hover(),
+                            child: SegmentedButton<bool>(
+                              showSelectedIcon: false,
+                              segments: [
+                                const ButtonSegment(value: false, label: Text('New game')),
+                                ButtonSegment(value: true, label: Text('Load game (${_saves.length})'), enabled: _saves.isNotEmpty),
+                              ],
+                              selected: {_loadTab},
+                              onSelectionChanged: (s) {
+                                _click();
+                                setState(() => _loadTab = s.first);
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: _short ? 10 : 20),
+                      Expanded(child: _loadTab ? _savedGames() : _newGame()),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            if (art?.title != null)
+              IgnorePointer(
+                ignoring: !_showTitle,
+                child: AnimatedOpacity(
+                  opacity: _showTitle ? 1 : 0,
+                  duration: const Duration(milliseconds: 700),
+                  child: _TitleScreen(image: art!.title!, onDone: _hideTitle),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -225,20 +377,33 @@ class _StartScreenState extends State<StartScreen> {
     );
   }
 
+  // A menu frame: dark glass with the green border of the original's dialogs.
   Widget _box({required Widget child}) => Container(
-    decoration: BoxDecoration(border: Border.all(color: _line), borderRadius: BorderRadius.circular(6)),
+    decoration: BoxDecoration(
+      color: _panel,
+      border: Border.all(color: _scGreenDim, width: 1.5),
+      borderRadius: BorderRadius.circular(6),
+      boxShadow: const [BoxShadow(color: Color(0x5532D25A), blurRadius: 14)],
+    ),
     clipBehavior: Clip.antiAlias,
     child: child,
   );
 
   Widget _heading(String text) => Padding(
     padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
-    child: Text(text.toUpperCase(), style: const TextStyle(fontSize: 11, letterSpacing: 1.2, color: _dim, fontWeight: FontWeight.w600)),
+    child: Text(
+      text.toUpperCase(),
+      style: const TextStyle(fontSize: 11, letterSpacing: 1.6, color: _scGreen, fontWeight: FontWeight.w700),
+    ),
   );
 
   Widget _mapList() {
     if (_maps.isEmpty) {
-      return _box(child: const Center(child: Text('No maps found in the game data folder.', style: TextStyle(color: Color(0xFFFF6B5E)))));
+      return _box(
+        child: const Center(
+          child: Text('No maps found in the game data folder.', style: TextStyle(color: Color(0xFFFF6B5E))),
+        ),
+      );
     }
     final query = _mapSearch.text;
     final shown = _maps.where((m) => _matches(query, '${m.name} ${m.folder}')).toList();
@@ -268,32 +433,38 @@ class _StartScreenState extends State<StartScreen> {
   Widget _mapTile(GameMap m) {
     final st = _stats.maps[m.key];
     final played = st != null && st.seconds > 0;
-    return ListTile(
-      dense: true,
-      selected: m == _map,
-      title: Text(m.name),
-      subtitle: Text('${m.folder}  ·  up to ${m.maxPlayers} players', style: const TextStyle(fontSize: 11, color: _faint)),
-      trailing: played
-          ? Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(PlayStats.formatDuration(st.seconds), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                Text(
-                  '${st.games} ${st.games == 1 ? 'game' : 'games'}${st.lastPlayed != null ? ' · ${_ago(st.lastPlayed!)}' : ''}',
-                  style: const TextStyle(fontSize: 11, color: _faint),
-                ),
-              ],
-            )
-          : null,
-      onTap: () => setState(() {
-        _map = m;
-        _setPlayerCount(_playerCount);
-      }),
-      onLongPress: () {
-        setState(() => _map = m);
-        _start();
-      },
+    return MouseRegion(
+      onEnter: (_) => _hover(),
+      child: ListTile(
+        dense: true,
+        selected: m == _map,
+        title: Text(m.name),
+        subtitle: Text('${m.folder}  ·  up to ${m.maxPlayers} players', style: const TextStyle(fontSize: 11, color: _faint)),
+        trailing: played
+            ? Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(PlayStats.formatDuration(st.seconds), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                  Text(
+                    '${st.games} ${st.games == 1 ? 'game' : 'games'}${st.lastPlayed != null ? ' · ${_ago(st.lastPlayed!)}' : ''}',
+                    style: const TextStyle(fontSize: 11, color: _faint),
+                  ),
+                ],
+              )
+            : null,
+        onTap: () {
+          _click();
+          setState(() {
+            _map = m;
+            _setPlayerCount(_playerCount);
+          });
+        },
+        onLongPress: () {
+          setState(() => _map = m);
+          _start();
+        },
+      ),
     );
   }
 
@@ -323,7 +494,10 @@ class _StartScreenState extends State<StartScreen> {
                   _heading('Map'),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Text(map?.name ?? 'None selected', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white)),
+                    child: Text(
+                      map?.name ?? 'None selected',
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white),
+                    ),
                   ),
                   _heading('Players'),
                   Padding(
@@ -337,7 +511,11 @@ class _StartScreenState extends State<StartScreen> {
                         ),
                         SizedBox(
                           width: 48,
-                          child: Text('$n', textAlign: TextAlign.center, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white)),
+                          child: Text(
+                            '$n',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white),
+                          ),
                         ),
                         IconButton.outlined(
                           tooltip: 'More players',
@@ -345,7 +523,12 @@ class _StartScreenState extends State<StartScreen> {
                           icon: const Icon(Icons.add, size: 18),
                         ),
                         const SizedBox(width: 12),
-                        Expanded(child: Text('You and ${n - 1} computer ${n - 1 == 1 ? 'opponent' : 'opponents'} (this map allows $_maxPlayers)', style: const TextStyle(color: _dim, fontSize: 12))),
+                        Expanded(
+                          child: Text(
+                            'You and ${n - 1} computer ${n - 1 == 1 ? 'opponent' : 'opponents'} (this map allows $_maxPlayers)',
+                            style: const TextStyle(color: _dim, fontSize: 12),
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -372,7 +555,10 @@ class _StartScreenState extends State<StartScreen> {
                       showSelectedIcon: false,
                       segments: [for (final r in _raceChoices) ButtonSegment(value: r, label: Text(raceName(r)))],
                       selected: {_myRace},
-                      onSelectionChanged: (s) => setState(() => _myRace = s.first),
+                      onSelectionChanged: (s) {
+                        _click();
+                        setState(() => _myRace = s.first);
+                      },
                     ),
                   ),
                   _heading('Opponents'),
@@ -400,10 +586,18 @@ class _StartScreenState extends State<StartScreen> {
           ),
           Padding(
             padding: EdgeInsets.all(_short ? 8 : 16),
-            child: FilledButton(
-              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(44)),
-              onPressed: map == null ? null : _start,
-              child: Text(map == null ? 'Start game' : 'Start game as ${raceName(_myRace)}'),
+            child: MouseRegion(
+              onEnter: (_) => _hover(),
+              child: FilledButton(
+                style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(44)),
+                onPressed: map == null
+                    ? null
+                    : () {
+                        _click();
+                        _start();
+                      },
+                child: Text((map == null ? 'Start game' : 'Start game as ${raceName(_myRace)}').toUpperCase()),
+              ),
             ),
           ),
         ],
@@ -414,7 +608,13 @@ class _StartScreenState extends State<StartScreen> {
   // Sessions grouped by map (most recent first), each with its points in
   // time: continue from the latest or pick an earlier one.
   Widget _savedGames() {
-    if (_saves.isEmpty) return _box(child: const Center(child: Text('No saved games yet.', style: TextStyle(color: _dim))));
+    if (_saves.isEmpty) {
+      return _box(
+        child: const Center(
+          child: Text('No saved games yet.', style: TextStyle(color: _dim)),
+        ),
+      );
+    }
     final query = _saveSearch.text;
     final byMap = <String, List<SaveSession>>{};
     for (final s in _saves) {
@@ -431,10 +631,7 @@ class _StartScreenState extends State<StartScreen> {
               padding: const EdgeInsets.only(bottom: 12),
               children: [
                 if (byMap.isEmpty) _noMatch('No saved game matches "$query".'),
-                for (final entry in byMap.entries) ...[
-                  _heading(entry.value.first.mapName),
-                  for (final s in entry.value) _sessionTile(s),
-                ],
+                for (final entry in byMap.entries) ...[_heading(entry.value.first.mapName), for (final s in entry.value) _sessionTile(s)],
               ],
             ),
           ),
@@ -448,7 +645,7 @@ class _StartScreenState extends State<StartScreen> {
     final others = s.setup.players.where((p) => !p.human).map((p) => raceName(p.race)).join(', ');
     final latest = s.latest!;
     return Theme(
-      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      data: _menuTheme(context).copyWith(dividerColor: Colors.transparent),
       child: ExpansionTile(
         tilePadding: const EdgeInsets.fromLTRB(16, 0, 12, 0),
         childrenPadding: const EdgeInsets.fromLTRB(32, 0, 12, 8),
@@ -466,7 +663,11 @@ class _StartScreenState extends State<StartScreen> {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            IconButton(tooltip: 'Delete this session', icon: const Icon(Icons.delete_outline, color: _dim), onPressed: () => _delete(s)),
+            IconButton(
+              tooltip: 'Delete this session',
+              icon: const Icon(Icons.delete_outline, color: _dim),
+              onPressed: () => _delete(s),
+            ),
             const SizedBox(width: 4),
             FilledButton(onPressed: () => _load(s, latest), child: Text('Continue at ${latest.gameTime}')),
             const SizedBox(width: 4),
@@ -519,4 +720,63 @@ class _StartScreenState extends State<StartScreen> {
       if (_saves.isEmpty) _loadTab = false;
     });
   }
+}
+
+/// The name, in the chrome-and-blue of the original's logo.
+class _Logo extends StatelessWidget {
+  const _Logo();
+
+  @override
+  Widget build(BuildContext context) => ShaderMask(
+    shaderCallback: (r) => const LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [Color(0xFFFFFFFF), Color(0xFFB8C6D8), Color(0xFF5E7FA8), Color(0xFFD8E2F0)],
+      stops: [0, 0.45, 0.55, 1],
+    ).createShader(r),
+    child: const Text(
+      'BROOD',
+      style: TextStyle(
+        fontSize: 36,
+        fontWeight: FontWeight.w900,
+        letterSpacing: 6,
+        color: Colors.white,
+        shadows: [Shadow(color: Color(0xAA2050FF), blurRadius: 14)],
+      ),
+    ),
+  );
+}
+
+/// The original's title screen, shown once when the app starts; a click or
+/// a key goes on (and starts the sound in a browser).
+class _TitleScreen extends StatelessWidget {
+  final ui.Image image;
+  final VoidCallback onDone;
+  const _TitleScreen({required this.image, required this.onDone});
+
+  @override
+  Widget build(BuildContext context) => Focus(
+    autofocus: true,
+    onKeyEvent: (_, e) {
+      if (e is KeyDownEvent) onDone();
+      return KeyEventResult.handled;
+    },
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onDone,
+      child: ColoredBox(
+        color: Colors.black,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            RawImage(image: image, fit: BoxFit.contain, filterQuality: FilterQuality.medium),
+            const Align(
+              alignment: Alignment(0, 0.95),
+              child: Text('Click or press any key', style: TextStyle(color: Color(0x99FFFFFF), fontSize: 12, letterSpacing: 1.5)),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }

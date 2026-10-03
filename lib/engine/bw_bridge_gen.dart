@@ -1808,6 +1808,91 @@ class BwBridgeBindings {
         )
       >();
 
+  /// Any file from the game's archives (e.g. "music\\title.wav"), raw. Pass
+  /// out_data NULL to get *out_len only.
+  bw_status bw_bridge_read_file(
+    ffi.Pointer<bw_bridge_t> bridge,
+    ffi.Pointer<ffi.Char> path,
+    ffi.Pointer<ffi.Uint8> out_data,
+    int out_cap,
+    ffi.Pointer<ffi.Int> out_len,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_read_file(bridge, path, out_data, out_cap, out_len),
+    );
+  }
+
+  late final _bw_bridge_read_filePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Uint8>,
+            ffi.Int,
+            ffi.Pointer<ffi.Int>,
+          )
+        >
+      >('bw_bridge_read_file');
+  late final _bw_bridge_read_file = _bw_bridge_read_filePtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<bw_bridge_t>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Int>,
+        )
+      >();
+
+  /// The same image in full color through its own palette (the 768 bytes at
+  /// the end of the file): width*height RGBA8888 pixels, opaque. For the
+  /// menus' backgrounds (glue\*\Backgnd.pcx, glue\title\title.pcx).
+  bw_status bw_bridge_load_pcx_rgba(
+    ffi.Pointer<bw_bridge_t> bridge,
+    ffi.Pointer<ffi.Char> path,
+    ffi.Pointer<ffi.Uint8> out_rgba,
+    int out_cap,
+    ffi.Pointer<ffi.Int> out_width,
+    ffi.Pointer<ffi.Int> out_height,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_load_pcx_rgba(
+        bridge,
+        path,
+        out_rgba,
+        out_cap,
+        out_width,
+        out_height,
+      ),
+    );
+  }
+
+  late final _bw_bridge_load_pcx_rgbaPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Uint8>,
+            ffi.Int,
+            ffi.Pointer<ffi.Int>,
+            ffi.Pointer<ffi.Int>,
+          )
+        >
+      >('bw_bridge_load_pcx_rgba');
+  late final _bw_bridge_load_pcx_rgba = _bw_bridge_load_pcx_rgbaPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<bw_bridge_t>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Int>,
+          ffi.Pointer<ffi.Int>,
+        )
+      >();
+
   /// Image type of the original's right-click target marker.
   int bw_bridge_cursor_marker_image() {
     return _bw_bridge_cursor_marker_image();
@@ -2584,7 +2669,7 @@ final class bw_sound_info extends ffi.Struct {
   external ffi.Array<ffi.Char> filename;
 }
 
-const int BW_BRIDGE_ABI_VERSION = 17;
+const int BW_BRIDGE_ABI_VERSION = 18;
 
 const int BW_MAX_PLAYERS = 8;
 

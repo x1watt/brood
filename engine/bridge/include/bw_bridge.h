@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 17
+#define BW_BRIDGE_ABI_VERSION 18
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -507,6 +507,13 @@ bw_status bw_bridge_grp_decode(bw_bridge_t* bridge, int handle, int frame, uint8
 // An 8-bit PCX image's pixels (palette indices). Pass out_pixels NULL to get
 // the size only.
 bw_status bw_bridge_load_pcx(bw_bridge_t* bridge, const char* path, uint8_t* out_pixels, int out_cap, int* out_width, int* out_height);
+// Any file from the game's archives (e.g. "music\\title.wav"), raw. Pass
+// out_data NULL to get *out_len only.
+bw_status bw_bridge_read_file(bw_bridge_t* bridge, const char* path, uint8_t* out_data, int out_cap, int* out_len);
+// The same image in full color through its own palette (the 768 bytes at
+// the end of the file): width*height RGBA8888 pixels, opaque. For the
+// menus' backgrounds (glue\*\Backgnd.pcx, glue\title\title.pcx).
+bw_status bw_bridge_load_pcx_rgba(bw_bridge_t* bridge, const char* path, uint8_t* out_rgba, int out_cap, int* out_width, int* out_height);
 
 // --- Feedback visuals -------------------------------------------------------
 

@@ -612,6 +612,37 @@ class BwEngine {
     }
   }
 
+  /// A file from the game's archives, raw (null when missing).
+  Uint8List? readFile(String path) {
+    return _withString(path, (p) {
+      if (!_ok(_r.bw_bridge_read_file(_h, p, 0, 0, _ints))) return null;
+      final n = _i32(_ints);
+      final buf = _r.malloc(n == 0 ? 1 : n);
+      try {
+        if (!_ok(_r.bw_bridge_read_file(_h, p, buf, n, _ints))) return null;
+        return _copy(buf, n);
+      } finally {
+        _r.free(buf);
+      }
+    });
+  }
+
+  /// A PCX image in full color through its own palette (menu backgrounds).
+  (int, int, Uint8List)? loadPcxRgba(String path) {
+    return _withString(path, (p) {
+      if (!_ok(_r.bw_bridge_load_pcx_rgba(_h, p, 0, 0, _ints, _ints + 4))) return null;
+      final w = _i32(_ints), h = _i32(_ints + 4);
+      final size = w * h * 4;
+      final buf = _r.malloc(size);
+      try {
+        if (!_ok(_r.bw_bridge_load_pcx_rgba(_h, p, buf, size, _ints, _ints + 4))) return null;
+        return (w, h, _copy(buf, size));
+      } finally {
+        _r.free(buf);
+      }
+    });
+  }
+
   (int, int, Uint8List)? loadPcx(String path) {
     return _withString(path, (p) {
       if (!_ok(_r.bw_bridge_load_pcx(_h, p, 0, 0, _ints, _ints + 4))) return null;

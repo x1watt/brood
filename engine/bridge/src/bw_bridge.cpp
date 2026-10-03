@@ -1903,6 +1903,51 @@ bw_status bw_bridge_grp_decode(bw_bridge_t* bridge, int handle, int frame, uint8
 	return BW_OK;
 }
 
+bw_status bw_bridge_read_file(bw_bridge_t* bridge, const char* path, uint8_t* out_data, int out_cap, int* out_len) {
+	if (!bridge || !path || !out_len) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->assets_loaded) return BW_ERR_NOT_LOADED;
+	try {
+		a_vector<uint8_t> data;
+		b->asset_loader()(data, path);
+		*out_len = (int)data.size();
+		if (!out_data) return BW_OK;
+		if (out_cap < (int)data.size()) return BW_ERR_INVALID_ARGUMENT;
+		std::memcpy(out_data, data.data(), data.size());
+		return BW_OK;
+	} catch (...) {
+		return BW_ERR_ASSET_LOAD_FAILED;
+	}
+}
+
+bw_status bw_bridge_load_pcx_rgba(bw_bridge_t* bridge, const char* path, uint8_t* out_rgba, int out_cap, int* out_width, int* out_height) {
+	if (!bridge || !path || !out_width || !out_height) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->assets_loaded) return BW_ERR_NOT_LOADED;
+	try {
+		a_vector<uint8_t> data;
+		b->asset_loader()(data, path);
+		bw_render_util::pcx_image pcx = bw_render_util::load_pcx_data(data);
+		*out_width = (int)pcx.width;
+		*out_height = (int)pcx.height;
+		if (!out_rgba) return BW_OK;
+		if ((size_t)out_cap < pcx.data.size() * 4) return BW_ERR_INVALID_ARGUMENT;
+		// 8-bit PCX: 0x0c, then the 256-color palette, at the very end.
+		if (data.size() < 769 || data[data.size() - 769] != 0x0c) return BW_ERR_ASSET_LOAD_FAILED;
+		const uint8_t* pal = data.data() + data.size() - 768;
+		for (size_t i = 0; i != pcx.data.size(); ++i) {
+			const uint8_t* c = pal + pcx.data[i] * 3;
+			out_rgba[i * 4] = c[0];
+			out_rgba[i * 4 + 1] = c[1];
+			out_rgba[i * 4 + 2] = c[2];
+			out_rgba[i * 4 + 3] = 255;
+		}
+		return BW_OK;
+	} catch (...) {
+		return BW_ERR_ASSET_LOAD_FAILED;
+	}
+}
+
 bw_status bw_bridge_load_pcx(bw_bridge_t* bridge, const char* path, uint8_t* out_pixels, int out_cap, int* out_width, int* out_height) {
 	if (!bridge || !path || !out_width || !out_height) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
