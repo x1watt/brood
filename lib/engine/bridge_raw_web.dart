@@ -146,6 +146,21 @@ class BridgeRawWeb extends BridgeRaw {
   int bw_bridge_command_log(int bridge, int out, int out_cap) => _call('_bw_bridge_command_log', [bridge, out, out_cap]);
 
   @override
+  void bw_bridge_set_deferred(int bridge, int on) => _call('_bw_bridge_set_deferred', [bridge, on]);
+
+  @override
+  int bw_bridge_take_outbox(int bridge, int out, int out_cap) => _call('_bw_bridge_take_outbox', [bridge, out, out_cap]);
+
+  @override
+  int bw_bridge_apply_commands(int bridge, int entries, int len) => _call('_bw_bridge_apply_commands', [bridge, entries, len]);
+
+  @override
+  int bw_bridge_set_controller(int bridge, int player_slot, int human) => _call('_bw_bridge_set_controller', [bridge, player_slot, human]);
+
+  @override
+  int bw_bridge_state_hash(int bridge) => _call('_bw_bridge_state_hash', [bridge]) & 0xffffffff;
+
+  @override
   int bw_bridge_replay_commands(int bridge, int log, int len, int end_frame) => _call('_bw_bridge_replay_commands', [bridge, log, len, end_frame]);
 
   @override

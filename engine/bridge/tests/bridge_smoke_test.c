@@ -585,6 +585,101 @@ static void test_surrender(const char* dd, const char* mf) {
 /* Auto-play for the human: resources only, then building too; units kept in
  * a control group are left alone and the selection is untouched; full auto
  * holds its own against a computer player; all of it replays. */
+/* Multiplayer lockstep: two clients of one game. A is the host (deferred:
+ * its commands go to a "server" here, which hands them to both at a later
+ * frame); B joins at minute 2 by replaying the server's log and takes over
+ * the computer in slot 1. Both play on, both issue commands, and their
+ * games must stay identical (state hash), and a third client replaying the
+ * final log must agree too. */
+static int32_t mp_log[200000];
+static int mp_len;
+static void mp_send(bw_bridge_t* from, int at_frame, bw_bridge_t* a, bw_bridge_t* bb) {
+	static int32_t box[4096];
+	int n = bw_bridge_take_outbox(from, box, 4096);
+	(void)a; (void)bb;
+	for (int i = 0; i + 3 <= n;) {
+		int k = 3 + box[i + 2];
+		mp_log[mp_len] = at_frame;
+		memcpy(mp_log + mp_len + 1, box + i + 1, (size_t)(k - 1) * 4);
+		mp_len += k;
+		i += k;
+	}
+}
+/* Applies the server log's entries for this frame to client c. */
+static void mp_apply(bw_bridge_t* c, int* cursor) {
+	int f = bw_bridge_current_frame(c);
+	while (*cursor < mp_len && mp_log[*cursor] == f) {
+		int k = 3 + mp_log[*cursor + 2];
+		CHECK(bw_bridge_apply_commands(c, mp_log + *cursor, k) == BW_OK, "mp: apply");
+		*cursor += k;
+	}
+}
+static void test_multiplayer(const char* dd, const char* mf) {
+	bw_game_setup setup;
+	memset(&setup, 0, sizeof(setup));
+	setup.player_count = 3;
+	setup.controller[0] = BW_PLAYER_HUMAN; setup.race[0] = 1; setup.team[0] = 1;
+	setup.controller[1] = BW_PLAYER_COMPUTER; setup.race[1] = 1; setup.team[1] = 1;
+	setup.controller[2] = BW_PLAYER_COMPUTER; setup.race[2] = 0; setup.team[2] = 2;
+	setup.seed = 2024;
+	int32_t slots[8];
+	bw_bridge_t* a = bw_bridge_create();
+	CHECK(a && bw_bridge_load_assets(a, dd) == BW_OK && bw_bridge_new_game(a, mf, &setup, slots) == BW_OK, "mp: host game");
+	int host = slots[0], guest = slots[1];
+	bw_bridge_set_deferred(a, 1);
+	mp_len = 0;
+	int ca = 0, cb = 0;
+	bw_bridge_t* b = NULL;
+	for (int frame = 0; frame < 24 * 60 * 5; ++frame) {
+		/* Commands from the players now and then: send workers to mine. */
+		if (frame % 240 == 10) {
+			int32_t ids[64];
+			int k = find_units(a, host, TERRAN_SCV, ids, 12);
+			if (k) {
+				bw_bridge_select_units(a, host, ids, k);
+				bw_bridge_order(a, host, BW_ORDER_MOVE, 2000, 2000, 0, 0);
+				mp_send(a, frame + 5, a, b);
+			}
+		}
+		if (b && frame % 300 == 20) {
+			int32_t ids[64];
+			int k = find_units(b, guest, TERRAN_SCV, ids, 12);
+			if (k) {
+				bw_bridge_select_units(b, guest, ids, k);
+				bw_bridge_train(b, guest, TERRAN_SCV);
+				bw_bridge_order(b, guest, BW_ORDER_MOVE, 1500, 1500, 0, 0);
+				mp_send(b, frame + 5, a, b);
+			}
+		}
+		if (frame == 24 * 60 * 2) {
+			/* B joins: the server logs the takeover, then B replays the log. */
+			int32_t take[5] = {frame + 1, 24, 2, guest, 1};
+			memcpy(mp_log + mp_len, take, sizeof(take));
+			mp_len += 5;
+			b = bw_bridge_create();
+			CHECK(b && bw_bridge_load_assets(b, dd) == BW_OK && bw_bridge_new_game(b, mf, &setup, slots) == BW_OK, "mp: guest game");
+			CHECK(bw_bridge_replay_commands(b, mp_log, mp_len - 5, frame) == BW_OK, "mp: guest replay");
+			cb = mp_len - 5;
+			CHECK(bw_bridge_state_hash(a) == bw_bridge_state_hash(b), "mp: guest joined into a different game");
+			bw_bridge_set_deferred(b, 1);
+		}
+		mp_apply(a, &ca);
+		if (b) mp_apply(b, &cb);
+		bw_bridge_step(a, 1);
+		if (b) bw_bridge_step(b, 1);
+		if (b && frame % 240 == 0) CHECK(bw_bridge_state_hash(a) == bw_bridge_state_hash(b), "mp: out of sync at frame %d", frame);
+	}
+	CHECK(bw_bridge_get_autoplay(a, guest) == 0, "mp: the computer still plays the guest's slot");
+	bw_bridge_t* c = bw_bridge_create();
+	CHECK(c && bw_bridge_load_assets(c, dd) == BW_OK && bw_bridge_new_game(c, mf, &setup, slots) == BW_OK, "mp: replay game");
+	CHECK(bw_bridge_replay_commands(c, mp_log, mp_len, bw_bridge_current_frame(a)) == BW_OK, "mp: final replay");
+	printf("bridge_smoke_test: multiplayer: 5 min lockstep, %d log values, hashes %08x %08x %08x\n", mp_len, bw_bridge_state_hash(a), bw_bridge_state_hash(b), bw_bridge_state_hash(c));
+	CHECK(bw_bridge_state_hash(a) == bw_bridge_state_hash(b) && bw_bridge_state_hash(a) == bw_bridge_state_hash(c), "mp: clients disagree at the end");
+	bw_bridge_destroy(a);
+	bw_bridge_destroy(b);
+	bw_bridge_destroy(c);
+}
+
 /* Raised limits: more than the original's 12 units in one selection and
  * one control group (up to 200 now). A computer player builds up an army,
  * then all of its units are selected, grouped and recalled. */
@@ -901,6 +996,7 @@ int main(int argc, char** argv) {
 
 	CHECK(bw_bridge_abi_version() == BW_BRIDGE_ABI_VERSION, "abi mismatch");
 	if (getenv("DEF_ONLY")) { test_defensive(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
+	if (getenv("MP_ONLY")) { test_multiplayer(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
 	if (getenv("LIMITS_ONLY")) { test_limits(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
 	if (getenv("AUTOPLAY_ONLY")) { test_autoplay(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
 	bw_bridge_t* b = bw_bridge_create();
@@ -1205,6 +1301,7 @@ int main(int argc, char** argv) {
 	test_alliances(dd, mf);
 	test_surrender(dd, mf);
 	test_limits(dd, mf);
+	test_multiplayer(dd, mf);
 	test_defensive(dd, mf);
 	test_autoplay(dd, mf);
 	test_ai(dd, mf);

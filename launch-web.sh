@@ -2,9 +2,14 @@
 # launch-web.sh
 #
 # Builds the browser version (engine to WebAssembly, then Flutter for the
-# web, see tool/build_web.sh), serves build/web on port 9191 of this
-# computer and opens it in the default browser. Whatever was listening on
-# that port is stopped first. Ctrl+C stops the server.
+# web, see tool/build_web.sh), starts the home server (tool/brood_server.dart)
+# on port 9191 and opens the page in the default browser. Whatever was
+# listening on that port is stopped first. Ctrl+C stops the server.
+#
+# The server serves the page, your game files (from BROOD_DATA, default
+# ~/box/media/games/BROOD, so no browser asks for the game folder) and
+# multiplayer. It listens on your network: anyone at home can open
+# http://<this computer's address>:9191/ (printed below) and join a game.
 #
 #   ./launch-web.sh
 #   PORT=9000 ./launch-web.sh    another port
@@ -32,8 +37,7 @@ if [ -n "$pids" ]; then
 	kill -9 $(lsof -t -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null) 2>/dev/null || true
 fi
 
-echo "Serving build/web at $url (Ctrl+C to stop)"
-python3 -m http.server "$PORT" --bind 127.0.0.1 -d build/web &
+dart tool/brood_server.dart --port "$PORT" --web build/web &
 server=$!
 trap 'kill $server 2>/dev/null' EXIT INT TERM
 

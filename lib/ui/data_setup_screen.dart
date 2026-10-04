@@ -34,12 +34,18 @@ class _DataSetupScreenState extends State<DataSetupScreen> {
   @override
   void initState() {
     super.initState();
-    if (_testData.isNotEmpty) WidgetsBinding.instance.addPostFrameCallback((_) => _importTestData());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (_testData.isNotEmpty) return _importFrom(_testData);
+      // Opened from the home server (tool/brood_server.dart), which has the
+      // game files: load them from there, nothing to choose.
+      final base = await GameFiles.instance.serverFiles();
+      if (base != null && mounted) await _importFrom(base);
+    });
   }
 
-  Future<void> _importTestData() async {
+  Future<void> _importFrom(String base) async {
     setState(() => _busy = true);
-    final error = await GameFiles.instance.importFromUrl(_testData, (done, total) {
+    final error = await GameFiles.instance.importFromUrl(base, (done, total) {
       if (mounted) {
         setState(() {
           _done = done;

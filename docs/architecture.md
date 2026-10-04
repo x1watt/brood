@@ -270,6 +270,31 @@ resources, their total, and the alliance score), counting up as a tab
 opens. BROOD_TEST_OUTCOME=victory:<seconds> (or defeat) ends a desktop
 game that way, to check it.
 
+Home server and multiplayer (tool/brood_server.dart, plain dart:io, run by
+launch-web.sh on port 9191 on every network interface): it serves the
+browser version, the player's own game files under gamedata/ (so pages
+load them from there instead of asking for a folder; they are kept in the
+browser too, and the page asks for persistent storage) and multiplayer on
+/ws. Multiplayer is lockstep, built on the deterministic simulation and
+its command log: in a multiplayer game the bridge's command functions are
+deferred (bw_bridge_set_deferred: queued in an outbox, not run), the
+client sends them to the server, which stamps each with a frame a few
+frames ahead of its clock and sends it to every player; everyone runs it
+on that frame (bw_bridge_apply_commands) and only runs up to the server's
+clock (its ticks). Every game started from a page of the server is listed
+in the start screen's Multiplayer tab (lib/ui/lobby_panel.dart); joining
+replays the game's log (like loading a save, lib/net/multiplayer.dart
+catchUp) and takes over one of the computer players with a logged
+bw_bridge_set_controller, keeping its alliance; leaving hands it back to
+the computer. Anyone's game menu pauses everyone ("Paused by ..."); a
+pause ends when the player who paused leaves; losing the server lets the
+game carry on alone. Every 240 frames the players report
+bw_bridge_state_hash; the server reports a difference as out of sync
+(BROOD_SERVER_DEBUG=1 prints the reports). bridge_smoke_test plays five
+minutes of lockstep with a player joining at minute two and checks the
+hashes match. Desktop and phones could join with BROOD_SERVER=ws://host:9191/ws
+(lib/net/ws_io.dart), not tried yet.
+
 Still missing: lift off/land and nukes.
 
 ## Layers

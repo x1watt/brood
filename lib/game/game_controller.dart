@@ -18,6 +18,7 @@ import 'package:flutter/painting.dart';
 import '../audio/sound_system.dart';
 import '../engine/bw_engine.dart';
 import '../engine/models.dart';
+import '../net/multiplayer.dart';
 import '../platform/env.dart';
 import '../rendering/icon_atlas.dart';
 import '../rendering/creep_layer.dart';
@@ -235,13 +236,22 @@ class GameController {
         if (slots[i] < 0) continue;
         placed.add(GamePlayer(slot: slots[i], race: p.race, team: p.team, human: p.human, name: p.human ? 'You' : 'Computer $computers'));
       }
-      final me = placed.where((p) => p.human).firstOrNull;
+      final join = launch.join;
+      final me = join != null ? placed.where((p) => p.slot == join.slot).firstOrNull : placed.where((p) => p.human).firstOrNull;
       if (me == null) throw StateError('the map has no start location for you');
       players = placed;
       myPlayer = me.slot;
       myRace = me.race;
       final saved = launch.saved;
-      if (saved != null) {
+      if (join != null) {
+        // Someone's multiplayer game: replay it up to the server's clock;
+        // commands already stamped for later frames wait their turn.
+        loadingSave = true;
+        _notifyHud(force: true);
+        final (now, upTo) = join.catchUp();
+        await e.replayCommands(now, upTo);
+        loadingSave = false;
+      } else if (saved != null) {
         loadingSave = true;
         _notifyHud(force: true);
         // Older saves were played with everyone sharing resources.
@@ -279,7 +289,8 @@ class GameController {
       for (final u in units) {
         if (u.owner == myPlayer && u.isCompleted) _completedSeen.add(u.unitId);
       }
-      if (saved == null) _startWorkersMining();
+      if (saved == null && join == null) _startWorkersMining();
+      await _startMultiplayer(e, join);
       engine.pollSounds(); // drop sounds from setup
       if (saved != null) {
         _centerAt(Offset(saved.camX, saved.camY));
@@ -369,7 +380,12 @@ class GameController {
       if (a.slot != myPlayer && a.active && relation(a.slot) == Relation.ally) a.slot,
   ];
 
-  String nameOf(int slot) => slot == myPlayer ? 'You' : (playerAt(slot)?.name ?? 'Player ${slot + 1}');
+  String nameOf(int slot) {
+    if (slot == myPlayer) return 'You';
+    final human = mp?.names[slot];
+    if (human != null) return human;
+    return playerAt(slot)?.name ?? 'Player ${slot + 1}';
+  }
 
   /// The player's color in the game (minimap, unit trim).
   Color colorOf(int slot) {
@@ -629,8 +645,83 @@ class GameController {
     });
   }
 
+  // --- multiplayer (lib/net/multiplayer.dart) ---
+
+  /// The multiplayer game this is, if any: a game started here is put on
+  /// the home server for others to join (when the page came from it).
+  MpSession? mp;
+
+  Future<void> _startMultiplayer(BwEngine e, MpSession? join) async {
+    MpSession? session = join;
+    if (session == null) {
+      final client = MpClient.current;
+      if (client == null) return;
+      try {
+        session = await client.host(
+          launch: launch!.toShared(),
+          slots: [
+            for (final p in players) {'slot': p.slot, 'race': p.race, 'name': p.slot == myPlayer ? client.name : p.name},
+          ],
+          slot: myPlayer,
+          log: e.commandLog(),
+          frame: e.currentFrame,
+        ).timeout(const Duration(seconds: 5));
+      } catch (err) {
+        debugPrint('Not shared with the other players: $err');
+        return;
+      }
+    }
+    mp = session;
+    e.setDeferred(true);
+    session.addListener(_onSession);
+  }
+
+  void _onSession() {
+    final s = mp;
+    if (s != null && s.lost) {
+      // The server is gone: carry on alone (commands run here again).
+      s.removeListener(_onSession);
+      mp = null;
+      engine.setDeferred(false);
+      if (paused && outcome == null) setPaused(false);
+      showMessage('Lost the connection to the server: the game goes on here alone.');
+    }
+    _notifyHud(force: true);
+  }
+
+  // Runs the game frame by frame up to the server's clock, applying each
+  // frame's commands first (as every other player does).
+  bool _stepMultiplayer(MpSession s, int wanted) {
+    final target = s.upTo;
+    var now = engine.currentFrame;
+    // Behind (a slow tick, the result screen): catch up faster.
+    final behind = target - now;
+    var steps = behind > 12 ? (behind > 120 ? 60 : 12) : wanted;
+    var stepped = false;
+    while (steps-- > 0 && now < target) {
+      final cmds = s.takeFor(now);
+      if (cmds != null) engine.applyCommands(cmds);
+      engine.step(1);
+      now = engine.currentFrame;
+      stepped = true;
+      if (now % 240 == 0) {
+        s.report(now, engine.stateHash(), [for (final a in engine.alliances()) a.group], [for (final a in engine.alliances()) a.active ? 1 : 0]);
+      }
+    }
+    return stepped;
+  }
+
+  void _flushCommands() {
+    final s = mp;
+    if (s == null) return;
+    s.sendCommands(engine.takeOutbox());
+  }
+
   void dispose() {
     _disposed = true;
+    mp?.removeListener(_onSession);
+    mp?.leave();
+    mp = null;
     fogImage?.dispose();
     fogImage = null;
     outcomeArt?.dispose();
@@ -702,13 +793,21 @@ class GameController {
 
     var changed = _applyScroll(dtMicros / 1e6);
 
+    _flushCommands();
     if (!paused) _accMicros += dtMicros;
     var steps = _accMicros ~/ frameMicros;
-    if (steps > 0) {
+    final session = mp;
+    if (session != null && !paused) {
+      _accMicros -= steps * frameMicros;
+      if (_accMicros > frameMicros) _accMicros = 0;
+      steps = _stepMultiplayer(session, steps) ? 1 : 0;
+    } else if (steps > 0) {
       if (steps > 6) steps = 6; // don't spiral after a stall
       _accMicros -= steps * frameMicros;
       if (_accMicros > frameMicros) _accMicros = 0;
       engine.step(steps);
+    }
+    if (steps > 0) {
       _refreshUnits();
       sound?.drainEngine(screenRect);
       _announceCompletedUnits();

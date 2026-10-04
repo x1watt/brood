@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 21
+#define BW_BRIDGE_ABI_VERSION 22
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -240,6 +240,26 @@ void bw_bridge_set_legacy_unit_ids(bw_bridge_t* bridge, int on);
 // Copies the command log into out (pass NULL to just get its length).
 // Returns the length in int32 values, or -1 without a game.
 int bw_bridge_command_log(bw_bridge_t* bridge, int32_t* out, int out_cap);
+
+// --- Multiplayer (lockstep) ------------------------------------------------------
+//
+// Every client runs the same simulation and applies the same commands at
+// the same frame (a server orders them). While deferred, the command
+// functions above don't run: they return BW_OK and queue the command (in
+// the log format) in an outbox, which the client sends to the server.
+// Commands coming back from the server run with apply_commands, at the
+// current frame, and enter the command log as usual (saves work).
+void bw_bridge_set_deferred(bw_bridge_t* bridge, int on);
+// Copies and clears the outbox; pass out NULL for its length.
+int bw_bridge_take_outbox(bw_bridge_t* bridge, int32_t* out, int out_cap);
+// Runs log-format entries now (their frame fields are ignored).
+bw_status bw_bridge_apply_commands(bw_bridge_t* bridge, const int32_t* entries, int len);
+// A human takes over that player (1: the computer stops playing it) or hands
+// it back to the computer (0). Logged.
+bw_status bw_bridge_set_controller(bw_bridge_t* bridge, int player_slot, int human);
+// A hash of the game state (frame, money, units), to check every client
+// still plays the same game.
+uint32_t bw_bridge_state_hash(bw_bridge_t* bridge);
 
 // Replays a command log on a freshly started game (same map and setup)
 // until end_frame. Synchronous; runs about as fast as the simulation allows.

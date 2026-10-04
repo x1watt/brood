@@ -20,7 +20,9 @@ import '../game/game_setup.dart';
 import '../game/play_stats.dart';
 import '../game/saved_games.dart';
 import '../game/settings.dart';
+import '../net/multiplayer.dart';
 import 'game_screen.dart';
+import 'lobby_panel.dart';
 import 'menu_art.dart';
 import 'saved_games_list.dart';
 import 'window_control.dart';
@@ -48,7 +50,8 @@ class _StartScreenState extends State<StartScreen> {
   List<GameMap> _maps = const [];
   GameMap? _map;
   List<SaveSession> _saves = const [];
-  bool _loadTab = false;
+  _StartTab _tab = _StartTab.newGame;
+  MpClient? _mp; // the home server, when this page came from one
   MenuArt? _art;
   // The title screen shows once per run, when the app starts.
   static bool _titleShown = false;
@@ -86,6 +89,9 @@ class _StartScreenState extends State<StartScreen> {
     _maps = maps;
     _map = (maps.isNotEmpty && _seconds(maps.first) > 0 ? maps.first : null) ?? maps.where((m) => m.name == '(4)Lost Temple').firstOrNull ?? maps.firstOrNull;
     _saves = SaveSession.list();
+    MpClient.connect(_settings.playerName).then((c) {
+      if (mounted && c != null) setState(() => _mp = c);
+    });
     _restoreLastSetup();
   }
 
@@ -178,7 +184,7 @@ class _StartScreenState extends State<StartScreen> {
   void _hover() => _art?.play('mouseover');
 
   // The race whose room is behind the menu.
-  int get _shownRace => _loadTab ? -1 : _myRace;
+  int get _shownRace => _tab == _StartTab.newGame ? _myRace : -1;
 
   // Material widgets in the menus' green.
   ThemeData _menuTheme(BuildContext context) {
@@ -290,23 +296,37 @@ class _StartScreenState extends State<StartScreen> {
                           ],
                           MouseRegion(
                             onEnter: (_) => _hover(),
-                            child: SegmentedButton<bool>(
+                            child: SegmentedButton<_StartTab>(
                               showSelectedIcon: false,
                               segments: [
-                                const ButtonSegment(value: false, label: Text('New game')),
-                                ButtonSegment(value: true, label: Text('Load game (${_saves.length})'), enabled: _saves.isNotEmpty),
+                                const ButtonSegment(value: _StartTab.newGame, label: Text('New game')),
+                                ButtonSegment(value: _StartTab.load, label: Text('Load game (${_saves.length})'), enabled: _saves.isNotEmpty),
+                                if (_mp != null)
+                                  ButtonSegment(
+                                    value: _StartTab.multiplayer,
+                                    label: ValueListenableBuilder<List<LobbyGame>>(
+                                      valueListenable: _mp!.games,
+                                      builder: (_, games, _) => Text('Multiplayer (${games.length})'),
+                                    ),
+                                  ),
                               ],
-                              selected: {_loadTab},
+                              selected: {_tab},
                               onSelectionChanged: (s) {
                                 _click();
-                                setState(() => _loadTab = s.first);
+                                setState(() => _tab = s.first);
                               },
                             ),
                           ),
                         ],
                       ),
                       SizedBox(height: _short ? 10 : 20),
-                      Expanded(child: _loadTab ? _savedGames() : _newGame()),
+                      Expanded(
+                        child: switch (_tab) {
+                          _StartTab.newGame => _newGame(),
+                          _StartTab.load => _savedGames(),
+                          _StartTab.multiplayer => _box(child: LobbyPanel(client: _mp!, onJoin: _join, onRename: _rename)),
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -558,6 +578,44 @@ class _StartScreenState extends State<StartScreen> {
     );
   }
 
+  void _rename(String name) {
+    _settings
+      ..playerName = name.trim()
+      ..save();
+    _mp?.rename(name);
+  }
+
+  // Takes over a computer player of someone's game.
+  Future<void> _join(LobbyGame game, LobbySlot slot) async {
+    _click();
+    final client = _mp;
+    if (client == null) return;
+    final MpSession session;
+    try {
+      session = await client.join(game.id, slot.slot);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not join: $e')));
+      return;
+    }
+    final shared = session.launch;
+    final mapKey = shared['mapKey'] as String;
+    final mapFile = '$gameDataDir/$mapKey';
+    if (!GameFiles.instance.exists(mapFile)) {
+      session.leave();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('This game\'s map is not among your game files: $mapKey')));
+      return;
+    }
+    _open(
+      GameLaunch(
+        mapFile: mapFile,
+        mapKey: mapKey,
+        mapName: shared['mapName'] as String? ?? mapKey,
+        setup: GameSetup.fromJson(Map<String, dynamic>.from(shared['setup'] as Map)),
+        join: session,
+      ),
+    );
+  }
+
   // The saved games: sessions grouped by map, with their points in time.
   Widget _savedGames() => _box(
     child: SavedGamesList(
@@ -566,7 +624,7 @@ class _StartScreenState extends State<StartScreen> {
       onClick: _click,
       onDeleted: () => setState(() {
         _saves = SaveSession.list();
-        if (_saves.isEmpty) _loadTab = false;
+        if (_saves.isEmpty) _tab = _StartTab.newGame;
       }),
     ),
   );
@@ -621,3 +679,5 @@ class _TitleScreen extends StatelessWidget {
     child: RawImage(image: image, fit: BoxFit.contain, filterQuality: FilterQuality.medium),
   );
 }
+
+enum _StartTab { newGame, load, multiplayer }

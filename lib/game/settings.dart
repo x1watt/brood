@@ -3,7 +3,7 @@
 // Player preferences kept between runs ('settings.json' in the app storage,
 // lib/platform/storage.dart): sound volume and mute, fullscreen, the last
 // game setup chosen on the start screen, panel side, auto-save and the
-// auto-play modes.
+// auto-play modes, and the player's name for multiplayer.
 
 import 'dart:convert';
 
@@ -19,6 +19,7 @@ class Settings {
   bool alliancePanelLeft; // dock the alliance panel on the left
   bool autosave; // save a point in time every few minutes of play
   int autoplayModes; // what auto-play does when switched on (AutoplayMode bits)
+  String playerName; // shown to the others in multiplayer games
 
   Settings._({
     this.volume = 0.7,
@@ -28,6 +29,7 @@ class Settings {
     this.alliancePanelLeft = false,
     this.autosave = true,
     this.autoplayModes = 15,
+    this.playerName = '',
   });
 
   static Settings load() {
@@ -43,6 +45,7 @@ class Settings {
           alliancePanelLeft: j['alliancePanelLeft'] == true,
           autosave: j['autosave'] != false,
           autoplayModes: ((j['autoplayModes'] as num?)?.toInt() ?? 15).clamp(1, 15),
+          playerName: j['playerName'] is String ? j['playerName'] as String : '',
         );
       }
     } catch (_) {
@@ -61,6 +64,7 @@ class Settings {
         'alliancePanelLeft': alliancePanelLeft,
         'autosave': autosave,
         'autoplayModes': autoplayModes,
+        'playerName': playerName,
       }));
     } catch (_) {
       // Preferences are a convenience; never let them break the game.

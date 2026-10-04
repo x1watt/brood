@@ -134,6 +134,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
   // The result screen appears once, when the engine reports it.
   void _onHud() {
     if (!mounted) return;
+    _followServerPause();
     if (_c.outcome != null && !_outcomeShown) setState(() => _outcomeShown = true);
     if (!_c.ready && _c.loadingSave) setState(() {});
   }
@@ -190,16 +191,53 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
 
   // --- game menu ---
 
+  // In a multiplayer game the menu pauses everyone, and anyone's pause
+  // opens it everywhere (family play: anyone may pause). While our own
+  // request is on its way, the server's state isn't ours yet.
+  bool _pauseRequested = false, _resumeRequested = false;
+
   void _openMenu() {
     if (!_c.ready || _outcomeVisible) return;
+    _menuByServer = false;
     _c.setPaused(true);
+    if (_c.mp != null) {
+      _pauseRequested = true;
+      _c.mp!.pause(true);
+    }
     setState(() => _menuOpen = true);
   }
 
   void _closeMenu() {
     _c.setPaused(false);
+    if (_c.mp != null) {
+      _resumeRequested = true;
+      _c.mp!.pause(false);
+    }
     setState(() => _menuOpen = false);
     _focus.requestFocus();
+  }
+
+  bool _menuByServer = false; // opened by someone else's pause
+
+  void _followServerPause() {
+    final s = _c.mp;
+    if (s == null && _menuByServer && _menuOpen) {
+      // Disconnected while someone else had paused: play on.
+      _menuByServer = false;
+      setState(() => _menuOpen = false);
+      return;
+    }
+    if (s == null || _outcomeVisible) return;
+    if (s.paused) _pauseRequested = false;
+    if (!s.paused) _resumeRequested = false;
+    if (s.paused && !_menuOpen && !_resumeRequested) {
+      _c.setPaused(true);
+      _menuByServer = true;
+      setState(() => _menuOpen = true);
+    } else if (!s.paused && _menuOpen && !_pauseRequested) {
+      _c.setPaused(false);
+      setState(() => _menuOpen = false);
+    }
   }
 
   bool get _outcomeVisible => _outcomeShown && _c.paused;
@@ -867,8 +905,8 @@ class _GameMenu extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text(
-            'Game paused',
+          Text(
+            c.mp != null && c.mp!.paused && c.mp!.pausedBy.isNotEmpty ? 'Paused by ${c.mp!.pausedBy}' : 'Game paused',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Colors.white),
           ),
@@ -892,7 +930,7 @@ class _GameMenu extends StatelessWidget {
                       PlayerSwatch(c.colorOf(p.slot), size: 10),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: Text(p.name, style: TextStyle(color: p.human ? Colors.white : const Color(0xFFBDBDBD))),
+                        child: Text(c.nameOf(p.slot), style: TextStyle(color: p.slot == c.myPlayer || c.mp?.names[p.slot] != null ? Colors.white : const Color(0xFFBDBDBD))),
                       ),
                       Text(raceName(p.race), style: const TextStyle(color: Color(0xFF8C8C8C))),
                       SizedBox(

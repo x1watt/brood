@@ -171,15 +171,26 @@ struct bw_bridge {
 		op_alliance_share,
 		op_alliance_defensive,
 		op_legacy_ids,
+		op_set_controller,
 	};
 	bool legacy_ids = false; // see resolve_unit
 	a_vector<int32_t> cmd_log;
-	void log(int32_t op, std::initializer_list<int32_t> args, const int32_t* extra = nullptr, int extra_n = 0) {
-		cmd_log.push_back((int32_t)player->st().current_frame);
-		cmd_log.push_back(op);
-		cmd_log.push_back((int32_t)args.size() + extra_n);
-		for (int32_t a : args) cmd_log.push_back(a);
-		for (int i = 0; i < extra_n; ++i) cmd_log.push_back(extra[i]);
+	// Multiplayer (lockstep): while deferred, commands aren't run; they are
+	// queued in the outbox, sent to the server, and run when they come back
+	// for everyone at the same frame (bw_bridge_apply_commands).
+	bool deferred = false;
+	a_vector<int32_t> outbox;
+
+	// Logs a command; false when deferred (the caller returns without
+	// running it).
+	bool log(int32_t op, std::initializer_list<int32_t> args, const int32_t* extra = nullptr, int extra_n = 0) {
+		a_vector<int32_t>& to = deferred ? outbox : cmd_log;
+		to.push_back((int32_t)player->st().current_frame);
+		to.push_back(op);
+		to.push_back((int32_t)args.size() + extra_n);
+		for (int32_t a : args) to.push_back(a);
+		for (int i = 0; i < extra_n; ++i) to.push_back(extra[i]);
+		return !deferred;
 	}
 
 	// What the viewer may see of a unit or sprite (fog of war).
@@ -578,7 +589,7 @@ bw_status bw_bridge_explore_map(bw_bridge_t* bridge, int player_slot) {
 	if (!bridge || player_slot < 0 || player_slot > 7) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
-	b->log(bw_bridge::op_explore, {player_slot});
+	if (!b->log(bw_bridge::op_explore, {player_slot})) return BW_OK;
 	state& st = b->player->st();
 	size_t n = st.game->map_tile_width * st.game->map_tile_height;
 	// OpenBW keeps the bits inverted: set = not explored.
@@ -596,6 +607,39 @@ int bw_bridge_command_log(bw_bridge_t* bridge, int32_t* out, int out_cap) {
 	return (int)log.size();
 }
 
+// Runs one logged command (as replays and multiplayer do).
+static bool run_logged(bw_bridge_t* bridge, int32_t op, int32_t n, const int32_t* a) {
+	auto arg = [&](int k) { return k < n ? a[k] : 0; };
+	switch (op) {
+	case bw_bridge::op_select: bw_bridge_select_units(bridge, arg(0), a + 2, std::max(0, std::min(arg(1), n - 2))); break;
+	case bw_bridge::op_order: bw_bridge_order(bridge, arg(0), arg(1), arg(2), arg(3), arg(4), arg(5)); break;
+	case bw_bridge::op_train: bw_bridge_train(bridge, arg(0), arg(1)); break;
+	case bw_bridge::op_build: bw_bridge_build(bridge, arg(0), arg(1), arg(2), arg(3)); break;
+	case bw_bridge::op_cancel_last: bw_bridge_cancel_last(bridge, arg(0)); break;
+	case bw_bridge::op_control_group: bw_bridge_control_group(bridge, arg(0), arg(1), arg(2)); break;
+	case bw_bridge::op_research: bw_bridge_research(bridge, arg(0), arg(1)); break;
+	case bw_bridge::op_upgrade: bw_bridge_upgrade(bridge, arg(0), arg(1)); break;
+	case bw_bridge::op_cast: bw_bridge_cast(bridge, arg(0), arg(1), arg(2), arg(3), arg(4), arg(5)); break;
+	case bw_bridge::op_action: bw_bridge_action(bridge, arg(0), arg(1)); break;
+	case bw_bridge::op_set_rally: bw_bridge_set_rally(bridge, arg(0), arg(1), arg(2), arg(3)); break;
+	case bw_bridge::op_cancel_queue_slot: bw_bridge_cancel_queue_slot(bridge, arg(0), arg(1)); break;
+	case bw_bridge::op_alliance_open: bw_bridge_alliance_set_open(bridge, arg(0), arg(1)); break;
+	case bw_bridge::op_alliance_invite: bw_bridge_alliance_invite(bridge, arg(0), arg(1)); break;
+	case bw_bridge::op_alliance_respond: bw_bridge_alliance_respond(bridge, arg(0), arg(1), arg(2)); break;
+	case bw_bridge::op_alliance_leave: bw_bridge_alliance_leave(bridge, arg(0)); break;
+	case bw_bridge::op_alliance_surrender: bw_bridge_alliance_surrender(bridge, arg(0), arg(1)); break;
+	case bw_bridge::op_alliance_answer_surrender: bw_bridge_alliance_answer_surrender(bridge, arg(0), arg(1), arg(2)); break;
+	case bw_bridge::op_autoplay: bw_bridge_set_autoplay(bridge, arg(0), arg(1)); break;
+	case bw_bridge::op_explore: bw_bridge_explore_map(bridge, arg(0)); break;
+	case bw_bridge::op_alliance_share: bw_bridge_alliance_set_share(bridge, arg(0), arg(1)); break;
+	case bw_bridge::op_alliance_defensive: bw_bridge_alliance_set_defensive(bridge, arg(0), arg(1)); break;
+	case bw_bridge::op_legacy_ids: bw_bridge_set_legacy_unit_ids(bridge, arg(0)); break;
+	case bw_bridge::op_set_controller: bw_bridge_set_controller(bridge, arg(0), arg(1)); break;
+	default: return false;
+	}
+	return true;
+}
+
 bw_status bw_bridge_replay_commands(bw_bridge_t* bridge, const int32_t* log, int len, int end_frame) {
 	if (!bridge || (!log && len > 0) || len < 0) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
@@ -611,33 +655,7 @@ bw_status bw_bridge_replay_commands(bw_bridge_t* bridge, const int32_t* log, int
 			int32_t n = cmds[i + 2];
 			if (n < 0 || i + 3 + (size_t)n > cmds.size()) return BW_ERR_INVALID_ARGUMENT;
 			const int32_t* a = &cmds[i + 3];
-			auto arg = [&](int k) { return k < n ? a[k] : 0; };
-			switch (op) {
-			case bw_bridge::op_select: bw_bridge_select_units(bridge, arg(0), a + 2, std::max(0, std::min(arg(1), n - 2))); break;
-			case bw_bridge::op_order: bw_bridge_order(bridge, arg(0), arg(1), arg(2), arg(3), arg(4), arg(5)); break;
-			case bw_bridge::op_train: bw_bridge_train(bridge, arg(0), arg(1)); break;
-			case bw_bridge::op_build: bw_bridge_build(bridge, arg(0), arg(1), arg(2), arg(3)); break;
-			case bw_bridge::op_cancel_last: bw_bridge_cancel_last(bridge, arg(0)); break;
-			case bw_bridge::op_control_group: bw_bridge_control_group(bridge, arg(0), arg(1), arg(2)); break;
-			case bw_bridge::op_research: bw_bridge_research(bridge, arg(0), arg(1)); break;
-			case bw_bridge::op_upgrade: bw_bridge_upgrade(bridge, arg(0), arg(1)); break;
-			case bw_bridge::op_cast: bw_bridge_cast(bridge, arg(0), arg(1), arg(2), arg(3), arg(4), arg(5)); break;
-			case bw_bridge::op_action: bw_bridge_action(bridge, arg(0), arg(1)); break;
-			case bw_bridge::op_set_rally: bw_bridge_set_rally(bridge, arg(0), arg(1), arg(2), arg(3)); break;
-			case bw_bridge::op_cancel_queue_slot: bw_bridge_cancel_queue_slot(bridge, arg(0), arg(1)); break;
-			case bw_bridge::op_alliance_open: bw_bridge_alliance_set_open(bridge, arg(0), arg(1)); break;
-			case bw_bridge::op_alliance_invite: bw_bridge_alliance_invite(bridge, arg(0), arg(1)); break;
-			case bw_bridge::op_alliance_respond: bw_bridge_alliance_respond(bridge, arg(0), arg(1), arg(2)); break;
-			case bw_bridge::op_alliance_leave: bw_bridge_alliance_leave(bridge, arg(0)); break;
-			case bw_bridge::op_alliance_surrender: bw_bridge_alliance_surrender(bridge, arg(0), arg(1)); break;
-			case bw_bridge::op_alliance_answer_surrender: bw_bridge_alliance_answer_surrender(bridge, arg(0), arg(1), arg(2)); break;
-			case bw_bridge::op_autoplay: bw_bridge_set_autoplay(bridge, arg(0), arg(1)); break;
-			case bw_bridge::op_explore: bw_bridge_explore_map(bridge, arg(0)); break;
-			case bw_bridge::op_alliance_share: bw_bridge_alliance_set_share(bridge, arg(0), arg(1)); break;
-			case bw_bridge::op_alliance_defensive: bw_bridge_alliance_set_defensive(bridge, arg(0), arg(1)); break;
-			case bw_bridge::op_legacy_ids: bw_bridge_set_legacy_unit_ids(bridge, arg(0)); break;
-			default: return BW_ERR_INVALID_ARGUMENT;
-			}
+			if (!run_logged(bridge, op, n, a)) return BW_ERR_INVALID_ARGUMENT;
 			i += 3 + (size_t)n;
 		}
 		if (i < cmds.size() && cmds[i] < frame) return BW_ERR_INVALID_ARGUMENT;
@@ -648,6 +666,87 @@ bw_status bw_bridge_replay_commands(bw_bridge_t* bridge, const int32_t* log, int
 	b->sounds.events.clear();
 	b->alliances.events.clear();
 	return BW_OK;
+}
+
+bw_status bw_bridge_set_controller(bw_bridge_t* bridge, int player_slot, int human) {
+	if (!bridge || player_slot < 0 || player_slot > 7) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	if (!b->log(bw_bridge::op_set_controller, {player_slot, human})) return BW_OK;
+	state& st = b->player->st();
+	if (st.players[(size_t)player_slot].controller != player_t::controller_occupied) return BW_ERR_REJECTED;
+	b->ai.set_controller(player_slot, st.players[(size_t)player_slot].race, (uint32_t)st.current_frame * 7919u + 31u,
+	                     st.game->start_locations[(size_t)player_slot], human != 0);
+	return BW_OK;
+}
+
+void bw_bridge_set_deferred(bw_bridge_t* bridge, int on) {
+	if (bridge) B(bridge)->deferred = on != 0;
+}
+
+int bw_bridge_take_outbox(bw_bridge_t* bridge, int32_t* out, int out_cap) {
+	if (!bridge) return -1;
+	auto& box = B(bridge)->outbox;
+	if (!out) return (int)box.size();
+	if ((size_t)out_cap < box.size()) return -1;
+	int n = (int)box.size();
+	if (n) std::memcpy(out, box.data(), box.size() * sizeof(int32_t));
+	box.clear();
+	return n;
+}
+
+bw_status bw_bridge_apply_commands(bw_bridge_t* bridge, const int32_t* entries, int len) {
+	if (!bridge || (!entries && len > 0) || len < 0) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	a_vector<int32_t> cmds(entries, entries + len);
+	bool was = b->deferred;
+	b->deferred = false;
+	bw_status r = BW_OK;
+	for (size_t i = 0; i + 3 <= cmds.size();) {
+		int32_t op = cmds[i + 1], n = cmds[i + 2];
+		if (n < 0 || i + 3 + (size_t)n > cmds.size()) {
+			r = BW_ERR_INVALID_ARGUMENT;
+			break;
+		}
+		try {
+			if (!run_logged(bridge, op, n, &cmds[i + 3])) r = BW_ERR_INVALID_ARGUMENT;
+		} catch (...) {
+			r = BW_ERR_UNKNOWN;
+		}
+		i += 3 + (size_t)n;
+	}
+	b->deferred = was;
+	return r;
+}
+
+uint32_t bw_bridge_state_hash(bw_bridge_t* bridge) {
+	if (!bridge || !B(bridge)->in_game()) return 0;
+	bw_bridge* b = B(bridge);
+	state& st = b->player->st();
+	uint32_t h = 2166136261u;
+	auto mix = [&](int64_t v) {
+		h = (h ^ (uint32_t)v) * 16777619u;
+		h = (h ^ (uint32_t)(v >> 32)) * 16777619u;
+	};
+	mix(st.current_frame);
+	for (int p = 0; p != 8; ++p) {
+		mix(st.current_minerals[p]);
+		mix(st.current_gas[p]);
+		mix(st.total_minerals_gathered[p]);
+	}
+	for (unit_t* u : ptr(st.visible_units)) {
+		mix((int)u->unit_type->id);
+		mix(u->owner);
+		mix(u->sprite ? u->sprite->position.x : 0);
+		mix(u->sprite ? u->sprite->position.y : 0);
+		mix(u->hp.raw_value);
+	}
+	for (unit_t* u : ptr(st.hidden_units)) {
+		mix((int)u->unit_type->id);
+		mix(u->owner);
+	}
+	return h;
 }
 
 // --- Scalar queries -----------------------------------------------------------
@@ -1280,7 +1379,7 @@ bw_status bw_bridge_select_units(bw_bridge_t* bridge, int owner, const int32_t* 
 	if (!bridge || (!unit_ids && count > 0) || owner < 0 || owner > 7) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
-	b->log(bw_bridge::op_select, {owner, count}, unit_ids, count);
+	if (!b->log(bw_bridge::op_select, {owner, count}, unit_ids, count)) return BW_OK;
 	try {
 		auto f = b->actions();
 		a_vector<unit_t*> units;
@@ -1363,7 +1462,7 @@ bw_status bw_bridge_order(bw_bridge_t* bridge, int owner, int order, int x, int 
 	if (!bridge || owner < 0 || owner > 7) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
-	b->log(bw_bridge::op_order, {owner, order, x, y, target_unit_id, queue});
+	if (!b->log(bw_bridge::op_order, {owner, order, x, y, target_unit_id, queue})) return BW_OK;
 	return for_commanded(b, owner, [&](int actor) { return order_as(bridge, actor, order, x, y, target_unit_id, queue); });
 }
 
@@ -1448,7 +1547,7 @@ bw_status bw_bridge_train(bw_bridge_t* bridge, int owner, int unit_type_id) {
 	if (!bridge || owner < 0 || owner > 7) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
-	b->log(bw_bridge::op_train, {owner, unit_type_id});
+	if (!b->log(bw_bridge::op_train, {owner, unit_type_id})) return BW_OK;
 	return for_commanded(b, owner, [&](int actor) { return train_as(bridge, actor, unit_type_id); });
 }
 
@@ -1498,7 +1597,7 @@ bw_status bw_bridge_build(bw_bridge_t* bridge, int owner, int unit_type_id, int 
 	if (!bridge || owner < 0 || owner > 7) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
-	b->log(bw_bridge::op_build, {owner, unit_type_id, tile_x, tile_y});
+	if (!b->log(bw_bridge::op_build, {owner, unit_type_id, tile_x, tile_y})) return BW_OK;
 	return for_commanded(b, owner, [&](int actor) { return build_as(bridge, actor, unit_type_id, tile_x, tile_y); });
 }
 
@@ -1523,7 +1622,7 @@ bw_status bw_bridge_cancel_last(bw_bridge_t* bridge, int owner) {
 	if (!bridge || owner < 0 || owner > 7) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
-	b->log(bw_bridge::op_cancel_last, {owner});
+	if (!b->log(bw_bridge::op_cancel_last, {owner})) return BW_OK;
 	return for_commanded(b, owner, [&](int actor) { return cancel_last_as(bridge, actor); });
 }
 
@@ -1531,7 +1630,7 @@ bw_status bw_bridge_control_group(bw_bridge_t* bridge, int owner, int group, int
 	if (!bridge || owner < 0 || owner > 7 || group < 0 || group > 9 || action < 0 || action > 2) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
-	b->log(bw_bridge::op_control_group, {owner, group, action});
+	if (!b->log(bw_bridge::op_control_group, {owner, group, action})) return BW_OK;
 	try {
 		auto f = b->actions();
 		auto& g = b->groups[(size_t)owner][(size_t)group];
@@ -1749,7 +1848,7 @@ bw_status bw_bridge_research(bw_bridge_t* bridge, int owner, int tech_id) {
 	if (!bridge || owner < 0 || owner > 7) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
-	b->log(bw_bridge::op_research, {owner, tech_id});
+	if (!b->log(bw_bridge::op_research, {owner, tech_id})) return BW_OK;
 	return for_commanded(b, owner, [&](int actor) { return research_as(bridge, actor, tech_id); });
 }
 
@@ -1769,7 +1868,7 @@ bw_status bw_bridge_upgrade(bw_bridge_t* bridge, int owner, int upgrade_id) {
 	if (!bridge || owner < 0 || owner > 7) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
-	b->log(bw_bridge::op_upgrade, {owner, upgrade_id});
+	if (!b->log(bw_bridge::op_upgrade, {owner, upgrade_id})) return BW_OK;
 	return for_commanded(b, owner, [&](int actor) { return upgrade_as(bridge, actor, upgrade_id); });
 }
 
@@ -1819,7 +1918,7 @@ bw_status bw_bridge_cast(bw_bridge_t* bridge, int owner, int tech_id, int x, int
 	if (!bridge || owner < 0 || owner > 7) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
-	b->log(bw_bridge::op_cast, {owner, tech_id, x, y, target_unit_id, queue});
+	if (!b->log(bw_bridge::op_cast, {owner, tech_id, x, y, target_unit_id, queue})) return BW_OK;
 	return for_commanded(b, owner, [&](int actor) { return cast_as(bridge, actor, tech_id, x, y, target_unit_id, queue); });
 }
 
@@ -1856,7 +1955,7 @@ bw_status bw_bridge_action(bw_bridge_t* bridge, int owner, int action) {
 	if (!bridge || owner < 0 || owner > 7) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
-	b->log(bw_bridge::op_action, {owner, action});
+	if (!b->log(bw_bridge::op_action, {owner, action})) return BW_OK;
 	return for_commanded(b, owner, [&](int actor) { return action_as(bridge, actor, action); });
 }
 
@@ -1879,7 +1978,7 @@ bw_status bw_bridge_set_rally(bw_bridge_t* bridge, int owner, int x, int y, int3
 	if (!bridge || owner < 0 || owner > 7) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
-	b->log(bw_bridge::op_set_rally, {owner, x, y, target_unit_id});
+	if (!b->log(bw_bridge::op_set_rally, {owner, x, y, target_unit_id})) return BW_OK;
 	return for_commanded(b, owner, [&](int actor) { return set_rally_as(bridge, actor, x, y, target_unit_id); });
 }
 
@@ -2038,7 +2137,7 @@ bw_status bw_bridge_cancel_queue_slot(bw_bridge_t* bridge, int owner, int slot) 
 	if (!bridge || owner < 0 || owner > 7) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
-	b->log(bw_bridge::op_cancel_queue_slot, {owner, slot});
+	if (!b->log(bw_bridge::op_cancel_queue_slot, {owner, slot})) return BW_OK;
 	return for_commanded(b, owner, [&](int actor) { return cancel_queue_slot_as(bridge, actor, slot); });
 }
 
@@ -2129,21 +2228,21 @@ bw_status bw_bridge_player_stats(bw_bridge_t* bridge, int player_slot, bw_player
 bw_status bw_bridge_alliance_set_open(bw_bridge_t* bridge, int player_slot, int open) {
 	if (!bridge || !alliance_slot_ok(B(bridge), player_slot)) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
-	b->log(bw_bridge::op_alliance_open, {player_slot, open});
+	if (!b->log(bw_bridge::op_alliance_open, {player_slot, open})) return BW_OK;
 	return b->alliances.set_open(b->player->st(), player_slot, open != 0) ? BW_OK : BW_ERR_REJECTED;
 }
 
 bw_status bw_bridge_alliance_set_share(bw_bridge_t* bridge, int player_slot, int on) {
 	if (!bridge || !alliance_slot_ok(B(bridge), player_slot)) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
-	b->log(bw_bridge::op_alliance_share, {player_slot, on});
+	if (!b->log(bw_bridge::op_alliance_share, {player_slot, on})) return BW_OK;
 	return b->alliances.set_share(b->player->st(), player_slot, on != 0) ? BW_OK : BW_ERR_REJECTED;
 }
 
 bw_status bw_bridge_alliance_set_defensive(bw_bridge_t* bridge, int player_slot, int on) {
 	if (!bridge || !alliance_slot_ok(B(bridge), player_slot)) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
-	b->log(bw_bridge::op_alliance_defensive, {player_slot, on});
+	if (!b->log(bw_bridge::op_alliance_defensive, {player_slot, on})) return BW_OK;
 	return b->alliances.set_defensive(b->player->st(), player_slot, on != 0) ? BW_OK : BW_ERR_REJECTED;
 }
 
@@ -2160,35 +2259,35 @@ int bw_bridge_alliance_get_share(bw_bridge_t* bridge, int player_slot) {
 bw_status bw_bridge_alliance_invite(bw_bridge_t* bridge, int from, int to) {
 	if (!bridge || !alliance_slot_ok(B(bridge), from) || !alliance_slot_ok(B(bridge), to)) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
-	b->log(bw_bridge::op_alliance_invite, {from, to});
+	if (!b->log(bw_bridge::op_alliance_invite, {from, to})) return BW_OK;
 	return b->alliances.invite(b->player->st(), from, to) ? BW_OK : BW_ERR_REJECTED;
 }
 
 bw_status bw_bridge_alliance_respond(bw_bridge_t* bridge, int player_slot, int from, int accept) {
 	if (!bridge || !alliance_slot_ok(B(bridge), player_slot) || !alliance_slot_ok(B(bridge), from)) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
-	b->log(bw_bridge::op_alliance_respond, {player_slot, from, accept});
+	if (!b->log(bw_bridge::op_alliance_respond, {player_slot, from, accept})) return BW_OK;
 	return b->alliances.respond(b->player->st(), player_slot, from, accept != 0) ? BW_OK : BW_ERR_REJECTED;
 }
 
 bw_status bw_bridge_alliance_leave(bw_bridge_t* bridge, int player_slot) {
 	if (!bridge || !alliance_slot_ok(B(bridge), player_slot)) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
-	b->log(bw_bridge::op_alliance_leave, {player_slot});
+	if (!b->log(bw_bridge::op_alliance_leave, {player_slot})) return BW_OK;
 	return b->alliances.leave(b->player->st(), player_slot) ? BW_OK : BW_ERR_REJECTED;
 }
 
 bw_status bw_bridge_alliance_surrender(bw_bridge_t* bridge, int from, int to) {
 	if (!bridge || !alliance_slot_ok(B(bridge), from) || !alliance_slot_ok(B(bridge), to)) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
-	b->log(bw_bridge::op_alliance_surrender, {from, to});
+	if (!b->log(bw_bridge::op_alliance_surrender, {from, to})) return BW_OK;
 	return b->alliances.offer_surrender(b->player->st(), from, to) ? BW_OK : BW_ERR_REJECTED;
 }
 
 bw_status bw_bridge_alliance_answer_surrender(bw_bridge_t* bridge, int player_slot, int from, int accept) {
 	if (!bridge || !alliance_slot_ok(B(bridge), player_slot) || !alliance_slot_ok(B(bridge), from)) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
-	b->log(bw_bridge::op_alliance_answer_surrender, {player_slot, from, accept});
+	if (!b->log(bw_bridge::op_alliance_answer_surrender, {player_slot, from, accept})) return BW_OK;
 	return b->alliances.answer_surrender(b->player->st(), player_slot, from, accept != 0) ? BW_OK : BW_ERR_REJECTED;
 }
 
@@ -2212,7 +2311,7 @@ bw_status bw_bridge_set_autoplay(bw_bridge_t* bridge, int player_slot, int modes
 	if (!bridge || player_slot < 0 || player_slot > 7 || modes < 0 || modes > BW_AUTOPLAY_ALL) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
-	b->log(bw_bridge::op_autoplay, {player_slot, modes});
+	if (!b->log(bw_bridge::op_autoplay, {player_slot, modes})) return BW_OK;
 	state& st = b->player->st();
 	if (st.players[(size_t)player_slot].controller != player_t::controller_occupied) return BW_ERR_REJECTED;
 	b->ai.groups = &b->groups;

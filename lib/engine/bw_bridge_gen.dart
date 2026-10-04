@@ -580,6 +580,107 @@ class BwBridgeBindings {
         int Function(ffi.Pointer<bw_bridge_t>, ffi.Pointer<ffi.Int32>, int)
       >();
 
+  /// --- Multiplayer (lockstep) ------------------------------------------------------
+  ///
+  /// Every client runs the same simulation and applies the same commands at
+  /// the same frame (a server orders them). While deferred, the command
+  /// functions above don't run: they return BW_OK and queue the command (in
+  /// the log format) in an outbox, which the client sends to the server.
+  /// Commands coming back from the server run with apply_commands, at the
+  /// current frame, and enter the command log as usual (saves work).
+  void bw_bridge_set_deferred(ffi.Pointer<bw_bridge_t> bridge, int on$) {
+    return _bw_bridge_set_deferred(bridge, on$);
+  }
+
+  late final _bw_bridge_set_deferredPtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Void Function(ffi.Pointer<bw_bridge_t>, ffi.Int)>
+      >('bw_bridge_set_deferred');
+  late final _bw_bridge_set_deferred = _bw_bridge_set_deferredPtr
+      .asFunction<void Function(ffi.Pointer<bw_bridge_t>, int)>();
+
+  /// Copies and clears the outbox; pass out NULL for its length.
+  int bw_bridge_take_outbox(
+    ffi.Pointer<bw_bridge_t> bridge,
+    ffi.Pointer<ffi.Int32> out,
+    int out_cap,
+  ) {
+    return _bw_bridge_take_outbox(bridge, out, out_cap);
+  }
+
+  late final _bw_bridge_take_outboxPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Pointer<ffi.Int32>,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_take_outbox');
+  late final _bw_bridge_take_outbox = _bw_bridge_take_outboxPtr
+      .asFunction<
+        int Function(ffi.Pointer<bw_bridge_t>, ffi.Pointer<ffi.Int32>, int)
+      >();
+
+  /// Runs log-format entries now (their frame fields are ignored).
+  bw_status bw_bridge_apply_commands(
+    ffi.Pointer<bw_bridge_t> bridge,
+    ffi.Pointer<ffi.Int32> entries,
+    int len,
+  ) {
+    return bw_status.fromValue(_bw_bridge_apply_commands(bridge, entries, len));
+  }
+
+  late final _bw_bridge_apply_commandsPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Pointer<ffi.Int32>,
+            ffi.Int,
+          )
+        >
+      >('bw_bridge_apply_commands');
+  late final _bw_bridge_apply_commands = _bw_bridge_apply_commandsPtr
+      .asFunction<
+        int Function(ffi.Pointer<bw_bridge_t>, ffi.Pointer<ffi.Int32>, int)
+      >();
+
+  /// A human takes over that player (1: the computer stops playing it) or hands
+  /// it back to the computer (0). Logged.
+  bw_status bw_bridge_set_controller(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int player_slot,
+    int human,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_set_controller(bridge, player_slot, human),
+    );
+  }
+
+  late final _bw_bridge_set_controllerPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_set_controller');
+  late final _bw_bridge_set_controller = _bw_bridge_set_controllerPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int)>();
+
+  /// A hash of the game state (frame, money, units), to check every client
+  /// still plays the same game.
+  int bw_bridge_state_hash(ffi.Pointer<bw_bridge_t> bridge) {
+    return _bw_bridge_state_hash(bridge);
+  }
+
+  late final _bw_bridge_state_hashPtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Uint32 Function(ffi.Pointer<bw_bridge_t>)>
+      >('bw_bridge_state_hash');
+  late final _bw_bridge_state_hash = _bw_bridge_state_hashPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>)>();
+
   /// Replays a command log on a freshly started game (same map and setup)
   /// until end_frame. Synchronous; runs about as fast as the simulation allows.
   bw_status bw_bridge_replay_commands(
@@ -2805,7 +2906,7 @@ final class bw_sound_info extends ffi.Struct {
   external ffi.Array<ffi.Char> filename;
 }
 
-const int BW_BRIDGE_ABI_VERSION = 21;
+const int BW_BRIDGE_ABI_VERSION = 22;
 
 const int BW_MAX_PLAYERS = 8;
 

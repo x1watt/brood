@@ -165,6 +165,26 @@ class BridgeRawFfi extends BridgeRaw {
   @override
   int bw_bridge_command_log(int bridge, int out, int out_cap) => _bw_bridge_command_log(bridge, out, out_cap);
 
+  late final _bw_bridge_set_deferred = _lib.lookupFunction<ffi.Void Function(ffi.IntPtr, ffi.Int32), void Function(int, int)>('bw_bridge_set_deferred');
+  @override
+  void bw_bridge_set_deferred(int bridge, int on) => _bw_bridge_set_deferred(bridge, on);
+
+  late final _bw_bridge_take_outbox = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.IntPtr, ffi.Int32), int Function(int, int, int)>('bw_bridge_take_outbox');
+  @override
+  int bw_bridge_take_outbox(int bridge, int out, int out_cap) => _bw_bridge_take_outbox(bridge, out, out_cap);
+
+  late final _bw_bridge_apply_commands = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.IntPtr, ffi.Int32), int Function(int, int, int)>('bw_bridge_apply_commands');
+  @override
+  int bw_bridge_apply_commands(int bridge, int entries, int len) => _bw_bridge_apply_commands(bridge, entries, len);
+
+  late final _bw_bridge_set_controller = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.Int32), int Function(int, int, int)>('bw_bridge_set_controller');
+  @override
+  int bw_bridge_set_controller(int bridge, int player_slot, int human) => _bw_bridge_set_controller(bridge, player_slot, human);
+
+  late final _bw_bridge_state_hash = _lib.lookupFunction<ffi.Uint32 Function(ffi.IntPtr), int Function(int)>('bw_bridge_state_hash');
+  @override
+  int bw_bridge_state_hash(int bridge) => _bw_bridge_state_hash(bridge);
+
   late final _bw_bridge_replay_commands = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.IntPtr, ffi.Int32, ffi.Int32), int Function(int, int, int, int)>('bw_bridge_replay_commands');
   @override
   int bw_bridge_replay_commands(int bridge, int log, int len, int end_frame) => _bw_bridge_replay_commands(bridge, log, len, end_frame);

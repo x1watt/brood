@@ -216,6 +216,46 @@ class BwEngine {
     }
   }
 
+  // --- multiplayer (lockstep, lib/net/multiplayer.dart) ---
+
+  /// While on, commands are queued for the server instead of run.
+  void setDeferred(bool on) => _r.bw_bridge_set_deferred(_h, on ? 1 : 0);
+
+  /// The queued commands (log format), emptied.
+  List<int> takeOutbox() {
+    final n = _r.bw_bridge_take_outbox(_h, 0, 0);
+    if (n <= 0) return const [];
+    final buf = _r.malloc(n * 4);
+    try {
+      if (_r.bw_bridge_take_outbox(_h, buf, n) != n) return const [];
+      final d = _d(buf, n * 4);
+      return List<int>.generate(n, (i) => d.getInt32(i * 4, Endian.little), growable: false);
+    } finally {
+      _r.free(buf);
+    }
+  }
+
+  /// Runs commands (log format) now.
+  void applyCommands(List<int> entries) {
+    if (entries.isEmpty) return;
+    final buf = _r.malloc(entries.length * 4);
+    try {
+      final d = _d(buf, entries.length * 4);
+      for (int i = 0; i < entries.length; ++i) {
+        d.setInt32(i * 4, entries[i], Endian.little);
+      }
+      _r.bw_bridge_apply_commands(_h, buf, entries.length);
+    } finally {
+      _r.free(buf);
+    }
+  }
+
+  /// A human takes over [slot] (or hands it back to the computer). Logged.
+  void setController(int slot, bool human) => _r.bw_bridge_set_controller(_h, slot, human ? 1 : 0);
+
+  /// The game state's hash (the same number on every platform).
+  int stateHash() => _r.bw_bridge_state_hash(_h) & 0xffffffff;
+
   /// Every command given so far, for saving the game.
   List<int> commandLog() {
     final n = _r.bw_bridge_command_log(_h, 0, 0);

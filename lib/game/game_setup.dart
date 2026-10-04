@@ -7,6 +7,8 @@
 
 import 'dart:math' as math;
 
+import '../net/multiplayer.dart';
+
 const List<String> raceNames = ['Zerg', 'Terran', 'Protoss'];
 const int randomRace = 3;
 
@@ -114,7 +116,22 @@ class GameLaunch {
   final SavedGameData? saved;
   final String continues; // for a loaded game: which session and point it carries on from
 
-  const GameLaunch({required this.mapFile, required this.mapKey, required this.mapName, required this.setup, this.saved, this.continues = ''});
+  /// Joining someone's multiplayer game (lib/net/multiplayer.dart): the
+  /// game so far comes from the server.
+  final MpSession? join;
+
+  const GameLaunch({
+    required this.mapFile,
+    required this.mapKey,
+    required this.mapName,
+    required this.setup,
+    this.saved,
+    this.continues = '',
+    this.join,
+  });
+
+  /// What other players need to start the same game (multiplayer).
+  Map<String, Object?> toShared() => {'mapKey': mapKey, 'mapName': mapName, 'setup': setup.toJson()};
 }
 
 /// The parts of a saved game the engine replays.

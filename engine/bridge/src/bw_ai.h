@@ -149,6 +149,20 @@ struct ai_system {
 		players.back().modes = modes;
 	}
 
+	// Multiplayer: a human takes over a computer player (human = true; it
+	// stops playing, auto-play off), or hands its slot back (the computer
+	// plays it fully again).
+	void set_controller(int owner, race_t race, uint32_t seed, xy home, bool human) {
+		for (auto& p : players) {
+			if (p.owner != owner) continue;
+			p.human = human;
+			p.modes = human ? 0 : mode_all;
+			return;
+		}
+		if (human) return;
+		add(owner, race, seed, home);
+	}
+
 	int autoplay(int owner) const {
 		for (auto& p : players) {
 			if (p.owner == owner && p.human) return p.modes;

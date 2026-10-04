@@ -264,7 +264,7 @@ class _ScoreScreenState extends State<ScoreScreen> {
                 const SizedBox(width: 8),
                 Flexible(
                   child: Text(
-                    p.name,
+                    c.nameOf(p.slot),
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: me ? Colors.white : _text, fontWeight: me ? FontWeight.w800 : FontWeight.w600),
                   ),

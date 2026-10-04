@@ -41,6 +41,11 @@ class WebGameFiles extends GameFiles {
 
   @override
   Future<bool> init() async {
+    // Ask the browser to keep the files: storage the page didn't ask to
+    // keep may be cleared when space runs low.
+    try {
+      await web.window.navigator.storage.persist().toDart;
+    } catch (_) {}
     final db = await BroodDb.open();
     final keys = await db.keys(BroodDb.files);
     if (!requiredArchives.every(keys.contains)) return _ready = false;
@@ -131,6 +136,18 @@ class WebGameFiles extends GameFiles {
       return 'Test data import failed: $e';
     }
     return await init() ? null : 'The game files could not be loaded.';
+  }
+
+  @override
+  Future<String?> serverFiles() async {
+    try {
+      final r = await web.window.fetch('gamedata/manifest.json'.toJS).toDart;
+      if (!r.ok) return null;
+      final list = (await r.json().toDart) as JSArray<JSAny?>;
+      return list.length > 0 ? 'gamedata/' : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<List<web.File>> _pick(bool folder) {

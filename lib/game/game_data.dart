@@ -36,6 +36,10 @@ abstract class GameFiles {
   /// Browser tests only: imports the game files listed in `base` + manifest.json.
   Future<String?> importFromUrl(String base, void Function(int done, int total) progress) async => 'Not available here.';
 
+  /// Where the page's own server offers the game files (the home server,
+  /// tool/brood_server.dart), or null.
+  Future<String?> serverFiles() async => null;
+
   /// Browser only: forgets imported game files.
   Future<void> forget() async {}
 }
