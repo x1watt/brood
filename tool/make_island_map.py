@@ -18,7 +18,10 @@
 # cross). Ground near resources and start locations is never touched.
 # Doodad sprites left standing in the new water are removed. The result is
 # written as a new map archive (the scenario stored uncompressed, which the
-# game and OpenBW read like any other).
+# game and OpenBW read like any other). Last, tool/blend_terrain.dart gives
+# the channels proper shores and cliffs, as the map editor's terrain brush
+# does (skipped with --no-blend, or when Dart isn't there: the channels then
+# keep straight edges).
 #
 # Nothing of the original is changed; the new map is the player's own file.
 
@@ -343,10 +346,12 @@ def drop_sprites_in_water(sections, new, water, W):
 
 
 def main():
-    if len(sys.argv) != 5:
-        print(__doc__ if __doc__ else 'usage: make_island_map.py <data_dir> <map> <out> <name>')
+    args = [a for a in sys.argv[1:] if a != '--no-blend']
+    blend = '--no-blend' not in sys.argv
+    if len(args) != 4:
+        print('usage: make_island_map.py [--no-blend] <data_dir> <map> <out> <name>')
         sys.exit(2)
-    data_dir, src, out, name = sys.argv[1:]
+    data_dir, src, out, name = args
     tool = map_tool()
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     tmp = out + '.tmp'
@@ -372,9 +377,18 @@ def main():
     if len(data) % 4096 == 0:
         sections.append([b'PAD ', bytearray(4)])
         data = write_chk(sections)
-    write_mpq(out, [('staredit\\scenario.chk', data), ('(listfile)', b'staredit\\scenario.chk\r\n')])
+    cut = out + '.cut.scm' if blend else out
+    write_mpq(cut, [('staredit\\scenario.chk', data), ('(listfile)', b'staredit\\scenario.chk\r\n')])
     for f in (tmp + '.chk', tmp + '.json'):
         os.remove(f)
+    if blend:
+        try:
+            subprocess.run(['dart', 'run', os.path.join(HERE, 'blend_terrain.dart'), data_dir, src, cut, out],
+                           check=True, cwd=os.path.join(HERE, '..'))
+            os.remove(cut)
+        except (OSError, subprocess.CalledProcessError) as e:
+            print('Blending the shores failed (%s); keeping straight channels.' % e)
+            os.replace(cut, out)
     print('%s: %d islands, %d tiles turned to water (tile %d), %d doodads removed%s' %
           (out, len(anchors), changed, water, dropped, '' if not joined else ', some still joined'))
 

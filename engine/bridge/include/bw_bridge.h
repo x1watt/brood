@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 23
+#define BW_BRIDGE_ABI_VERSION 24
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -571,6 +571,10 @@ bw_status bw_bridge_load_pcx(bw_bridge_t* bridge, const char* path, uint8_t* out
 // Any file from the game's archives (e.g. "music\\title.wav"), raw. Pass
 // out_data NULL to get *out_len only.
 bw_status bw_bridge_read_file(bw_bridge_t* bridge, const char* path, uint8_t* out_data, int out_cap, int* out_len);
+// A file inside a map archive (.scm/.scx), raw: "staredit\\scenario.chk" is
+// the map itself (the map editor reads it). Needs no game data. Pass out_data
+// NULL to get *out_len only.
+bw_status bw_bridge_read_map_file(bw_bridge_t* bridge, const char* map_file, const char* path, uint8_t* out_data, int out_cap, int* out_len);
 // The same image in full color through its own palette (the 768 bytes at
 // the end of the file): width*height RGBA8888 pixels, opaque. For the
 // menus' backgrounds (glue\*\Backgnd.pcx, glue\title\title.pcx).

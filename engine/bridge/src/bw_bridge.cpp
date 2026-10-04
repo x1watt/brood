@@ -2080,6 +2080,22 @@ bw_status bw_bridge_read_file(bw_bridge_t* bridge, const char* path, uint8_t* ou
 	}
 }
 
+bw_status bw_bridge_read_map_file(bw_bridge_t* bridge, const char* map_file, const char* path, uint8_t* out_data, int out_cap, int* out_len) {
+	if (!bridge || !map_file || !path || !out_len) return BW_ERR_INVALID_ARGUMENT;
+	try {
+		data_loading::mpq_file<> mpq(map_file);
+		a_vector<uint8_t> data;
+		mpq(data, path);
+		*out_len = (int)data.size();
+		if (!out_data) return BW_OK;
+		if (out_cap < (int)data.size()) return BW_ERR_INVALID_ARGUMENT;
+		std::memcpy(out_data, data.data(), data.size());
+		return BW_OK;
+	} catch (...) {
+		return BW_ERR_MAP_LOAD_FAILED;
+	}
+}
+
 bw_status bw_bridge_load_pcx_rgba(bw_bridge_t* bridge, const char* path, uint8_t* out_rgba, int out_cap, int* out_width, int* out_height) {
 	if (!bridge || !path || !out_width || !out_height) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);

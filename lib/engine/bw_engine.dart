@@ -706,6 +706,22 @@ class BwEngine {
     });
   }
 
+  /// A file inside a map archive, raw (null when missing): the map editor
+  /// reads "staredit\\scenario.chk".
+  Uint8List? readMapFile(String mapFile, String path) {
+    return _withString(mapFile, (m) => _withString(path, (p) {
+      if (!_ok(_r.bw_bridge_read_map_file(_h, m, p, 0, 0, _ints))) return null;
+      final n = _i32(_ints);
+      final buf = _r.malloc(n == 0 ? 1 : n);
+      try {
+        if (!_ok(_r.bw_bridge_read_map_file(_h, m, p, buf, n, _ints))) return null;
+        return _copy(buf, n);
+      } finally {
+        _r.free(buf);
+      }
+    }));
+  }
+
   /// A PCX image in full color through its own palette (menu backgrounds).
   (int, int, Uint8List)? loadPcxRgba(String path) {
     return _withString(path, (p) {

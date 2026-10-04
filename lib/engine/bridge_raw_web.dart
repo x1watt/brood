@@ -317,6 +317,9 @@ class BridgeRawWeb extends BridgeRaw {
   int bw_bridge_read_file(int bridge, int path, int out_data, int out_cap, int out_len) => _call('_bw_bridge_read_file', [bridge, path, out_data, out_cap, out_len]);
 
   @override
+  int bw_bridge_read_map_file(int bridge, int map_file, int path, int out_data, int out_cap, int out_len) => _call('_bw_bridge_read_map_file', [bridge, map_file, path, out_data, out_cap, out_len]);
+
+  @override
   int bw_bridge_load_pcx_rgba(int bridge, int path, int out_rgba, int out_cap, int out_width, int out_height) => _call('_bw_bridge_load_pcx_rgba', [bridge, path, out_rgba, out_cap, out_width, out_height]);
 
   @override

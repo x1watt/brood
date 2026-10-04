@@ -301,15 +301,50 @@ minutes of lockstep with a player joining at minute two and checks the
 hashes match. Desktop and phones could join with BROOD_SERVER=ws://host:9191/ws
 (lib/net/ws_io.dart), not tried yet.
 
+Map editor (lib/ui/map_editor, lib/maps; the edit button next to each map on
+the start screen): the map's scenario data is read from its archive with
+bw_bridge_read_map_file (no game runs) and edited as CHK sections
+(lib/maps/chk.dart): terrain (MTXM and TILE), start locations and resources
+(UNIT), doodad sprites standing on replaced doodad tiles go (THG2, DD2),
+the player slots follow the start locations (OWNR, SIDE), and the name and
+description (STR, SPRP); every other section is written back as read.
+Saving writes a new archive (lib/maps/mpq_writer.dart, sectors stored raw)
+through GameFiles.saveMap: the game folder on desktop and Android, the
+browser's IndexedDB and the engine's in-memory files on the web. Tools:
+select (move, delete, a start's player, a resource's amount), terrain
+brush, single tiles (alt-click picks), start locations, mineral fields and
+geysers, plus every resource at once by level, undo and redo, and Save as.
+The editor draws terrain from the tileset files itself (lib/maps/tileset.dart,
+decoded into atlas pages by lib/rendering/megatile_atlas.dart, one
+drawRawAtlas per page) and the resources from their GRPs.
+
+Terrain blending (lib/maps/terrain_blend.dart): painted terrain gets the
+right edges (shores around water, cliffs between levels, platform edges
+around space) like the original editor's brushes. Terrain tiles come in
+column pairs (the halves of the original editor's isometric diamonds), so
+the editor works on 64x32 cells. Which cells may touch which, in all eight
+directions, is learned from the player's own maps of the same tileset
+(pairs seen a few times and not vanishingly rare for the rarer of the two,
+which drops slips in single maps); the map being edited always counts. The
+painted cells are fixed and a band around them (2 to 8 cells, widened when
+the layers need room) is solved as a constraint problem: arc consistency,
+then a search preferring each cell's current value and the most usual
+neighbors, then every changed cell that can have its old value back gets
+it. Doodads are never placed and fit anything next to the band. Learning
+and solving run in a long-lived isolate on desktop and Android
+(lib/maps/blend_worker_io.dart, with its own engine handle to read the
+maps); the browser runs them on the page, yielding between maps.
+
 Maps made from other maps (tool/make_island_map.py): "(8)Big Game Islands"
 is Big Game Hunters with every land path cut by deep water, one island per
 start location and per group of resources. The script reads the map's
 tiles and their flags through engine/tools/map_tool (a small CMake program
 on the vendored MPQ/tileset code: `map_tool extract` gives the scenario.chk,
-`map_tool info` the tiles, starts and resources as JSON), grows the islands
-over walkable ground from those seeds, turns the tiles where two islands
-meet into deep water and writes a new .scm (uncompressed sectors, which
-OpenBW accepts). The new water has straight edges, without shore tiles.
+`map_tool info` the tiles, starts and resources as JSON, `map_tool cat` a
+file of the game's archives), grows the islands over walkable ground from
+those seeds, turns the tiles where two islands meet into deep water, writes
+a new .scm and then gives the channels shores and cliffs with
+tool/blend_terrain.dart (the editor's blending, from the command line).
 Browsers that already keep the game files fetch maps the home server got
 since (game_files_web.dart compares with the server's manifest).
 

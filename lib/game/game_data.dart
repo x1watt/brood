@@ -6,6 +6,8 @@
 //   - browser: files the player picked once, kept in IndexedDB and written
 //     into the engine's in-memory file system at start (game_files_web.dart).
 
+import 'dart:typed_data';
+
 import 'game_files_io.dart' if (dart.library.js_interop) 'game_files_web.dart' as platform;
 
 abstract class GameFiles {
@@ -27,6 +29,11 @@ abstract class GameFiles {
   List<GameMap> maps();
 
   bool exists(String path);
+
+  /// Writes a map (the map editor's save), creating or replacing it.
+  /// [relativePath] is under the game data folder ("maps/Brood/My map.scm").
+  /// Returns the path the engine opens it by.
+  Future<String> saveMap(String relativePath, Uint8List bytes);
 
   /// Browser only: asks for the game folder (or the files) and imports it.
   /// Returns an error message, or null when the game data is ready.

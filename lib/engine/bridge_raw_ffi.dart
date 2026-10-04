@@ -393,6 +393,10 @@ class BridgeRawFfi extends BridgeRaw {
   @override
   int bw_bridge_read_file(int bridge, int path, int out_data, int out_cap, int out_len) => _bw_bridge_read_file(bridge, path, out_data, out_cap, out_len);
 
+  late final _bw_bridge_read_map_file = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.IntPtr, ffi.IntPtr, ffi.IntPtr, ffi.Int32, ffi.IntPtr), int Function(int, int, int, int, int, int)>('bw_bridge_read_map_file');
+  @override
+  int bw_bridge_read_map_file(int bridge, int map_file, int path, int out_data, int out_cap, int out_len) => _bw_bridge_read_map_file(bridge, map_file, path, out_data, out_cap, out_len);
+
   late final _bw_bridge_load_pcx_rgba = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.IntPtr, ffi.IntPtr, ffi.Int32, ffi.IntPtr, ffi.IntPtr), int Function(int, int, int, int, int, int)>('bw_bridge_load_pcx_rgba');
   @override
   int bw_bridge_load_pcx_rgba(int bridge, int path, int out_rgba, int out_cap, int out_width, int out_height) => _bw_bridge_load_pcx_rgba(bridge, path, out_rgba, out_cap, out_width, out_height);

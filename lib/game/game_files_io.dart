@@ -4,6 +4,7 @@
 // player's folder or by copying the files there over USB.
 
 import 'dart:io';
+import 'dart:typed_data';
 
 import '../platform/android_files.dart';
 import 'game_data.dart';
@@ -52,4 +53,15 @@ class _FolderGameFiles extends GameFiles {
 
   @override
   bool exists(String path) => File(path).existsSync();
+
+  @override
+  Future<String> saveMap(String relativePath, Uint8List bytes) async {
+    final file = File('$dataDir/$relativePath');
+    await file.parent.create(recursive: true);
+    // Through a temporary file, so a failed write never leaves half a map.
+    final tmp = File('${file.path}.tmp');
+    await tmp.writeAsBytes(bytes, flush: true);
+    await tmp.rename(file.path);
+    return file.path;
+  }
 }

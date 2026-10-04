@@ -23,6 +23,7 @@ import '../game/settings.dart';
 import '../net/multiplayer.dart';
 import 'game_screen.dart';
 import 'lobby_panel.dart';
+import 'map_editor/map_editor_screen.dart';
 import 'menu_art.dart';
 import 'saved_games_list.dart';
 import 'window_control.dart';
@@ -80,6 +81,16 @@ class _StartScreenState extends State<StartScreen> {
         if (_showTitle) _titleTimer = Timer(const Duration(seconds: 3), _hideTitle);
       });
     }
+    _listMaps();
+    _map = (_maps.isNotEmpty && _seconds(_maps.first) > 0 ? _maps.first : null) ?? _maps.where((m) => m.name == '(4)Lost Temple').firstOrNull ?? _maps.firstOrNull;
+    _saves = SaveSession.list();
+    MpClient.connect(_settings.playerName).then((c) {
+      if (mounted && c != null) setState(() => _mp = c);
+    });
+    _restoreLastSetup();
+  }
+
+  void _listMaps() {
     final maps = GameMap.list();
     // Most played first (by total time), then the rest alphabetically.
     maps.sort((a, b) {
@@ -87,12 +98,17 @@ class _StartScreenState extends State<StartScreen> {
       return t != 0 ? t : a.name.compareTo(b.name);
     });
     _maps = maps;
-    _map = (maps.isNotEmpty && _seconds(maps.first) > 0 ? maps.first : null) ?? maps.where((m) => m.name == '(4)Lost Temple').firstOrNull ?? maps.firstOrNull;
-    _saves = SaveSession.list();
-    MpClient.connect(_settings.playerName).then((c) {
-      if (mounted && c != null) setState(() => _mp = c);
+  }
+
+  /// Opens the map editor; maps saved there show up when it closes.
+  Future<void> _edit(GameMap m) async {
+    _click();
+    await Navigator.of(context).push(MaterialPageRoute<bool>(builder: (_) => MapEditorScreen(map: m)));
+    if (!mounted) return;
+    setState(() {
+      _listMaps();
+      if (_map != null && !_maps.contains(_map)) _map = _maps.firstOrNull;
     });
-    _restoreLastSetup();
   }
 
   @override
@@ -421,8 +437,11 @@ class _StartScreenState extends State<StartScreen> {
         selected: m == _map,
         title: Text(m.name),
         subtitle: Text('${m.folder}  ·  up to ${m.maxPlayers} players', style: const TextStyle(fontSize: 11, color: _faint)),
-        trailing: played
-            ? Column(
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (played)
+              Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
@@ -432,8 +451,17 @@ class _StartScreenState extends State<StartScreen> {
                     style: const TextStyle(fontSize: 11, color: _faint),
                   ),
                 ],
-              )
-            : null,
+              ),
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: 'Edit this map',
+              icon: const Icon(Icons.edit_outlined, size: 18),
+              visualDensity: VisualDensity.compact,
+              style: const ButtonStyle(side: WidgetStatePropertyAll(BorderSide.none)),
+              onPressed: () => _edit(m),
+            ),
+          ],
+        ),
         onTap: () {
           _click();
           setState(() {

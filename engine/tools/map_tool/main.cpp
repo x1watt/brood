@@ -71,10 +71,22 @@ static int info(const std::string& data_dir, const std::string& map, const std::
 	return 0;
 }
 
+static int cat(const std::string& data_dir, const std::string& path, const std::string& out) {
+	auto loader = data_loading::data_files_directory(data_dir);
+	a_vector<uint8_t> data;
+	loader(data, path.c_str());
+	FILE* f = std::fopen(out.c_str(), "wb");
+	if (!f) return 1;
+	std::fwrite(data.data(), 1, data.size(), f);
+	std::fclose(f);
+	return 0;
+}
+
 int main(int argc, char** argv) {
 	try {
 		std::string cmd = argc > 1 ? argv[1] : "";
 		if (cmd == "extract" && argc == 4) return extract(argv[2], argv[3]);
+		if (cmd == "cat" && argc == 5) return cat(argv[2], argv[3], argv[4]);
 		if (cmd == "info" && argc == 5) return info(argv[2], argv[3], argv[4]);
 		std::fprintf(stderr, "usage: map_tool extract <map> <out.chk> | info <data_dir> <map> <out.json>\n");
 		return 2;

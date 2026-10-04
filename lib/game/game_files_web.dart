@@ -40,6 +40,17 @@ class WebGameFiles extends GameFiles {
   bool exists(String path) => path.startsWith('/data/') && _files.contains(path.substring(6));
 
   @override
+  Future<String> saveMap(String relativePath, Uint8List bytes) async {
+    final db = await BroodDb.open();
+    await db.put(BroodDb.files, relativePath, Uint8List.fromList(bytes).buffer.toJS);
+    final fs = (await BridgeRawWeb.open()).fs;
+    _mkdirs(fs, '/data/$relativePath');
+    fs.callMethodVarArgs('writeFile'.toJS, ['/data/$relativePath'.toJS, bytes.toJS]);
+    if (!_files.contains(relativePath)) _files.add(relativePath);
+    return '/data/$relativePath';
+  }
+
+  @override
   Future<bool> init() async {
     // Ask the browser to keep the files: storage the page didn't ask to
     // keep may be cleared when space runs low.
