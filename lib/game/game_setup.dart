@@ -6,6 +6,7 @@
 // also what a saved game stores so loading recreates the same game.
 
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import '../net/multiplayer.dart';
 
@@ -152,6 +153,10 @@ class GameLaunch {
   /// game so far comes from the server.
   final MpSession? join;
 
+  /// A loaded save point without a saved state: keeps the state the replay
+  /// arrived at, so the next load of that point is immediate.
+  final Future<void> Function(Uint8List state)? keepState;
+
   const GameLaunch({
     required this.mapFile,
     required this.mapKey,
@@ -160,6 +165,7 @@ class GameLaunch {
     this.saved,
     this.continues = '',
     this.join,
+    this.keepState,
   });
 
   /// What other players need to start the same game (multiplayer).
@@ -172,5 +178,14 @@ class SavedGameData {
   final int frame;
   final double camX;
   final double camY;
-  const SavedGameData({required this.commandLog, required this.frame, required this.camX, required this.camY});
+
+  /// The game's state (bw_snapshot.h), when saving: raw bytes.
+  final Uint8List? state;
+
+  /// When loading: a saved state to start from (zlib-compressed), made at
+  /// this point or an earlier one of the session; the rest of the log is
+  /// replayed from there. Null: replay the whole log.
+  final Uint8List? packedState;
+
+  const SavedGameData({required this.commandLog, required this.frame, required this.camX, required this.camY, this.state, this.packedState});
 }

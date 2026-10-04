@@ -73,7 +73,9 @@ struct event {
 
 using matrix = std::array<std::array<int, max_players>, max_players>;
 
-struct alliance_system {
+// The alliance state that is plain data (saved games copy it as is,
+// bw_snapshot.h); alliance_system adds the UI's event list and the rules.
+struct alliance_state {
 	std::array<int, max_players> group{};       // group id: the slot of one of its members
 	std::array<bool, max_players> open{};       // accepting invitations
 	std::array<bool, max_players> playing{};    // part of this game
@@ -121,7 +123,9 @@ struct alliance_system {
 	std::array<int, max_players> mineral_rate{}; // per minute
 	std::array<int, max_players> gas_rate{};
 	int samples = 0;
+};
 
+struct alliance_system : alliance_state {
 	a_vector<event> events; // for the UI, drained by polling
 
 	void reset(state& st, const std::array<int, max_players>& team_of_slot, const std::array<bool, max_players>& shares, uint32_t seed) {

@@ -614,6 +614,66 @@ static void mp_apply(bw_bridge_t* c, int* cursor) {
 		*cursor += k;
 	}
 }
+/* Saved games as state: after 12 minutes of an AI game (alliances, the
+ * human slot on full auto-play, a few human commands, a control group), a
+ * snapshot loads into a second engine, and both then play on identically. */
+static void test_snapshot(const char* dd, const char* mf, int players, int minutes) {
+	bw_game_setup setup;
+	memset(&setup, 0, sizeof(setup));
+	setup.player_count = players;
+	for (int i = 0; i != players; ++i) {
+		setup.controller[i] = i == 0 ? BW_PLAYER_HUMAN : BW_PLAYER_COMPUTER;
+		setup.race[i] = i % 3;
+	}
+	setup.seed = 4242;
+	int32_t slots[8], slots_b[8];
+	bw_bridge_t* a = bw_bridge_create();
+	CHECK(a && bw_bridge_load_assets(a, dd) == BW_OK && bw_bridge_new_game(a, mf, &setup, slots) == BW_OK, "snapshot: game");
+	int me = slots[0];
+	bw_bridge_set_autoplay(a, me, BW_AUTOPLAY_ALL);
+	for (int m = 0; m != minutes; ++m) {
+		bw_bridge_step(a, 24 * 60);
+		int32_t ids[16];
+		int k = find_units(a, me, 41 /* drone */, ids, 8);
+		if (k) {
+			bw_bridge_select_units(a, me, ids, k);
+			bw_bridge_control_group(a, me, 1, BW_GROUP_ASSIGN);
+		}
+	}
+	int len = 0;
+	CHECK(bw_bridge_save_snapshot(a, NULL, 0, &len) == BW_OK && len > 0, "snapshot: size");
+	uint8_t* data = (uint8_t*)malloc((size_t)len);
+	CHECK(bw_bridge_save_snapshot(a, data, len, &len) == BW_OK, "snapshot: save");
+	bw_bridge_t* b = bw_bridge_create();
+	CHECK(b && bw_bridge_load_assets(b, dd) == BW_OK && bw_bridge_new_game(b, mf, &setup, slots_b) == BW_OK, "snapshot: second game");
+	clock_t t0 = clock();
+	CHECK(bw_bridge_load_snapshot(b, data, len) == BW_OK, "snapshot: load");
+	double ms = (double)(clock() - t0) * 1000.0 / CLOCKS_PER_SEC;
+	free(data);
+	int units_a = bw_bridge_get_units(a, units, 4096);
+	int units_b = bw_bridge_get_units(b, units, 4096);
+	printf("bridge_smoke_test: snapshot: %d players at %d min, %d units, %d bytes, loaded in %.1f ms\n", players, minutes, units_a, len, ms);
+	CHECK(units_a == units_b, "snapshot: %d units after loading, %d before", units_b, units_a);
+	CHECK(bw_bridge_current_frame(a) == bw_bridge_current_frame(b), "snapshot: frame");
+	int diverged = -1;
+	for (int i = 0; i <= 24 * 60 * 6; i += 240) {
+		if (bw_bridge_state_hash(a) != bw_bridge_state_hash(b)) {
+			diverged = i;
+			break;
+		}
+		bw_bridge_step(a, 240);
+		bw_bridge_step(b, 240);
+	}
+	CHECK(diverged < 0, "snapshot: the loaded game drifted apart after %d frames", diverged);
+	int32_t sel_a[256], sel_b[256];
+	CHECK(bw_bridge_control_group(b, me, 1, BW_GROUP_RECALL) == bw_bridge_control_group(a, me, 1, BW_GROUP_RECALL), "snapshot: groups");
+	CHECK(bw_bridge_get_selected_units(a, me, sel_a, 256) == bw_bridge_get_selected_units(b, me, sel_b, 256), "snapshot: selection");
+	int la = bw_bridge_command_log(a, NULL, 0), lb = bw_bridge_command_log(b, NULL, 0);
+	CHECK(la == lb, "snapshot: command log %d vs %d", lb, la);
+	bw_bridge_destroy(a);
+	bw_bridge_destroy(b);
+}
+
 static void test_multiplayer(const char* dd, const char* mf) {
 	bw_game_setup setup;
 	memset(&setup, 0, sizeof(setup));
@@ -1078,6 +1138,24 @@ int main(int argc, char** argv) {
 	if (getenv("DEF_ONLY")) { test_defensive(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
 	if (getenv("RULES_ONLY")) { test_kick(dd, mf); test_alliance_rules(dd); printf("bridge_smoke_test: OK\n"); return 0; }
 	if (getenv("MP_ONLY")) { test_multiplayer(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
+	if (getenv("SNAPSHOT_ONLY")) {
+		test_snapshot(dd, mf, 4, 12);
+		char big[1200], islands[1200];
+		snprintf(big, sizeof(big), "%smaps/BroodWar/WebMaps/(8)Big Game Hunters.scm", dd);
+		snprintf(islands, sizeof(islands), "%smaps/Brood/(8)Big Game Islands.scm", dd);
+		FILE* probe = fopen(big, "rb");
+		if (probe) {
+			fclose(probe);
+			test_snapshot(dd, big, 8, 30);
+		}
+		probe = fopen(islands, "rb");
+		if (probe) {
+			fclose(probe);
+			test_snapshot(dd, islands, 4, 25);
+		}
+		printf("bridge_smoke_test: OK\n");
+		return 0;
+	}
 	if (getenv("LIMITS_ONLY")) { test_limits(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
 	if (getenv("AUTOPLAY_ONLY")) { test_autoplay(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
 	bw_bridge_t* b = bw_bridge_create();
@@ -1386,6 +1464,7 @@ int main(int argc, char** argv) {
 	test_kick(dd, mf);
 	test_alliance_rules(dd);
 	test_defensive(dd, mf);
+	test_snapshot(dd, mf, 4, 12);
 	test_autoplay(dd, mf);
 	test_ai(dd, mf);
 	printf("bridge_smoke_test: OK\n");

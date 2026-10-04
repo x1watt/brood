@@ -16,6 +16,7 @@
 #include "bw_render_util.h"
 #include "bw_ai.h"
 #include "bw_alliances.h"
+#include "bw_snapshot.h"
 
 #include <algorithm>
 #include <initializer_list>
@@ -184,6 +185,11 @@ struct bw_bridge {
 	// for everyone at the same frame (bw_bridge_apply_commands).
 	bool deferred = false;
 	a_vector<int32_t> outbox;
+	a_vector<uint8_t> snapshot; // the last one made, until it is read
+
+	bw_snapshot::bridge_parts snapshot_parts() {
+		return {&action_st, &groups, &ai, &alliances, &sim->outcome, &cmd_log, &legacy_ids, &alliances_on};
+	}
 
 	// Logs a command; false when deferred (the caller returns without
 	// running it).
@@ -2125,6 +2131,48 @@ bw_status bw_bridge_unload_unit(bw_bridge_t* bridge, int owner, int32_t unit_id)
 		if (!u || !controls(b, owner, u->owner)) return BW_ERR_REJECTED;
 		return f.action_unload(u->owner, u) ? BW_OK : BW_ERR_REJECTED;
 	} catch (...) {
+		return BW_ERR_UNKNOWN;
+	}
+}
+
+bw_status bw_bridge_save_snapshot(bw_bridge_t* bridge, uint8_t* out_data, int out_cap, int* out_len) {
+	if (!bridge || !out_len) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	try {
+		if (!out_data || b->snapshot.empty()) {
+			bw_snapshot::writer w;
+			bw_snapshot::save(b->player->st(), b->snapshot_parts(), w);
+			b->snapshot = std::move(w.out);
+		}
+		*out_len = (int)b->snapshot.size();
+		if (!out_data) return BW_OK;
+		if (out_cap < (int)b->snapshot.size()) return BW_ERR_INVALID_ARGUMENT;
+		std::memcpy(out_data, b->snapshot.data(), b->snapshot.size());
+		b->snapshot.clear();
+		b->snapshot.shrink_to_fit();
+		return BW_OK;
+	} catch (...) {
+		return BW_ERR_UNKNOWN;
+	}
+}
+
+bw_status bw_bridge_load_snapshot(bw_bridge_t* bridge, const uint8_t* data, int len) {
+	if (!bridge || !data || len <= 0) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	try {
+		const char* error = bw_snapshot::load(b->player->st(), b->snapshot_parts(), data, (size_t)len);
+		if (error) {
+			std::fprintf(stderr, "bw_bridge_load_snapshot: %s\n", error);
+			b->game_started = false;
+			return BW_ERR_REJECTED;
+		}
+		b->sounds.events.clear();
+		b->ai.groups = &b->groups;
+		return BW_OK;
+	} catch (...) {
+		b->game_started = false;
 		return BW_ERR_UNKNOWN;
 	}
 }

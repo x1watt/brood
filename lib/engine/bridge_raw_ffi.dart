@@ -373,6 +373,14 @@ class BridgeRawFfi extends BridgeRaw {
   @override
   int bw_bridge_unload_unit(int bridge, int owner, int unit_id) => _bw_bridge_unload_unit(bridge, owner, unit_id);
 
+  late final _bw_bridge_save_snapshot = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.IntPtr, ffi.Int32, ffi.IntPtr), int Function(int, int, int, int)>('bw_bridge_save_snapshot');
+  @override
+  int bw_bridge_save_snapshot(int bridge, int out_data, int out_cap, int out_len) => _bw_bridge_save_snapshot(bridge, out_data, out_cap, out_len);
+
+  late final _bw_bridge_load_snapshot = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.IntPtr, ffi.Int32), int Function(int, int, int)>('bw_bridge_load_snapshot');
+  @override
+  int bw_bridge_load_snapshot(int bridge, int data, int len) => _bw_bridge_load_snapshot(bridge, data, len);
+
   late final _bw_bridge_set_ai_version = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32), int Function(int, int)>('bw_bridge_set_ai_version');
   @override
   int bw_bridge_set_ai_version(int bridge, int version) => _bw_bridge_set_ai_version(bridge, version);

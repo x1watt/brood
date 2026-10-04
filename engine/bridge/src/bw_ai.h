@@ -62,7 +62,9 @@ enum mode : int {
 	mode_all = 15,
 };
 
-struct player {
+// Everything about a player that is plain data: saved games copy it as is
+// (bw_snapshot.h). The lists are in `player`.
+struct player_state {
 	int owner = -1;
 	race_t race = race_t::terran;
 	uint32_t rng = 1;
@@ -102,7 +104,6 @@ struct player {
 	int help_until = -1;          // that threat is fresh until this frame
 	int next_ally_check = 0;
 	int last_help_order = -10000;
-	a_vector<uint32_t> detached;  // unit ids (generation-checked) of the detachment
 	int militia_until = -1; // workers pulled into a fight: send them back afterwards
 	int threat_until = -1;  // the base was attacked recently
 	// Version 2 (see ai_system::version).
@@ -114,6 +115,17 @@ struct player {
 	int next_air_defense = 0;
 	int last_nuke = -100000;
 	int next_scan = 0;
+	uint32_t expander = 0; // a worker ferried to build a town hall
+	int next_base = 0;
+
+	uint32_t next() {
+		rng = rng * 1103515245u + 12345u;
+		return (rng >> 16) & 0x7fff;
+	}
+};
+
+struct player : player_state {
+	a_vector<uint32_t> detached;  // unit ids (generation-checked) of the detachment
 	struct drop {
 		uint32_t transport = 0;
 		a_vector<uint32_t> passengers;
@@ -124,13 +136,6 @@ struct player {
 		bool expand = false; // carries a worker to a new base's island
 	};
 	a_vector<drop> drops;
-	uint32_t expander = 0; // a worker ferried to build a town hall
-	int next_base = 0;
-
-	uint32_t next() {
-		rng = rng * 1103515245u + 12345u;
-		return (rng >> 16) & 0x7fff;
-	}
 };
 
 struct build_step {

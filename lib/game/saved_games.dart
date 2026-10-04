@@ -12,13 +12,19 @@
 //   saves/<session folder>/session.json   name, map, setup, list of points
 //   saves/<session folder>/t<frame>.json  one point: the engine's command log
 //
-// A point is the resolved setup plus the command log; loading starts the
-// same game and replays the log, and the deterministic simulation arrives
-// at the same moment of play.
+// A point is the resolved setup plus the command log, and the game's state
+// itself (engine/bridge/src/bw_snapshot.h, zlib-compressed): loading starts
+// the same game and puts that state in place, which is immediate. Only the
+// newest few auto-saves and the manual saves keep a state (they are a few
+// hundred kilobytes); an older point starts from the nearest earlier state
+// and replays the log from there, and points saved before states existed
+// replay their whole log, which the deterministic simulation turns into the
+// same moment of play.
 
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../platform/compress.dart';
 import '../platform/storage.dart';
 import 'game_setup.dart';
 
@@ -28,8 +34,11 @@ class SavePoint {
   final DateTime saved;
   final bool manual;
   final String name; // manual saves only
+  final bool hasState; // its file keeps the game's state
 
-  const SavePoint({required this.file, required this.frame, required this.saved, required this.manual, this.name = ''});
+  const SavePoint({required this.file, required this.frame, required this.saved, required this.manual, this.name = '', this.hasState = false});
+
+  SavePoint withoutState() => SavePoint(file: file, frame: frame, saved: saved, manual: manual, name: name);
 
   /// Game time, as the original's clock shows it.
   String get gameTime {
@@ -37,7 +46,14 @@ class SavePoint {
     return '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
   }
 
-  Map<String, dynamic> toJson() => {'file': file, 'frame': frame, 'saved': saved.toIso8601String(), 'manual': manual, if (name.isNotEmpty) 'name': name};
+  Map<String, dynamic> toJson() => {
+    'file': file,
+    'frame': frame,
+    'saved': saved.toIso8601String(),
+    'manual': manual,
+    if (name.isNotEmpty) 'name': name,
+    if (hasState) 'state': true,
+  };
 
   static SavePoint fromJson(Map<String, dynamic> j) => SavePoint(
     file: j['file'] as String,
@@ -45,6 +61,7 @@ class SavePoint {
     saved: DateTime.tryParse(j['saved'] as String? ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0),
     manual: j['manual'] == true,
     name: j['name'] as String? ?? '',
+    hasState: j['state'] == true,
   );
 }
 
@@ -126,9 +143,17 @@ class SaveSession {
   /// stall on a long command log).
   Future<SavePoint> addPoint(SavedGameData data, {bool manual = false, String name = ''}) async {
     final file = 't${data.frame.toString().padLeft(8, '0')}${manual ? '-manual' : ''}.json';
-    final json = jsonEncode({'frame': data.frame, 'camX': data.camX, 'camY': data.camY, 'log': _encodeLog(data.commandLog)});
+    final raw = data.state;
+    final packed = raw == null ? null : await deflate(raw);
+    final json = jsonEncode({
+      'frame': data.frame,
+      'camX': data.camX,
+      'camY': data.camY,
+      'log': _encodeLog(data.commandLog),
+      if (packed != null) 'state': base64Encode(packed),
+    });
     await _store.writeAsync('$_prefix$file', json);
-    final point = SavePoint(file: file, frame: data.frame, saved: DateTime.now(), manual: manual, name: name);
+    final point = SavePoint(file: file, frame: data.frame, saved: DateTime.now(), manual: manual, name: name, hasState: packed != null);
     points.removeWhere((p) => p.file == file);
     points.add(point);
     points.sort((a, b) => a.frame.compareTo(b.frame));
@@ -139,8 +164,25 @@ class SaveSession {
       points.remove(drop);
       _store.delete('$_prefix${drop.file}');
     }
+    await _dropOldStates();
     _writeIndex();
     return point;
+  }
+
+  /// States the newest auto-saves keep; older auto-saves drop theirs (they
+  /// load from the nearest earlier state, replaying the log from there).
+  static const int statesKept = 3;
+
+  Future<void> _dropOldStates() async {
+    final withState = points.where((p) => !p.manual && p.hasState).toList();
+    for (final p in withState.take(withState.length > statesKept ? withState.length - statesKept : 0)) {
+      final text = _store.read('$_prefix${p.file}');
+      if (text != null) {
+        final j = jsonDecode(text) as Map<String, dynamic>..remove('state');
+        await _store.writeAsync('$_prefix${p.file}', jsonEncode(j));
+      }
+      points[points.indexOf(p)] = p.withoutState();
+    }
   }
 
   SavedGameData readPoint(SavePoint p) {
@@ -152,11 +194,46 @@ class SaveSession {
       frame: (j['frame'] as num).toInt(),
       camX: (j['camX'] as num?)?.toDouble() ?? 0,
       camY: (j['camY'] as num?)?.toDouble() ?? 0,
+      packedState: _stateFor(p, j),
     );
   }
 
-  GameLaunch launch(SavePoint p) =>
-      GameLaunch(mapFile: mapFile, mapKey: mapKey, mapName: mapName, setup: setup, saved: readPoint(p), continues: '$name at ${p.gameTime}');
+  /// The state to start from for point [p]: its own, or the nearest earlier
+  /// point's (its log is a prefix of [p]'s).
+  Uint8List? _stateFor(SavePoint p, Map<String, dynamic> j) {
+    if (j['state'] is String) return base64Decode(j['state'] as String);
+    final earlier = points.where((q) => q.hasState && q.frame <= p.frame && q.file != p.file).toList();
+    if (earlier.isEmpty) return null;
+    final text = _store.read('$_prefix${earlier.last.file}');
+    if (text == null) return null;
+    final state = (jsonDecode(text) as Map<String, dynamic>)['state'];
+    return state is String ? base64Decode(state) : null;
+  }
+
+  GameLaunch launch(SavePoint p) => GameLaunch(
+    mapFile: mapFile,
+    mapKey: mapKey,
+    mapName: mapName,
+    setup: setup,
+    saved: readPoint(p),
+    continues: '$name at ${p.gameTime}',
+    keepState: p.hasState ? null : (raw) => _keepState(p, raw),
+  );
+
+  /// Writes the state a replay arrived at into point [p] (saved before
+  /// states existed, or an auto-save that dropped its own).
+  Future<void> _keepState(SavePoint p, Uint8List raw) async {
+    final text = _store.read('$_prefix${p.file}');
+    if (text == null) return;
+    final j = jsonDecode(text) as Map<String, dynamic>;
+    j['state'] = base64Encode(await deflate(raw));
+    await _store.writeAsync('$_prefix${p.file}', jsonEncode(j));
+    final i = points.indexWhere((q) => q.file == p.file);
+    if (i >= 0) {
+      points[i] = SavePoint(file: p.file, frame: p.frame, saved: p.saved, manual: p.manual, name: p.name, hasState: true);
+      _writeIndex();
+    }
+  }
 
   static SaveSession? read(String id) {
     try {

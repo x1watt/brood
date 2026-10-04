@@ -302,6 +302,12 @@ class BridgeRawWeb extends BridgeRaw {
   int bw_bridge_unload_unit(int bridge, int owner, int unit_id) => _call('_bw_bridge_unload_unit', [bridge, owner, unit_id]);
 
   @override
+  int bw_bridge_save_snapshot(int bridge, int out_data, int out_cap, int out_len) => _call('_bw_bridge_save_snapshot', [bridge, out_data, out_cap, out_len]);
+
+  @override
+  int bw_bridge_load_snapshot(int bridge, int data, int len) => _call('_bw_bridge_load_snapshot', [bridge, data, len]);
+
+  @override
   int bw_bridge_set_ai_version(int bridge, int version) => _call('_bw_bridge_set_ai_version', [bridge, version]);
 
   @override

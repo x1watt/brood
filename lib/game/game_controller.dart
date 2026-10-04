@@ -9,6 +9,7 @@
 // only drives CustomPaint repaints; `hud` fires at most ~10x/s, or right
 // away on selection/mode changes, and drives the panels.
 
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -19,6 +20,7 @@ import '../audio/sound_system.dart';
 import '../engine/bw_engine.dart';
 import '../engine/models.dart';
 import '../net/multiplayer.dart';
+import '../platform/compress.dart';
 import '../platform/env.dart';
 import '../rendering/icon_atlas.dart';
 import '../rendering/creep_layer.dart';
@@ -227,7 +229,8 @@ class GameController {
       final e = await BwEngine.open();
       e.loadAssets(dataDir);
       final setup = launch.setup;
-      final slots = e.newGame(launch.mapFile, [for (final p in setup.players) (human: p.human, race: p.race, team: p.team)], setup.seed);
+      List<int> newGame() => e.newGame(launch.mapFile, [for (final p in setup.players) (human: p.human, race: p.race, team: p.team)], setup.seed);
+      final slots = newGame();
       var computers = 0;
       final placed = <GamePlayer>[];
       for (int i = 0; i < setup.players.length; ++i) {
@@ -251,6 +254,8 @@ class GameController {
         final (now, upTo) = join.catchUp();
         await e.replayCommands(now, upTo);
         loadingSave = false;
+      } else if (saved != null && await _loadState(e, saved, setup, newGame)) {
+        // The saved state is in place (and whatever came after it replayed).
       } else if (saved != null) {
         loadingSave = true;
         _notifyHud(force: true);
@@ -262,8 +267,11 @@ class GameController {
         // Saved with the earlier computer players: replay with them.
         if (setup.legacyAi) e.setAiVersion(1);
         await e.replayCommands(saved.commandLog, saved.frame);
-        if (setup.legacyIds) e.setLegacyUnitIds(false);
-        if (setup.legacyRules && !fogOfWar) e.exploreMap(myPlayer);
+        // Next time this point loads at once.
+        if (launch.keepState case final keep?) {
+          if (e.saveSnapshot() case final state?) unawaited(keep(state));
+        }
+        _afterReplay(e, setup);
         loadingSave = false;
       } else {
         // You start open to alliances and in defensive mode, and without fog of war the map counts
@@ -618,10 +626,55 @@ class GameController {
   /// Every player's score screen numbers, by slot.
   Map<int, PlayerStats> playerStats() => {for (final p in players) p.slot: ?engine.playerStats(p.slot)};
 
-  /// What a save point needs: the command log so far, the frame and where
-  /// the camera looks.
-  SavedGameData snapshot() =>
-      SavedGameData(commandLog: engine.commandLog(), frame: engine.currentFrame, camX: camX + viewport.width / 2, camY: camY + viewport.height / 2);
+  /// What a save point needs: the command log so far, the game's state, the
+  /// frame and where the camera looks.
+  SavedGameData snapshot() => SavedGameData(
+    commandLog: engine.commandLog(),
+    frame: engine.currentFrame,
+    camX: camX + viewport.width / 2,
+    camY: camY + viewport.height / 2,
+    state: engine.saveSnapshot(),
+  );
+
+  /// After replaying (or loading) an older save: back to today's unit ids,
+  /// and the map explored as it is now for everyone.
+  void _afterReplay(BwEngine e, GameSetup setup) {
+    if (setup.legacyIds) e.setLegacyUnitIds(false);
+    if (setup.legacyRules && !fogOfWar) e.exploreMap(myPlayer);
+  }
+
+  /// Loads a save point from its saved state (or an earlier point's, then
+  /// replaying the commands after it). False when there is none or it can't
+  /// be used (another build made it): the game is started again for a
+  /// replay of the whole log.
+  Future<bool> _loadState(BwEngine e, SavedGameData saved, GameSetup setup, List<int> Function() newGame) async {
+    final packed = saved.packedState;
+    if (packed == null) return false;
+    loadingSave = true;
+    _notifyHud(force: true);
+    try {
+      if (e.loadSnapshot(await inflate(packed))) {
+        if (e.currentFrame >= saved.frame) {
+          // The point's own state.
+          _afterReplay(e, setup);
+          return true;
+        }
+        // An earlier point's: its log is the start of this one's.
+        final have = e.commandLog().length;
+        if (have <= saved.commandLog.length) {
+          await e.replayCommands(saved.commandLog.sublist(have), saved.frame);
+          _afterReplay(e, setup);
+          return true;
+        }
+      }
+    } catch (err) {
+      debugPrint('saved state not used: $err');
+    } finally {
+      loadingSave = false;
+    }
+    newGame();
+    return false;
+  }
 
   // --- fog of war ---
 

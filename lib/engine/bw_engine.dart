@@ -270,6 +270,32 @@ class BwEngine {
     }
   }
 
+  /// The game's state, for a save point (engine/bridge/src/bw_snapshot.h).
+  Uint8List? saveSnapshot() {
+    if (!_ok(_r.bw_bridge_save_snapshot(_h, 0, 0, _ints))) return null;
+    final n = _i32(_ints);
+    final buf = _r.malloc(n);
+    try {
+      if (!_ok(_r.bw_bridge_save_snapshot(_h, buf, n, _ints))) return null;
+      return _copy(buf, n);
+    } finally {
+      _r.free(buf);
+    }
+  }
+
+  /// Puts a saved state in place of the game just started (same map and
+  /// setup). False when it can't (another build made it): then start the
+  /// game again and replay the log.
+  bool loadSnapshot(Uint8List data) {
+    final buf = _r.malloc(data.length);
+    try {
+      _r.bytes(buf, data.length).setAll(0, data);
+      return _ok(_r.bw_bridge_load_snapshot(_h, buf, data.length));
+    } finally {
+      _r.free(buf);
+    }
+  }
+
   /// Replays a saved command log up to [endFrame] (off the UI thread where
   /// the platform allows). Nothing else may use the engine until it ends.
   Future<void> replayCommands(List<int> log, int endFrame) async {

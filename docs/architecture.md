@@ -190,15 +190,34 @@ tile image stretched over the map and minimap. Switched off for now
 Saved games ($XDG_DATA_HOME/brood/saves/, lib/game/saved_games.dart) are
 kept in sessions: one folder per continuous stretch of play, holding points
 in time. A point is the bridge's command log (every command entering the
-API, with its frame); the session holds the map and resolved setup.
+API, with its frame) and the game's state itself (bw_bridge_save_snapshot,
+engine/bridge/src/bw_snapshot.h, zlib-compressed: dart:io in a background
+isolate, the browser's CompressionStream on the web); the session holds the
+map and resolved setup. Loading starts the same game and puts the state in
+place (bw_bridge_load_snapshot), which takes milliseconds however long the
+game ran. The snapshot holds the pools of units, bullets, sprites, images
+and orders as raw chunks, the paths and thingies, the plain part of the
+state field by field, every intrusive list as the indices of its members,
+and where every memory region was; loading gives the pools the same chunks,
+moves each known pointer field to the same offset of the new region (as
+OpenBW's state_copier remaps pointers) and rebuilds the lists in place. The
+computer players, alliances, selections, control groups and the command log
+come with it. Only the newest three auto-saves and the manual saves keep a
+state; an older point loads the nearest earlier state and replays the log
+from there. Points saved before states existed replay their whole log once,
+and the state that replay arrives at is written into the point
+(GameLaunch.keepState). A snapshot only loads into the build that made it
+on the same kind of machine (its header records the structure sizes);
+otherwise the log is replayed. bridge_smoke_test checks a loaded state
+plays on identically for six minutes (4 players at 12 minutes, and with
+SNAPSHOT_ONLY=1 also 8 players at 30 minutes and an island game with drops).
 Auto-save (on by default) adds a point every game minute, every ten minutes
 after the first hour and every hour after ten; leaving or quitting saves
 too. A manual save, or carrying on from a loaded point, starts a new
-session, so earlier timelines are never overwritten. Loading starts the
-same game and replays the log on a background isolate; bridge_smoke_test
-checks the replayed state hash matches. Saves from before sessions are
-turned into one-point sessions. The game menu (top-left button or F10)
-pauses, saves, exits and quits; the start screen has a quit button too.
+session, so earlier timelines are never overwritten. Saves from before
+sessions are turned into one-point sessions. The game menu
+(top-left button or F10) pauses, saves, exits and quits; the start screen
+has a quit button too.
 
 Browser version (tool/build_web.sh, output build/web): the bridge is
 compiled to WebAssembly with Emscripten (engine/web/build_wasm.sh into

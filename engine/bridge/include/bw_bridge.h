@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 25
+#define BW_BRIDGE_ABI_VERSION 26
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -559,6 +559,14 @@ bw_status bw_bridge_action(bw_bridge_t* bridge, int owner, int action);
 int bw_bridge_get_loaded_units(bw_bridge_t* bridge, int32_t unit_id, int32_t* out_unit_ids, int max_count);
 // Unloads one carried unit (logged).
 bw_status bw_bridge_unload_unit(bw_bridge_t* bridge, int owner, int32_t unit_id);
+
+// Saved games as the game's state (engine/bridge/src/bw_snapshot.h): loading
+// one is immediate instead of replaying the command log. Save: pass out_data
+// NULL first to get *out_len (the snapshot is kept for the second call).
+// Load: right after bw_bridge_new_game with the same map and setup; on
+// failure (another build, damaged data) start the game again and replay.
+bw_status bw_bridge_save_snapshot(bw_bridge_t* bridge, uint8_t* out_data, int out_cap, int* out_len);
+bw_status bw_bridge_load_snapshot(bw_bridge_t* bridge, const uint8_t* data, int len);
 
 // The computer players' version: 2 (the default for new games) plays with
 // the whole tech tree, spells, nukes, drops and air play on island maps; 1
