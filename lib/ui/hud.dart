@@ -375,6 +375,34 @@ class SelectionPanel extends StatelessWidget {
         ),
       );
     }
+    // What a transport or bunker carries: click one to let it out.
+    if (c.canControl(u.owner) && (u.typeId == 11 || u.typeId == 69 || u.typeId == 42 || u.typeId == 125)) {
+      final carried = c.carriedBy(u);
+      if (carried.isNotEmpty) {
+        lines.add(const SizedBox(height: 8));
+        lines.add(Text('Carrying ${carried.length}  (click one to unload it)', style: const TextStyle(color: _dimText, fontSize: 11)));
+        lines.add(const SizedBox(height: 4));
+        lines.add(
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            children: [
+              for (final w in carried)
+                _QueueSlot(
+                  c: c,
+                  icon: w.typeId,
+                  progressPermille: -1,
+                  tooltip: '${c.engine.unitType(w.typeId).name}: unload',
+                  onTap: () => c.unloadOne(w.unitId),
+                ),
+            ],
+          ),
+        );
+      } else if (u.typeId != 125) {
+        lines.add(const SizedBox(height: 8));
+        lines.add(const Text('Empty. Right-click it with units selected to load them; D unloads at a spot you pick.', style: TextStyle(color: _dimText, fontSize: 11)));
+      }
+    }
     if (!u.isCompleted && u.progressPermille >= 0) {
       lines.add(const SizedBox(height: 6));
       lines.add(_progress('Under construction', u.progressPermille));

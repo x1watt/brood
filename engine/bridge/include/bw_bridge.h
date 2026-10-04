@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 24
+#define BW_BRIDGE_ABI_VERSION 25
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -461,6 +461,8 @@ int bw_bridge_get_selected_units(bw_bridge_t* bridge, int owner, int32_t* out_un
 #define BW_ORDER_PATROL  5
 #define BW_ORDER_RETURN_CARGO 6
 #define BW_ORDER_REPAIR  7 // target_unit_id required
+#define BW_ORDER_UNLOAD  8 // transports: fly to (x, y) and unload everyone there
+#define BW_ORDER_NUKE    9 // ghosts: paint a nuclear strike at (x, y) (needs an armed silo)
 
 // Issues an order to the current selection.
 bw_status bw_bridge_order(bw_bridge_t* bridge, int owner, int order, int x, int y, int32_t target_unit_id, int queue);
@@ -551,6 +553,17 @@ bw_status bw_bridge_cast(bw_bridge_t* bridge, int owner, int tech_id, int x, int
 #define BW_ACT_CANCEL_RESEARCH 11
 #define BW_ACT_CANCEL_UPGRADE 12
 bw_status bw_bridge_action(bw_bridge_t* bridge, int owner, int action);
+
+// What a transport (dropship, shuttle, overlord) or bunker carries: unit ids,
+// returns the count (0 for anything else), -1 on error.
+int bw_bridge_get_loaded_units(bw_bridge_t* bridge, int32_t unit_id, int32_t* out_unit_ids, int max_count);
+// Unloads one carried unit (logged).
+bw_status bw_bridge_unload_unit(bw_bridge_t* bridge, int owner, int32_t unit_id);
+
+// The computer players' version: 2 (the default for new games) plays with
+// the whole tech tree, spells, nukes, drops and air play on island maps; 1
+// is the earlier, simpler player, for saved games made with it (logged).
+bw_status bw_bridge_set_ai_version(bw_bridge_t* bridge, int version);
 
 // Sets the selected building's rally point to a position or a unit.
 bw_status bw_bridge_set_rally(bw_bridge_t* bridge, int owner, int x, int y, int32_t target_unit_id);

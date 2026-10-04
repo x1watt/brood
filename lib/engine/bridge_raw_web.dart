@@ -296,6 +296,15 @@ class BridgeRawWeb extends BridgeRaw {
   int bw_bridge_action(int bridge, int owner, int action) => _call('_bw_bridge_action', [bridge, owner, action]);
 
   @override
+  int bw_bridge_get_loaded_units(int bridge, int unit_id, int out_unit_ids, int max_count) => _call('_bw_bridge_get_loaded_units', [bridge, unit_id, out_unit_ids, max_count]);
+
+  @override
+  int bw_bridge_unload_unit(int bridge, int owner, int unit_id) => _call('_bw_bridge_unload_unit', [bridge, owner, unit_id]);
+
+  @override
+  int bw_bridge_set_ai_version(int bridge, int version) => _call('_bw_bridge_set_ai_version', [bridge, version]);
+
+  @override
   int bw_bridge_set_rally(int bridge, int owner, int x, int y, int target_unit_id) => _call('_bw_bridge_set_rally', [bridge, owner, x, y, target_unit_id]);
 
   @override

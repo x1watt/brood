@@ -259,6 +259,8 @@ class GameController {
         if (setup.legacyIds) e.setLegacyUnitIds(true);
         // Saved before the 3-member cap: replay with the old rules.
         if (setup.legacyAlliances) e.setAllianceCapped(false);
+        // Saved with the earlier computer players: replay with them.
+        if (setup.legacyAi) e.setAiVersion(1);
         await e.replayCommands(saved.commandLog, saved.frame);
         if (setup.legacyIds) e.setLegacyUnitIds(false);
         if (setup.legacyRules && !fogOfWar) e.exploreMap(myPlayer);
@@ -1359,9 +1361,26 @@ class GameController {
       typeId: a.tech,
       ability: entry,
       energyCost: tech?.energyCost ?? 0,
-      enabled: a.tech < 0 || engine.canUseTech(myPlayer, a.tech),
+      enabled: a.instant == 'nuke' ? nukeReady : a.tech < 0 || engine.canUseTech(myPlayer, a.tech),
       active: mode == CommandMode.cast && castAbility?.hotkey == a.hotkey,
     );
+  }
+
+  /// A finished nuclear silo of mine (or of an ally I command): a ghost
+  /// can call in its nuke once the silo has armed one.
+  bool get nukeReady => units.any((u) => u.typeId == 108 && canControl(u.owner) && u.isCompleted);
+
+  /// What a transport or bunker carries.
+  List<UnitInfo> carriedBy(UnitInfo u) => [for (final id in engine.loadedUnits(u.unitId)) ?engine.getUnit(id)];
+
+  /// Unloads one carried unit (clicked in the selection panel).
+  void unloadOne(int unitId) {
+    if (engine.unloadUnit(myPlayer, unitId)) {
+      _sayYes();
+    } else {
+      showMessage('It can\'t get out here.');
+    }
+    _changed();
   }
 
   void activate(CmdButton b, {bool fromClick = false}) {
@@ -1640,7 +1659,16 @@ class GameController {
           showMessage('Invalid target.');
           return;
         }
-        if (engine.cast(myPlayer, a.tech, x, y, targetUnitId: a.targeting == Targeting.unit ? target : 0, queue: queue)) {
+        // Unloading at a spot and nuclear strikes are orders, not techs.
+        final order = switch (a.instant) {
+          'unloadAt' => UnitOrder.unloadAt,
+          'nuke' => UnitOrder.nuke,
+          _ => null,
+        };
+        final ok = order != null
+            ? engine.order(myPlayer, order, x, y, queue: queue)
+            : engine.cast(myPlayer, a.tech, x, y, targetUnitId: a.targeting == Targeting.unit ? target : 0, queue: queue);
+        if (ok) {
           a.targeting == Targeting.unit ? _markUnit(target) : _markGround(mapPos);
           _sayYes();
           if (!queue) {

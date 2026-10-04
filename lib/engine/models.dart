@@ -167,7 +167,7 @@ class UnitTypeInfo {
 
 /// Orders accepted by BwEngine.order (BW_ORDER_* in bw_bridge.h; the
 /// index is the wire value).
-enum UnitOrder { smart, move, attack, stop, hold, patrol, returnCargo, repair }
+enum UnitOrder { smart, move, attack, stop, hold, patrol, returnCargo, repair, unloadAt, nuke }
 
 /// Control group actions (BW_GROUP_* in bw_bridge.h).
 enum GroupAction { assign, recall, add }

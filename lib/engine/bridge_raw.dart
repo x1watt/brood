@@ -6,7 +6,7 @@
 
 import 'dart:typed_data';
 
-const int BW_BRIDGE_ABI_VERSION = 24;
+const int BW_BRIDGE_ABI_VERSION = 25;
 const int BW_MAX_PLAYERS = 8;
 const int BW_PLAYER_HUMAN = 1;
 const int BW_PLAYER_COMPUTER = 2;
@@ -49,6 +49,8 @@ const int BW_ORDER_HOLD = 4;
 const int BW_ORDER_PATROL = 5;
 const int BW_ORDER_RETURN_CARGO = 6;
 const int BW_ORDER_REPAIR = 7;
+const int BW_ORDER_UNLOAD = 8;
+const int BW_ORDER_NUKE = 9;
 const int BW_GROUP_ASSIGN = 0;
 const int BW_GROUP_RECALL = 1;
 const int BW_GROUP_ADD = 2;
@@ -155,6 +157,9 @@ abstract class BridgeRaw {
   int bw_bridge_can_use_tech(int bridge, int owner, int tech_id);
   int bw_bridge_cast(int bridge, int owner, int tech_id, int x, int y, int target_unit_id, int queue);
   int bw_bridge_action(int bridge, int owner, int action);
+  int bw_bridge_get_loaded_units(int bridge, int unit_id, int out_unit_ids, int max_count);
+  int bw_bridge_unload_unit(int bridge, int owner, int unit_id);
+  int bw_bridge_set_ai_version(int bridge, int version);
   int bw_bridge_set_rally(int bridge, int owner, int x, int y, int target_unit_id);
   int bw_bridge_grp_load(int bridge, int path);
   int bw_bridge_grp_frame_count(int bridge, int handle);

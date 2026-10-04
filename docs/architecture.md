@@ -90,6 +90,30 @@ grow after each attack, base defense and expansions. It issues commands
 through OpenBW's action functions inside bw_bridge_step and is
 deterministic (no pointer ordering, its own seeded random numbers).
 
+Since version 2 of the computer player (the default for new games; saves
+made before replay with version 1, bw_bridge_set_ai_version,
+GameSetup.legacyAi) it climbs the whole tech tree with a build plan per
+race, Terran addons included (machine shops, control towers, a physics lab,
+covert ops, comsats, a nuclear silo on the main command center), and picks
+its army's mix from what it can build and what the enemies field (flyers
+call for anti-air, cloaked units for detection, short gas for units that
+cost none). Units use their abilities: tanks siege, vultures lay spider
+mines, marines stim, ghosts cloak, lock down and call in nukes, battlecruisers
+fire Yamato, vessels irradiate, EMP and shield, high templar storm and merge
+into archons, arbiters freeze, corsairs web, defilers swarm, plague and
+consume, queens ensnare and spawn broodlings, lurkers burrow, carriers and
+reavers keep their interceptors and scarabs, comsats scan cloaked attackers.
+It checks which enemy bases its units can walk to (OpenBW's region groups):
+on island maps the plan turns to air units and anti-air at every base,
+ground units go by dropship, shuttle or overlord (drops: load, fly, unload
+by the target, attack), workers are ferried to expansions on other islands,
+and buildings go to any base when the main one is full. Transports and
+spellcasters never lead an attack. Auto-play never trains fighting units
+without the attacking mode, and leaves alone units the human told to follow
+one of their own units. test/probe/ai_probe.dart (run with flutter test) plays computer-only
+games and prints what each side fields; BROOD_AI_LOG=<file> logs spells,
+nukes, drops and expansions there.
+
 In-game alliances (engine/bridge/src/bw_alliances.h, lib/ui/alliance_panel.dart,
 F9 or the top bar button): players invite each other and accept or decline;
 an alliance shares a treasury among the members whose "Share resources"
@@ -348,7 +372,12 @@ tool/blend_terrain.dart (the editor's blending, from the command line).
 Browsers that already keep the game files fetch maps the home server got
 since (game_files_web.dart compares with the server's manifest).
 
-Still missing: lift off/land and nukes.
+Transports (dropships, shuttles, overlords) and bunkers show what they
+carry; clicking one unloads it (bw_bridge_unload_unit), and D unloads
+everyone at a spot the transport flies to (BW_ORDER_UNLOAD). Ghosts call in
+nuclear strikes (N, BW_ORDER_NUKE) once a silo has armed one.
+
+Still missing: lift off/land.
 
 ## Layers
 

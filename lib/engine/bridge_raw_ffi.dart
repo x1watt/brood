@@ -365,6 +365,18 @@ class BridgeRawFfi extends BridgeRaw {
   @override
   int bw_bridge_action(int bridge, int owner, int action) => _bw_bridge_action(bridge, owner, action);
 
+  late final _bw_bridge_get_loaded_units = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.IntPtr, ffi.Int32), int Function(int, int, int, int)>('bw_bridge_get_loaded_units');
+  @override
+  int bw_bridge_get_loaded_units(int bridge, int unit_id, int out_unit_ids, int max_count) => _bw_bridge_get_loaded_units(bridge, unit_id, out_unit_ids, max_count);
+
+  late final _bw_bridge_unload_unit = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.Int32), int Function(int, int, int)>('bw_bridge_unload_unit');
+  @override
+  int bw_bridge_unload_unit(int bridge, int owner, int unit_id) => _bw_bridge_unload_unit(bridge, owner, unit_id);
+
+  late final _bw_bridge_set_ai_version = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32), int Function(int, int)>('bw_bridge_set_ai_version');
+  @override
+  int bw_bridge_set_ai_version(int bridge, int version) => _bw_bridge_set_ai_version(bridge, version);
+
   late final _bw_bridge_set_rally = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.Int32, ffi.Int32, ffi.Int32), int Function(int, int, int, int, int)>('bw_bridge_set_rally');
   @override
   int bw_bridge_set_rally(int bridge, int owner, int x, int y, int target_unit_id) => _bw_bridge_set_rally(bridge, owner, x, y, target_unit_id);

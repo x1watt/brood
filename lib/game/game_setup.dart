@@ -63,7 +63,19 @@ class GameSetup {
   /// let players into theirs): replays with the old rules.
   final bool legacyAlliances;
 
-  const GameSetup({required this.players, required this.alliances, required this.seed, this.legacyRules = false, this.legacyIds = false, this.legacyAlliances = false});
+  /// Saved before the computer players used the whole tech tree (spells,
+  /// nukes, drops, air play on islands): replays with the earlier player.
+  final bool legacyAi;
+
+  const GameSetup({
+    required this.players,
+    required this.alliances,
+    required this.seed,
+    this.legacyRules = false,
+    this.legacyIds = false,
+    this.legacyAlliances = false,
+    this.legacyAi = false,
+  });
 
   bool get isResolved => players.every((p) => p.race >= 0 && p.race < 3);
 
@@ -100,6 +112,7 @@ class GameSetup {
       legacyRules: legacyRules,
       legacyIds: legacyIds,
       legacyAlliances: legacyAlliances,
+      legacyAi: legacyAi,
     );
   }
 
@@ -110,6 +123,7 @@ class GameSetup {
     'shareSwitch': !legacyRules,
     'wideIds': !legacyIds,
     'allianceCap': !legacyAlliances,
+    'aiV2': !legacyAi,
   };
 
   static GameSetup fromJson(Map<String, dynamic> j) => GameSetup(
@@ -119,6 +133,7 @@ class GameSetup {
     legacyRules: j['shareSwitch'] != true,
     legacyIds: j['wideIds'] != true,
     legacyAlliances: j['allianceCap'] != true,
+    legacyAi: j['aiV2'] != true,
   );
 
   static int newSeed() => DateTime.now().microsecondsSinceEpoch & 0x7fffffff;

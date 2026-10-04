@@ -116,7 +116,8 @@ class AbilityEntry {
   final String hotkey;
   final int tech;
   final Targeting targeting;
-  final String instant; // 'stim', 'siege', 'unsiege', 'cloak', 'burrow', 'fighter', 'archon', 'darkArchon', 'unload'
+  final String instant; // 'stim', 'siege', 'unsiege', 'cloak', 'burrow', 'fighter', 'archon', 'darkArchon', 'unload'; for targeted
+  // abilities that aren't a tech: 'unloadAt' (fly there and unload), 'nuke' (paint a nuclear strike)
   final String label; // used when the button isn't a tech (or to override)
   final int icon; // cmdicons frame override, -1 to use the tech's icon
   const AbilityEntry(this.hotkey, this.tech, this.targeting, {this.instant = '', this.label = '', this.icon = -1});
@@ -124,12 +125,17 @@ class AbilityEntry {
 
 const _burrow = AbilityEntry('U', 11, Targeting.instant, instant: 'burrow');
 const _unload = AbilityEntry('U', -1, Targeting.instant, instant: 'unload', label: 'Unload All', icon: 283);
+const _unloadAt = AbilityEntry('D', -1, Targeting.position, instant: 'unloadAt', label: 'Unload At (fly there, drop everyone)', icon: 283);
 
 /// Abilities per unit type, with the original hotkeys.
 const Map<int, List<AbilityEntry>> unitAbilities = {
   0: [AbilityEntry('T', 0, Targeting.instant, instant: 'stim')], // Marine: Stim Packs
   32: [AbilityEntry('T', 0, Targeting.instant, instant: 'stim')], // Firebat
-  1: [AbilityEntry('C', 10, Targeting.instant, instant: 'cloak'), AbilityEntry('L', 1, Targeting.unit)], // Ghost
+  1: [
+    AbilityEntry('C', 10, Targeting.instant, instant: 'cloak'),
+    AbilityEntry('L', 1, Targeting.unit),
+    AbilityEntry('N', -1, Targeting.position, instant: 'nuke', label: 'Nuclear Strike (needs an armed silo)', icon: 14),
+  ], // Ghost
   34: [AbilityEntry('R', 24, Targeting.unit), AbilityEntry('O', 30, Targeting.unit)], // Medic
   2: [AbilityEntry('I', 3, Targeting.position)], // Vulture: Spider Mines
   5: [AbilityEntry('O', 5, Targeting.instant, instant: 'siege', label: 'Siege Mode')], // Siege Tank (tank mode)
@@ -138,7 +144,7 @@ const Map<int, List<AbilityEntry>> unitAbilities = {
   9: [AbilityEntry('D', 6, Targeting.unit), AbilityEntry('E', 2, Targeting.position), AbilityEntry('I', 7, Targeting.unit)], // Science Vessel
   12: [AbilityEntry('Y', 8, Targeting.unit)], // Battlecruiser
   107: [AbilityEntry('S', 4, Targeting.position)], // Comsat Station: Scanner Sweep
-  11: [_unload], // Dropship
+  11: [_unload, _unloadAt], // Dropship
   67: [AbilityEntry('T', 19, Targeting.position), AbilityEntry('L', 20, Targeting.unit), AbilityEntry('R', 23, Targeting.instant, instant: 'archon')], // High Templar
   61: [AbilityEntry('R', 28, Targeting.instant, instant: 'darkArchon')], // Dark Templar
   63: [AbilityEntry('F', 29, Targeting.unit), AbilityEntry('M', 27, Targeting.unit), AbilityEntry('E', 31, Targeting.position)], // Dark Archon
@@ -146,8 +152,8 @@ const Map<int, List<AbilityEntry>> unitAbilities = {
   60: [AbilityEntry('D', 25, Targeting.position)], // Corsair
   72: [AbilityEntry('I', -1, Targeting.instant, instant: 'fighter', label: 'Build Interceptor', icon: 73)], // Carrier
   83: [AbilityEntry('R', -1, Targeting.instant, instant: 'fighter', label: 'Build Scarab', icon: 85)], // Reaver
-  69: [_unload], // Shuttle
-  42: [_unload], // Overlord
+  69: [_unload, _unloadAt], // Shuttle
+  42: [_unload, _unloadAt], // Overlord
   41: [_burrow], // Drone
   37: [_burrow], // Zergling
   38: [_burrow], // Hydralisk

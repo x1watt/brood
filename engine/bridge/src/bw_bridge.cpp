@@ -174,6 +174,8 @@ struct bw_bridge {
 		op_set_controller,
 		op_alliance_kick,
 		op_alliance_rules,
+		op_unload_unit,
+		op_ai_version,
 	};
 	bool legacy_ids = false; // see resolve_unit
 	a_vector<int32_t> cmd_log;
@@ -642,6 +644,8 @@ static bool run_logged(bw_bridge_t* bridge, int32_t op, int32_t n, const int32_t
 	case bw_bridge::op_set_controller: bw_bridge_set_controller(bridge, arg(0), arg(1)); break;
 	case bw_bridge::op_alliance_kick: bw_bridge_alliance_kick(bridge, arg(0), arg(1)); break;
 	case bw_bridge::op_alliance_rules: bw_bridge_alliance_set_capped(bridge, arg(0)); break;
+	case bw_bridge::op_unload_unit: bw_bridge_unload_unit(bridge, arg(0), arg(1)); break;
+	case bw_bridge::op_ai_version: bw_bridge_set_ai_version(bridge, arg(0)); break;
 	default: return false;
 	}
 	return true;
@@ -1457,6 +1461,12 @@ static bw_status order_as(bw_bridge_t* bridge, int owner, int order, int x, int 
 		case BW_ORDER_PATROL:
 			ok = f.action_order(owner, f.get_order_type(Orders::Patrol), pos, nullptr, nullptr, q);
 			break;
+		case BW_ORDER_UNLOAD:
+			ok = f.action_order(owner, f.get_order_type(Orders::MoveUnload), pos, nullptr, nullptr, q);
+			break;
+		case BW_ORDER_NUKE:
+			ok = f.action_order(owner, f.get_order_type(Orders::NukePaint), pos, nullptr, nullptr, q);
+			break;
 		default:
 			return BW_ERR_INVALID_ARGUMENT;
 		}
@@ -1544,6 +1554,11 @@ static bw_status train_as(bw_bridge_t* bridge, int owner, int unit_type_id) {
 			ok = f.action_train_fighter(owner);
 		} else {
 			ok = f.action_train(owner, ut);
+			// A silo arms its nuke with its own order (the original's train
+			// command sets it; OpenBW's action doesn't).
+			if (ok && ut->id == UnitTypes::Terran_Nuclear_Missile && f.unit_is(u, UnitTypes::Terran_Nuclear_Silo) && b->ai.version >= 2) {
+				f.set_unit_order(u, f.get_order_type(Orders::NukeTrain));
+			}
 		}
 		return ok ? BW_OK : BW_ERR_REJECTED;
 	} catch (...) {
@@ -2078,6 +2093,49 @@ bw_status bw_bridge_read_file(bw_bridge_t* bridge, const char* path, uint8_t* ou
 	} catch (...) {
 		return BW_ERR_ASSET_LOAD_FAILED;
 	}
+}
+
+int bw_bridge_get_loaded_units(bw_bridge_t* bridge, int32_t unit_id, int32_t* out_unit_ids, int max_count) {
+	if (!bridge || !out_unit_ids) return -1;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return -1;
+	try {
+		auto f = b->actions();
+		unit_t* u = resolve_unit(b, f, unit_id);
+		if (!u) return -1;
+		int n = 0;
+		for (unit_t* c : f.loaded_units(u)) {
+			if (n >= max_count) break;
+			out_unit_ids[n++] = unit_handle(f, c);
+		}
+		return n;
+	} catch (...) {
+		return -1;
+	}
+}
+
+bw_status bw_bridge_unload_unit(bw_bridge_t* bridge, int owner, int32_t unit_id) {
+	if (!bridge || owner < 0 || owner > 7) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	if (!b->log(bw_bridge::op_unload_unit, {owner, unit_id})) return BW_OK;
+	try {
+		auto f = b->actions();
+		unit_t* u = resolve_unit(b, f, unit_id);
+		if (!u || !controls(b, owner, u->owner)) return BW_ERR_REJECTED;
+		return f.action_unload(u->owner, u) ? BW_OK : BW_ERR_REJECTED;
+	} catch (...) {
+		return BW_ERR_UNKNOWN;
+	}
+}
+
+bw_status bw_bridge_set_ai_version(bw_bridge_t* bridge, int version) {
+	if (!bridge || version < 1 || version > 2) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	if (!b->log(bw_bridge::op_ai_version, {version})) return BW_OK;
+	b->ai.version = version;
+	return BW_OK;
 }
 
 bw_status bw_bridge_read_map_file(bw_bridge_t* bridge, const char* map_file, const char* path, uint8_t* out_data, int out_cap, int* out_len) {

@@ -642,6 +642,16 @@ class BwEngine {
   /// Alliance rules of games saved before the 3-member cap: off (logged).
   void setAllianceCapped(bool on) => _r.bw_bridge_alliance_set_capped(_h, on ? 1 : 0);
 
+  /// The computer players' version (2 for new games; 1 for saves made with
+  /// the earlier player). Logged.
+  void setAiVersion(int version) => _r.bw_bridge_set_ai_version(_h, version);
+
+  /// What a transport or bunker carries (unit ids).
+  List<int> loadedUnits(int unitId) => _ids(_r.bw_bridge_get_loaded_units(_h, unitId, _idBuf, _maxIds));
+
+  /// Unloads one carried unit. Logged.
+  bool unloadUnit(int owner, int unitId) => _ok(_r.bw_bridge_unload_unit(_h, owner, unitId));
+
   /// Read unit handles in the old (pre-ABI 20) form while on (logged).
   void setLegacyUnitIds(bool on) => _r.bw_bridge_set_legacy_unit_ids(_h, on ? 1 : 0);
 
