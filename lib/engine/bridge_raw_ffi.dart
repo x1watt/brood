@@ -109,6 +109,14 @@ class BridgeRawFfi extends BridgeRaw {
   @override
   int bw_bridge_alliance_get_defensive(int bridge, int player_slot) => _bw_bridge_alliance_get_defensive(bridge, player_slot);
 
+  late final _bw_bridge_alliance_kick = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.Int32), int Function(int, int, int)>('bw_bridge_alliance_kick');
+  @override
+  int bw_bridge_alliance_kick(int bridge, int by, int target) => _bw_bridge_alliance_kick(bridge, by, target);
+
+  late final _bw_bridge_alliance_set_capped = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32), int Function(int, int)>('bw_bridge_alliance_set_capped');
+  @override
+  int bw_bridge_alliance_set_capped(int bridge, int on) => _bw_bridge_alliance_set_capped(bridge, on);
+
   late final _bw_bridge_alliance_invite = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.Int32), int Function(int, int, int)>('bw_bridge_alliance_invite');
   @override
   int bw_bridge_alliance_invite(int bridge, int from, int to) => _bw_bridge_alliance_invite(bridge, from, to);

@@ -831,10 +831,13 @@ private:
 		}
 
 		// Look for a partner: urgently when losing, otherwise now and then.
+		// (With a human in the alliance, the humans decide who joins.)
+		if (al.capped && al.human_in(al.group[p.owner]) >= 0) return;
 		if (frame < p.next_invite) return;
 		if (!p.losing && frame < 24 * 60 * 3) return;
 		p.next_invite = frame + (p.losing ? 24 * 15 : 24 * (45 + (int)(p.next() % 45)));
-		if (!p.losing && (!al.open[p.owner] || my_group.size() >= 3)) return;
+		int size = al.capped ? al.free_members(al.group[p.owner]) : (int)my_group.size();
+		if (!p.losing && (!al.open[p.owner] || size >= bw_alliances::alliance_system::max_members)) return;
 		int best = -1000;
 		int target = -1;
 		std::array<bool, 8> seen{};

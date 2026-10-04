@@ -283,7 +283,7 @@ class AlliancePlayer {
   bool invitedBySlot(int slot) => invitedBy & (1 << slot) != 0;
 }
 
-enum AllianceEventKind { none, invited, declined, formed, left, open, closed, surrenderOffer, surrendered, surrenderRefused, vassalMoved }
+enum AllianceEventKind { none, invited, declined, formed, left, open, closed, surrenderOffer, surrendered, surrenderRefused, vassalMoved, kicked }
 
 class AllianceEvent {
   final int frame;

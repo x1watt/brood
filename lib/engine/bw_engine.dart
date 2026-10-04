@@ -636,6 +636,12 @@ class BwEngine {
   bool setAllianceDefensive(int slot, bool on) => _ok(_r.bw_bridge_alliance_set_defensive(_h, slot, on ? 1 : 0));
   bool allianceDefensive(int slot) => _r.bw_bridge_alliance_get_defensive(_h, slot) == 1;
 
+  /// A human member puts [target] out of the alliance (logged).
+  bool allianceKick(int by, int target) => _ok(_r.bw_bridge_alliance_kick(_h, by, target));
+
+  /// Alliance rules of games saved before the 3-member cap: off (logged).
+  void setAllianceCapped(bool on) => _r.bw_bridge_alliance_set_capped(_h, on ? 1 : 0);
+
   /// Read unit handles in the old (pre-ABI 20) form while on (logged).
   void setLegacyUnitIds(bool on) => _r.bw_bridge_set_legacy_unit_ids(_h, on ? 1 : 0);
 

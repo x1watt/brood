@@ -257,6 +257,8 @@ class GameController {
         // Older saves were played with everyone sharing resources.
         if (setup.legacyRules && setup.players.length > 1) e.setAllianceShare(myPlayer, true);
         if (setup.legacyIds) e.setLegacyUnitIds(true);
+        // Saved before the 3-member cap: replay with the old rules.
+        if (setup.legacyAlliances) e.setAllianceCapped(false);
         await e.replayCommands(saved.commandLog, saved.frame);
         if (setup.legacyIds) e.setLegacyUnitIds(false);
         if (setup.legacyRules && !fogOfWar) e.exploreMap(myPlayer);
@@ -456,6 +458,10 @@ class GameController {
         e.a == myPlayer
             ? '${nameOf(e.b)} refused your surrender.'
             : (e.b == myPlayer ? "You refused $a's surrender." : "${nameOf(e.b)} refused $a's surrender."),
+      AllianceEventKind.kicked =>
+        e.a == myPlayer
+            ? '${nameOf(e.b)} put you out of the alliance.'
+            : (e.b == myPlayer ? 'You put $a out of the alliance.' : '${nameOf(e.b)} put $a out of the alliance.'),
       AllianceEventKind.vassalMoved => e.a == myPlayer ? 'Your lord was conquered: you now serve ${nameOf(e.b)}.' : '$a now serves ${nameOf(e.b)}.',
       AllianceEventKind.none => null,
     };
@@ -483,6 +489,12 @@ class GameController {
   void setOpenToAlliances(bool on) {
     if (!ready) return;
     engine.setAllianceOpen(myPlayer, on);
+    _allianceChanged();
+  }
+
+  void kickFromAlliance(int slot) {
+    if (!ready) return;
+    engine.allianceKick(myPlayer, slot);
     _allianceChanged();
   }
 

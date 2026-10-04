@@ -6,7 +6,7 @@
 
 import 'dart:typed_data';
 
-const int BW_BRIDGE_ABI_VERSION = 22;
+const int BW_BRIDGE_ABI_VERSION = 23;
 const int BW_MAX_PLAYERS = 8;
 const int BW_PLAYER_HUMAN = 1;
 const int BW_PLAYER_COMPUTER = 2;
@@ -20,6 +20,7 @@ const int BW_ALLIANCE_SURRENDER_OFFER = 7;
 const int BW_ALLIANCE_SURRENDERED = 8;
 const int BW_ALLIANCE_SURRENDER_REFUSED = 9;
 const int BW_ALLIANCE_VASSAL_MOVED = 10;
+const int BW_ALLIANCE_KICKED = 11;
 const int BW_AUTOPLAY_RESOURCES = 1;
 const int BW_AUTOPLAY_BUILDING = 2;
 const int BW_AUTOPLAY_ATTACKING = 4;
@@ -90,6 +91,8 @@ abstract class BridgeRaw {
   int bw_bridge_alliance_get_share(int bridge, int player_slot);
   int bw_bridge_alliance_set_defensive(int bridge, int player_slot, int on);
   int bw_bridge_alliance_get_defensive(int bridge, int player_slot);
+  int bw_bridge_alliance_kick(int bridge, int by, int target);
+  int bw_bridge_alliance_set_capped(int bridge, int on);
   int bw_bridge_alliance_invite(int bridge, int from, int to);
   int bw_bridge_alliance_respond(int bridge, int player_slot, int from, int accept);
   int bw_bridge_alliance_leave(int bridge, int player_slot);

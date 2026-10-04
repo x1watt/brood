@@ -56,7 +56,11 @@ class GameSetup {
   /// command log names units the old way.
   final bool legacyIds;
 
-  const GameSetup({required this.players, required this.alliances, required this.seed, this.legacyRules = false, this.legacyIds = false});
+  /// Saved before alliances were capped at three members (and humans alone
+  /// let players into theirs): replays with the old rules.
+  final bool legacyAlliances;
+
+  const GameSetup({required this.players, required this.alliances, required this.seed, this.legacyRules = false, this.legacyIds = false, this.legacyAlliances = false});
 
   bool get isResolved => players.every((p) => p.race >= 0 && p.race < 3);
 
@@ -85,6 +89,7 @@ class GameSetup {
       seed: seed,
       legacyRules: legacyRules,
       legacyIds: legacyIds,
+      legacyAlliances: legacyAlliances,
     );
   }
 
@@ -94,6 +99,7 @@ class GameSetup {
     'seed': seed,
     'shareSwitch': !legacyRules,
     'wideIds': !legacyIds,
+    'allianceCap': !legacyAlliances,
   };
 
   static GameSetup fromJson(Map<String, dynamic> j) => GameSetup(
@@ -102,6 +108,7 @@ class GameSetup {
     seed: (j['seed'] as num).toInt(),
     legacyRules: j['shareSwitch'] != true,
     legacyIds: j['wideIds'] != true,
+    legacyAlliances: j['allianceCap'] != true,
   );
 
   static int newSeed() => DateTime.now().microsecondsSinceEpoch & 0x7fffffff;

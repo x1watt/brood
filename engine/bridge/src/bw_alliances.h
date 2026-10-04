@@ -61,6 +61,7 @@ enum event_kind : int32_t {
 	event_surrendered,     // a surrendered to b
 	event_surrender_refused, // b refused a's surrender
 	event_vassal_moved,    // a, a vassal, now serves b (its lord was conquered)
+	event_kicked,          // b put a out of their alliance
 };
 
 struct event {
@@ -85,6 +86,12 @@ struct alliance_system {
 
 	std::array<bool, max_players> share{}; // pools money with the group's other sharers
 	std::array<bool, max_players> defensive{}; // this (human) player asks its allies to stay home
+	std::array<bool, max_players> human{};     // played by a person (the bridge keeps it current)
+	// Alliances hold at most this many members (players who surrendered
+	// don't count), and with a human in one only humans let new players in.
+	// Off for games saved before these rules (they replay as played).
+	bool capped = true;
+	static const int max_members = 3;
 	std::array<int, max_players> synced_minerals{};
 	std::array<int, max_players> synced_gas{};
 	std::array<int, max_players> gathered_seen{};
@@ -119,10 +126,12 @@ struct alliance_system {
 
 	void reset(state& st, const std::array<int, max_players>& team_of_slot, const std::array<bool, max_players>& shares, uint32_t seed) {
 		name_rng = seed * 2246822519u + 3266489917u;
+		capped = true;
 		for (int p = 0; p != max_players; ++p) {
 			group[p] = p;
 			share[p] = shares[p];
 			defensive[p] = false;
+			human[p] = false;
 			open[p] = false;
 			lord[p] = -1;
 			playing[p] = st.players[p].controller == player_t::controller_occupied;
@@ -206,7 +215,34 @@ struct alliance_system {
 	// make alliances of their own.
 	bool merge_allowed(const state& st, int a, int b) const {
 		if (!active(st, a) || !active(st, b) || same_group(a, b) || vassal(a) || vassal(b)) return false;
+		if (capped && free_members(group[a]) + free_members(group[b]) > max_members) return false;
 		return someone_outside(st, group[a], group[b]);
+	}
+
+	// Members of group g that count towards the cap (not surrendered).
+	int free_members(int g) const {
+		int n = 0;
+		for (int m : members(g)) {
+			if (!vassal(m)) ++n;
+		}
+		return n;
+	}
+
+	// A human member of group g (the lowest slot), or -1.
+	int human_in(int g) const {
+		for (int m : members(g)) {
+			if (human[m]) return m;
+		}
+		return -1;
+	}
+
+	// Kicked out by a human ally: `by` (a person) puts `target` (with the
+	// players who surrendered to it) out of their alliance.
+	bool kick(state& st, int by, int target) {
+		if (by == target || !human[by] || !active(st, by) || !same_group(by, target) || vassal(target) || vassal(by)) return false;
+		if (!leave(st, target)) return false;
+		push_event(st, event_kicked, target, by);
+		return true;
 	}
 
 	// `from` (with its own vassals) joining `to`'s group must leave someone.
@@ -375,6 +411,11 @@ struct alliance_system {
 	}
 
 	bool invite(state& st, int from, int to) {
+		// Only the humans of an alliance let new players in: an invitation
+		// to a computer member goes to a human member instead, and a
+		// computer in a human's alliance doesn't invite.
+		if (capped && to >= 0 && to < max_players && !human[to] && human_in(group[to]) >= 0) to = human_in(group[to]);
+		if (capped && from >= 0 && from < max_players && !human[from] && human_in(group[from]) >= 0) return false;
 		if (from == to || !merge_allowed(st, from, to)) return false;
 		if (invite_frame[to][from] >= 0) return false;
 		// An invitation answers one already received.

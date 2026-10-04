@@ -680,6 +680,86 @@ static void test_multiplayer(const char* dd, const char* mf) {
 	bw_bridge_destroy(c);
 }
 
+/* Alliance rules: eight players, free for all, the human on full auto-play
+ * (so it lasts). Every minute for 20 minutes: no alliance has more than 3
+ * members (not counting players who surrendered), and the human's alliance
+ * never gains a member (the human never invites anyone here, and only
+ * humans let players into an alliance with a human). Then a kick: the human
+ * invites a computer, and puts it out again. */
+static void test_alliance_rules(const char* dd) {
+	char mf[1200];
+	const char* home = getenv("HOME");
+	snprintf(mf, sizeof(mf), "%s/box/media/games/BROOD/maps/BroodWar/WebMaps/(8)Big Game Hunters.scm", home ? home : "");
+	bw_game_setup setup;
+	memset(&setup, 0, sizeof(setup));
+	setup.player_count = 8;
+	for (int i = 0; i != 8; ++i) {
+		setup.controller[i] = i == 0 ? BW_PLAYER_HUMAN : BW_PLAYER_COMPUTER;
+		setup.race[i] = i % 3;
+	}
+	setup.seed = 77;
+	int32_t slots[8];
+	bw_bridge_t* b = bw_bridge_create();
+	CHECK(b && bw_bridge_load_assets(b, dd) == BW_OK && bw_bridge_new_game(b, mf, &setup, slots) == BW_OK, "rules: new game");
+	int me = slots[0];
+	bw_bridge_step(b, 1);
+	bw_bridge_alliance_set_open(b, me, 1);
+	bw_bridge_set_autoplay(b, me, BW_AUTOPLAY_ALL);
+	bw_alliance_player al[8];
+	int biggest = 0, formed = 0;
+	for (int m = 1; m <= 20; ++m) {
+		bw_bridge_step(b, 24 * 60);
+		/* Invitations to the human: decline (the human decides). */
+		alliance_state(b, al);
+		for (int q = 0; q != 8; ++q)
+			if (al[me].invited_by & (1 << q)) bw_bridge_alliance_respond(b, me, q, 0);
+		alliance_state(b, al);
+		int size[8] = {0};
+		for (int q = 0; q != 8; ++q)
+			if (al[q].playing && al[q].active && al[q].lord < 0) ++size[al[q].group];
+		for (int g = 0; g != 8; ++g) {
+			if (size[g] > biggest) biggest = size[g];
+			if (size[g] > 1) ++formed;
+		}
+		int mine = 0;
+		for (int q = 0; q != 8; ++q)
+			if (al[q].playing && al[q].active && al[q].group == al[me].group && al[q].lord < 0) ++mine;
+		CHECK(mine == 1 || !al[me].active, "rules: a computer joined the human's alliance without the human (minute %d)", m);
+		CHECK(biggest <= 3, "rules: an alliance of %d (minute %d)", biggest, m);
+	}
+	printf("bridge_smoke_test: alliance rules: 8 players, 20 min: biggest alliance %d, alliance-minutes %d\n", biggest, formed);
+	CHECK(formed > 0, "rules: no alliance ever formed");
+	bw_bridge_destroy(b);
+}
+
+static void test_kick(const char* dd, const char* mf) {
+	bw_game_setup setup;
+	memset(&setup, 0, sizeof(setup));
+	setup.player_count = 3;
+	setup.controller[0] = BW_PLAYER_HUMAN; setup.race[0] = 1; setup.team[0] = 1;
+	setup.controller[1] = BW_PLAYER_COMPUTER; setup.race[1] = 1; setup.team[1] = 1;
+	setup.controller[2] = BW_PLAYER_COMPUTER; setup.race[2] = 0;
+	setup.seed = 5;
+	int32_t slots[8];
+	bw_bridge_t* b = bw_bridge_create();
+	CHECK(b && bw_bridge_load_assets(b, dd) == BW_OK && bw_bridge_new_game(b, mf, &setup, slots) == BW_OK, "kick: new game");
+	int me = slots[0], ally = slots[1];
+	bw_bridge_step(b, 24);
+	bw_alliance_player al[8];
+	alliance_state(b, al);
+	CHECK(al[me].group == al[ally].group, "kick: setup team not allied");
+	CHECK(bw_bridge_alliance_kick(b, ally, me) == BW_ERR_REJECTED, "kick: a computer put the human out");
+	CHECK(bw_bridge_alliance_kick(b, me, ally) == BW_OK, "kick: refused");
+	alliance_state(b, al);
+	CHECK(al[me].group != al[ally].group, "kick: still allied");
+	bw_alliance_event ev[64];
+	int n = bw_bridge_poll_alliance_events(b, ev, 64), kicked = 0;
+	for (int i = 0; i != n; ++i) if (ev[i].kind == BW_ALLIANCE_KICKED && ev[i].a == ally && ev[i].b == me) kicked = 1;
+	CHECK(kicked, "kick: no event");
+	printf("bridge_smoke_test: kick: the human put its ally out of the alliance\n");
+	bw_bridge_destroy(b);
+}
+
 /* Raised limits: more than the original's 12 units in one selection and
  * one control group (up to 200 now). A computer player builds up an army,
  * then all of its units are selected, grouped and recalled. */
@@ -996,6 +1076,7 @@ int main(int argc, char** argv) {
 
 	CHECK(bw_bridge_abi_version() == BW_BRIDGE_ABI_VERSION, "abi mismatch");
 	if (getenv("DEF_ONLY")) { test_defensive(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
+	if (getenv("RULES_ONLY")) { test_kick(dd, mf); test_alliance_rules(dd); printf("bridge_smoke_test: OK\n"); return 0; }
 	if (getenv("MP_ONLY")) { test_multiplayer(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
 	if (getenv("LIMITS_ONLY")) { test_limits(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
 	if (getenv("AUTOPLAY_ONLY")) { test_autoplay(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
@@ -1302,6 +1383,8 @@ int main(int argc, char** argv) {
 	test_surrender(dd, mf);
 	test_limits(dd, mf);
 	test_multiplayer(dd, mf);
+	test_kick(dd, mf);
+	test_alliance_rules(dd);
 	test_defensive(dd, mf);
 	test_autoplay(dd, mf);
 	test_ai(dd, mf);

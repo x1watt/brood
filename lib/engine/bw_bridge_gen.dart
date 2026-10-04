@@ -298,6 +298,43 @@ class BwBridgeBindings {
       _bw_bridge_alliance_get_defensivePtr
           .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int)>();
 
+  /// A human member (`by`) puts an ally out of the alliance, with the players
+  /// who surrendered to it. Players who surrendered can't be put out. Logged.
+  bw_status bw_bridge_alliance_kick(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int by,
+    int target,
+  ) {
+    return bw_status.fromValue(_bw_bridge_alliance_kick(bridge, by, target));
+  }
+
+  late final _bw_bridge_alliance_kickPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int, ffi.Int)
+        >
+      >('bw_bridge_alliance_kick');
+  late final _bw_bridge_alliance_kick = _bw_bridge_alliance_kickPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int)>();
+
+  /// Alliance rules (on by default): at most 3 members, not counting players
+  /// who surrendered, and with a human in an alliance only humans let new
+  /// players in (invitations to its computer players go to a human member).
+  /// Off replays games saved before these rules as they were played. Logged.
+  bw_status bw_bridge_alliance_set_capped(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int on$,
+  ) {
+    return bw_status.fromValue(_bw_bridge_alliance_set_capped(bridge, on$));
+  }
+
+  late final _bw_bridge_alliance_set_cappedPtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Int Function(ffi.Pointer<bw_bridge_t>, ffi.Int)>
+      >('bw_bridge_alliance_set_capped');
+  late final _bw_bridge_alliance_set_capped = _bw_bridge_alliance_set_cappedPtr
+      .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int)>();
+
   bw_status bw_bridge_alliance_invite(
     ffi.Pointer<bw_bridge_t> bridge,
     int from,
@@ -2906,7 +2943,7 @@ final class bw_sound_info extends ffi.Struct {
   external ffi.Array<ffi.Char> filename;
 }
 
-const int BW_BRIDGE_ABI_VERSION = 22;
+const int BW_BRIDGE_ABI_VERSION = 23;
 
 const int BW_MAX_PLAYERS = 8;
 
@@ -2933,6 +2970,8 @@ const int BW_ALLIANCE_SURRENDERED = 8;
 const int BW_ALLIANCE_SURRENDER_REFUSED = 9;
 
 const int BW_ALLIANCE_VASSAL_MOVED = 10;
+
+const int BW_ALLIANCE_KICKED = 11;
 
 const int BW_AUTOPLAY_RESOURCES = 1;
 

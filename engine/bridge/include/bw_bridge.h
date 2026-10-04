@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 22
+#define BW_BRIDGE_ABI_VERSION 23
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -139,6 +139,14 @@ int bw_bridge_alliance_get_share(bw_bridge_t* bridge, int player_slot);
 bw_status bw_bridge_alliance_set_defensive(bw_bridge_t* bridge, int player_slot, int on);
 // That player's own switch: 1 on, 0 off, -1 bad slot.
 int bw_bridge_alliance_get_defensive(bw_bridge_t* bridge, int player_slot);
+// A human member (`by`) puts an ally out of the alliance, with the players
+// who surrendered to it. Players who surrendered can't be put out. Logged.
+bw_status bw_bridge_alliance_kick(bw_bridge_t* bridge, int by, int target);
+// Alliance rules (on by default): at most 3 members, not counting players
+// who surrendered, and with a human in an alliance only humans let new
+// players in (invitations to its computer players go to a human member).
+// Off replays games saved before these rules as they were played. Logged.
+bw_status bw_bridge_alliance_set_capped(bw_bridge_t* bridge, int on);
 bw_status bw_bridge_alliance_invite(bw_bridge_t* bridge, int from, int to);
 bw_status bw_bridge_alliance_respond(bw_bridge_t* bridge, int player_slot, int from, int accept);
 // Leaves the alliance, taking an equal share of its treasury (with its
@@ -161,6 +169,7 @@ bw_status bw_bridge_alliance_answer_surrender(bw_bridge_t* bridge, int player_sl
 #define BW_ALLIANCE_SURRENDERED 8       // a surrendered to b
 #define BW_ALLIANCE_SURRENDER_REFUSED 9 // b refused a's surrender
 #define BW_ALLIANCE_VASSAL_MOVED 10     // a's lord was conquered: a now serves b
+#define BW_ALLIANCE_KICKED 11           // b put a out of their alliance
 
 typedef struct bw_alliance_event {
 	int32_t frame;

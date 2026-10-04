@@ -483,11 +483,40 @@ class _GroupCard extends StatelessWidget {
                 ],
               ),
             ),
+            // You can put an ally out of your alliance (not one who
+            // surrendered: that is for good).
+            if (mine && !isMe && !m.isVassal && !(c.me?.isVassal ?? true))
+              Builder(
+                builder: (context) => IconButton(
+                  tooltip: 'Put ${c.nameOf(m.slot)} out of the alliance',
+                  visualDensity: VisualDensity.compact,
+                  iconSize: 16,
+                  color: _danger,
+                  onPressed: () => _confirmKick(context, m.slot),
+                  icon: const Icon(Icons.person_remove_outlined),
+                ),
+              ),
             _score(m),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _confirmKick(BuildContext context, int slot) async {
+    final name = c.nameOf(slot);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Put $name out of the alliance?'),
+        content: Text('$name leaves with any players who surrendered to them, takes its share of a shared treasury, and becomes an enemy.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Put out')),
+        ],
+      ),
+    );
+    if (ok == true) c.kickFromAlliance(slot);
   }
 
   Widget _small(String label, VoidCallback onPressed, {IconData? icon, Color? color, bool filled = false}) {

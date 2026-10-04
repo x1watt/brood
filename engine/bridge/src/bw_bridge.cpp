@@ -172,6 +172,8 @@ struct bw_bridge {
 		op_alliance_defensive,
 		op_legacy_ids,
 		op_set_controller,
+		op_alliance_kick,
+		op_alliance_rules,
 	};
 	bool legacy_ids = false; // see resolve_unit
 	a_vector<int32_t> cmd_log;
@@ -524,6 +526,9 @@ bw_status bw_bridge_new_game(bw_bridge_t* bridge, const char* map_file, const bw
 			if (slot_of[(size_t)k] >= 0) shares[(size_t)slot_of[(size_t)k]] = setup->controller[k] == BW_PLAYER_COMPUTER;
 		}
 		b->alliances.reset(st, team_of_slot, shares, setup->seed);
+		for (int k = 0; k != count; ++k) {
+			if (slot_of[(size_t)k] >= 0) b->alliances.human[(size_t)slot_of[(size_t)k]] = setup->controller[k] == BW_PLAYER_HUMAN;
+		}
 		b->alliances_on = count > 1;
 		b->sim->allies = b->alliances_on ? &b->alliances : nullptr;
 		b->ai.allies = b->alliances_on ? &b->alliances : nullptr;
@@ -635,6 +640,8 @@ static bool run_logged(bw_bridge_t* bridge, int32_t op, int32_t n, const int32_t
 	case bw_bridge::op_alliance_defensive: bw_bridge_alliance_set_defensive(bridge, arg(0), arg(1)); break;
 	case bw_bridge::op_legacy_ids: bw_bridge_set_legacy_unit_ids(bridge, arg(0)); break;
 	case bw_bridge::op_set_controller: bw_bridge_set_controller(bridge, arg(0), arg(1)); break;
+	case bw_bridge::op_alliance_kick: bw_bridge_alliance_kick(bridge, arg(0), arg(1)); break;
+	case bw_bridge::op_alliance_rules: bw_bridge_alliance_set_capped(bridge, arg(0)); break;
 	default: return false;
 	}
 	return true;
@@ -677,6 +684,7 @@ bw_status bw_bridge_set_controller(bw_bridge_t* bridge, int player_slot, int hum
 	if (st.players[(size_t)player_slot].controller != player_t::controller_occupied) return BW_ERR_REJECTED;
 	b->ai.set_controller(player_slot, st.players[(size_t)player_slot].race, (uint32_t)st.current_frame * 7919u + 31u,
 	                     st.game->start_locations[(size_t)player_slot], human != 0);
+	b->alliances.human[(size_t)player_slot] = human != 0;
 	return BW_OK;
 }
 
@@ -2249,6 +2257,21 @@ bw_status bw_bridge_alliance_set_defensive(bw_bridge_t* bridge, int player_slot,
 int bw_bridge_alliance_get_defensive(bw_bridge_t* bridge, int player_slot) {
 	if (!bridge || !alliance_slot_ok(B(bridge), player_slot)) return -1;
 	return B(bridge)->alliances.defensive[(size_t)player_slot] ? 1 : 0;
+}
+
+bw_status bw_bridge_alliance_kick(bw_bridge_t* bridge, int by, int target) {
+	if (!bridge || !alliance_slot_ok(B(bridge), by) || !alliance_slot_ok(B(bridge), target)) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->log(bw_bridge::op_alliance_kick, {by, target})) return BW_OK;
+	return b->alliances.kick(b->player->st(), by, target) ? BW_OK : BW_ERR_REJECTED;
+}
+
+bw_status bw_bridge_alliance_set_capped(bw_bridge_t* bridge, int on) {
+	if (!bridge || !B(bridge)->in_game()) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->log(bw_bridge::op_alliance_rules, {on ? 1 : 0})) return BW_OK;
+	b->alliances.capped = on != 0;
+	return BW_OK;
 }
 
 int bw_bridge_alliance_get_share(bw_bridge_t* bridge, int player_slot) {
