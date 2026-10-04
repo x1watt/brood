@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 19
+#define BW_BRIDGE_ABI_VERSION 20
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -204,6 +204,11 @@ bw_status bw_bridge_get_fog(bw_bridge_t* bridge, int player_slot, uint8_t* out_t
 // the player sees everything, and OpenBW doesn't let anyone build on
 // ground they haven't explored.
 bw_status bw_bridge_explore_map(bw_bridge_t* bridge, int player_slot);
+
+// Unit handles in the old form (saves from before ABI 20: an 11-bit index)
+// while on. Logged: a save made before loads with it on for its old log,
+// then turns it off, and replaying that save switches at the same point.
+void bw_bridge_set_legacy_unit_ids(bw_bridge_t* bridge, int on);
 
 // --- Saved games -----------------------------------------------------------------
 //
@@ -394,7 +399,8 @@ bw_status bw_bridge_get_unit_type_info(bw_bridge_t* bridge, int unit_type_id, bw
 
 // --- Selection and commands -------------------------------------------------
 
-// Replaces the selection (max 12, as in the original game).
+// Replaces the selection (max 200; the original allowed 12). Control
+// groups hold up to 200 units too.
 bw_status bw_bridge_select_units(bw_bridge_t* bridge, int owner, const int32_t* unit_ids, int count);
 int bw_bridge_get_selected_units(bw_bridge_t* bridge, int owner, int32_t* out_unit_ids, int max_count);
 

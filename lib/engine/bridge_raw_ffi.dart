@@ -153,6 +153,10 @@ class BridgeRawFfi extends BridgeRaw {
   @override
   int bw_bridge_explore_map(int bridge, int player_slot) => _bw_bridge_explore_map(bridge, player_slot);
 
+  late final _bw_bridge_set_legacy_unit_ids = _lib.lookupFunction<ffi.Void Function(ffi.IntPtr, ffi.Int32), void Function(int, int)>('bw_bridge_set_legacy_unit_ids');
+  @override
+  void bw_bridge_set_legacy_unit_ids(int bridge, int on) => _bw_bridge_set_legacy_unit_ids(bridge, on);
+
   late final _bw_bridge_command_log = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.IntPtr, ffi.Int32), int Function(int, int, int)>('bw_bridge_command_log');
   @override
   int bw_bridge_command_log(int bridge, int out, int out_cap) => _bw_bridge_command_log(bridge, out, out_cap);

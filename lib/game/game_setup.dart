@@ -50,7 +50,11 @@ class GameSetup {
   /// shares, so the game replays as it was played.
   final bool legacyRules;
 
-  const GameSetup({required this.players, required this.alliances, required this.seed, this.legacyRules = false});
+  /// Saved before unit ids grew (2000 supply, 200-unit selections): its
+  /// command log names units the old way.
+  final bool legacyIds;
+
+  const GameSetup({required this.players, required this.alliances, required this.seed, this.legacyRules = false, this.legacyIds = false});
 
   bool get isResolved => players.every((p) => p.race >= 0 && p.race < 3);
 
@@ -78,6 +82,7 @@ class GameSetup {
       alliances: alliances,
       seed: seed,
       legacyRules: legacyRules,
+      legacyIds: legacyIds,
     );
   }
 
@@ -86,6 +91,7 @@ class GameSetup {
     'alliances': alliances.name,
     'seed': seed,
     'shareSwitch': !legacyRules,
+    'wideIds': !legacyIds,
   };
 
   static GameSetup fromJson(Map<String, dynamic> j) => GameSetup(
@@ -93,6 +99,7 @@ class GameSetup {
     alliances: AllianceMode.values.firstWhere((m) => m.name == j['alliances'], orElse: () => AllianceMode.freeForAll),
     seed: (j['seed'] as num).toInt(),
     legacyRules: j['shareSwitch'] != true,
+    legacyIds: j['wideIds'] != true,
   );
 
   static int newSeed() => DateTime.now().microsecondsSinceEpoch & 0x7fffffff;

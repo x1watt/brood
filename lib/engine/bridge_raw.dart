@@ -6,7 +6,7 @@
 
 import 'dart:typed_data';
 
-const int BW_BRIDGE_ABI_VERSION = 19;
+const int BW_BRIDGE_ABI_VERSION = 20;
 const int BW_MAX_PLAYERS = 8;
 const int BW_PLAYER_HUMAN = 1;
 const int BW_PLAYER_COMPUTER = 2;
@@ -101,6 +101,7 @@ abstract class BridgeRaw {
   void bw_bridge_set_viewer(int bridge, int player_slot);
   int bw_bridge_get_fog(int bridge, int player_slot, int out_tiles, int out_cap);
   int bw_bridge_explore_map(int bridge, int player_slot);
+  void bw_bridge_set_legacy_unit_ids(int bridge, int on);
   int bw_bridge_command_log(int bridge, int out, int out_cap);
   int bw_bridge_replay_commands(int bridge, int log, int len, int end_frame);
   int bw_bridge_current_frame(int bridge);

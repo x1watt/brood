@@ -45,15 +45,16 @@ abstract final class L {
 }
 
 class BwEngine {
-  static const int _maxDrawItems = 16384;
-  static const int _maxUnits = 4096;
+  static const int _maxDrawItems = 65536;
+  static const int _maxUnits = 20000;
 
   final BridgeRaw _r;
   final int _h;
   late final int _drawBuf = _r.malloc(_maxDrawItems * L.drawSize);
   late final int _unitBuf = _r.malloc(_maxUnits * L.unitSize);
   late final int _oneUnit = _r.malloc(L.unitSize);
-  late final int _idBuf = _r.malloc(256 * 4);
+  late final int _idBuf = _r.malloc(_maxIds * 4);
+  static const int _maxIds = 1024; // selections (200), buildable types
   late final int _ints = _r.malloc(16); // out parameters
   late final int _soundBuf = _r.malloc(256 * L.soundEventSize);
   late final int _allianceBuf = _r.malloc(8 * L.allianceSize);
@@ -448,7 +449,7 @@ class BwEngine {
 
   void selectUnits(int owner, List<int> unitIds) {
     final n = unitIds.length > 256 ? 256 : unitIds.length;
-    final d = _d(_idBuf, 256 * 4);
+    final d = _d(_idBuf, _maxIds * 4);
     for (int i = 0; i < n; ++i) {
       d.setInt32(i * 4, unitIds[i], Endian.little);
     }
@@ -461,14 +462,14 @@ class BwEngine {
     return List<int>.generate(n, (i) => d.getInt32(i * 4, Endian.little), growable: false);
   }
 
-  List<int> getSelectedUnits(int owner) => _ids(_r.bw_bridge_get_selected_units(_h, owner, _idBuf, 256));
+  List<int> getSelectedUnits(int owner) => _ids(_r.bw_bridge_get_selected_units(_h, owner, _idBuf, _maxIds));
 
   /// Returns false when the engine refused the order.
   bool order(int owner, UnitOrder order, int x, int y, {int targetUnitId = 0, bool queue = false}) =>
       _ok(_r.bw_bridge_order(_h, owner, order.index, x, y, targetUnitId, queue ? 1 : 0));
 
   /// Unit types the single selected unit can build or train right now.
-  List<int> getBuildable(int owner) => _ids(_r.bw_bridge_get_buildable(_h, owner, _idBuf, 256));
+  List<int> getBuildable(int owner) => _ids(_r.bw_bridge_get_buildable(_h, owner, _idBuf, _maxIds));
 
   bool train(int owner, int unitTypeId) => _ok(_r.bw_bridge_train(_h, owner, unitTypeId));
 
@@ -506,8 +507,8 @@ class BwEngine {
     }
   }
 
-  List<int> getResearchable(int owner) => _ids(_r.bw_bridge_get_researchable(_h, owner, _idBuf, 256));
-  List<int> getUpgradable(int owner) => _ids(_r.bw_bridge_get_upgradable(_h, owner, _idBuf, 256));
+  List<int> getResearchable(int owner) => _ids(_r.bw_bridge_get_researchable(_h, owner, _idBuf, _maxIds));
+  List<int> getUpgradable(int owner) => _ids(_r.bw_bridge_get_upgradable(_h, owner, _idBuf, _maxIds));
 
   bool research(int owner, int techId) => _ok(_r.bw_bridge_research(_h, owner, techId));
   bool upgrade(int owner, int upgradeId) => _ok(_r.bw_bridge_upgrade(_h, owner, upgradeId));
@@ -570,6 +571,9 @@ class BwEngine {
   /// guard each other (logged).
   bool setAllianceDefensive(int slot, bool on) => _ok(_r.bw_bridge_alliance_set_defensive(_h, slot, on ? 1 : 0));
   bool allianceDefensive(int slot) => _r.bw_bridge_alliance_get_defensive(_h, slot) == 1;
+
+  /// Read unit handles in the old (pre-ABI 20) form while on (logged).
+  void setLegacyUnitIds(bool on) => _r.bw_bridge_set_legacy_unit_ids(_h, on ? 1 : 0);
 
   /// The whole map counts as explored for [slot] (logged): with no fog of
   /// war you see everything and may build anywhere you see.

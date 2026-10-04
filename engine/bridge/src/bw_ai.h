@@ -91,6 +91,9 @@ struct player {
 	int next_fortify = 0;
 	// Defensive mode: a detachment sent to an ally under attack stays by it.
 	bool fortifying = false;
+	bool colony_mode = false; // colonizing without attacking: colonies dig in
+	int next_colony = 0;
+	int next_colony_units = 0;
 	int guard_ally = -1;          // the ally it guards, -1 none
 	xy guard_pos;                 // where it waits between attacks
 	xy help_target;               // the current threat to the ally
@@ -218,6 +221,8 @@ struct ai_system {
 
 private:
 	// --- static data -------------------------------------------------------------
+
+	static const int supply_cap = 2000; // the engine's limit (the original's was 200)
 
 	static UnitTypes worker_of(race_t r) {
 		return r == race_t::zerg ? UnitTypes::Zerg_Drone : r == race_t::protoss ? UnitTypes::Protoss_Probe : UnitTypes::Terran_SCV;
@@ -390,7 +395,7 @@ private:
 		s.minerals = st.current_minerals[p.owner];
 		s.gas = st.current_gas[p.owner];
 		s.supply_used = st.supply_used[p.owner][race].raw_value / 2;
-		s.supply_max = std::min(200, (int)(st.supply_available[p.owner][race].raw_value / 2));
+		s.supply_max = std::min(supply_cap, (int)(st.supply_available[p.owner][race].raw_value / 2));
 		return s;
 	}
 
@@ -897,9 +902,21 @@ private:
 		// Defences for new bases come before the next building of the build
 		// order (which would otherwise keep the money reserved); new bases
 		// after it, since defences need its buildings.
-		if (colonizing) build_defenses(f, p, s, minerals, gas);
+		// Colonizing without attacking: every colony is fortified as heavily
+		// as money allows, with one production building for a few mobile
+		// units (colony_defense). With attacking on, new bases just get a
+		// couple of defences.
+		p.colony_mode = colonizing && !attacking;
+		if (colonizing && !p.colony_mode) build_defenses(f, p, s, minerals, gas);
+		// In colony mode the next town hall comes first, then the colonies'
+		// defences, and only then the build order's other buildings.
+		if (p.colony_mode) {
+			colony_units(f, p, s, minerals, gas);
+			maybe_expand(f, p, s, minerals, gas);
+			colony_defense(f, p, s, minerals, gas);
+		}
 		if (building && !supply_ordered) follow_build_order(f, p, s, minerals, gas);
-		if (colonizing) maybe_expand(f, p, s, minerals, gas);
+		if (colonizing && !p.colony_mode) maybe_expand(f, p, s, minerals, gas);
 		if (building) research(f, p, s, minerals, gas);
 		if (fortifying) fortify(f, p, s, minerals, gas);
 		if (attacking || fortifying) train_army(f, p, s, minerals, gas);
@@ -960,7 +977,7 @@ private:
 	}
 
 	bool keep_supply(action_functions& f, player& p, snapshot& s, int& minerals, int& gas) {
-		if (s.supply_max >= 200) return false;
+		if (s.supply_max >= supply_cap) return false;
 		UnitTypes type = supply_of(p.race);
 		int producers = 0;
 		for (unit_t* b : s.buildings) {
@@ -1033,10 +1050,17 @@ private:
 		}
 	}
 
+	static bool is_production(UnitTypes t) {
+		return t == UnitTypes::Terran_Barracks || t == UnitTypes::Terran_Factory || t == UnitTypes::Terran_Starport ||
+		       t == UnitTypes::Protoss_Gateway || t == UnitTypes::Protoss_Robotics_Facility || t == UnitTypes::Protoss_Stargate;
+	}
+
 	void follow_build_order(action_functions& f, player& p, snapshot& s, int& minerals, int& gas) {
 		for (auto& step : build_order(p.race)) {
 			if (s.supply_used < step.supply) break;
 			if (s.planned[(size_t)step.type] >= step.count) continue;
+			// Colonies dig in: one of each production building at most.
+			if (p.colony_mode && is_production(step.type) && s.planned[(size_t)step.type] >= 1) continue;
 			const unit_type_t* ut = f.get_unit_type(step.type);
 			if (!affordable(ut, minerals, gas)) {
 				// Save for this step instead of spending on units.
@@ -1379,6 +1403,277 @@ private:
 		}
 	}
 
+	// --- colonizing without attacking: colonies dig in ---------------------------
+
+	// A unit standing guard at one of the colonies (sieged tanks, units by
+	// a town hall) isn't called back to the rally point.
+	bool guards_colony(action_functions& f, snapshot& s, unit_t* u) {
+		if (f.unit_is(u, UnitTypes::Terran_Siege_Tank_Siege_Mode)) return true;
+		for (unit_t* d : s.depots) {
+			if (dist2(d->sprite->position, u->sprite->position) < 384 * 384) return true;
+		}
+		return false;
+	}
+
+	struct colony_count {
+		unit_t* hall = nullptr;
+		int ground = 0, air = 0, bunkers = 0, tanks = 0;
+		unit_t* pylon = nullptr;
+		unit_t* creep_colony = nullptr;
+	};
+
+	colony_count count_colony(action_functions& f, player& p, snapshot& s, unit_t* hall) {
+		colony_count c;
+		c.hall = hall;
+		xy at = hall->sprite->position;
+		for (unit_t* b : s.buildings) {
+			if (dist2(b->sprite->position, at) > 352 * 352) continue;
+			switch (b->unit_type->id) {
+			case UnitTypes::Terran_Bunker: ++c.ground; ++c.bunkers; break;
+			case UnitTypes::Zerg_Sunken_Colony: ++c.ground; break;
+			case UnitTypes::Terran_Missile_Turret: case UnitTypes::Zerg_Spore_Colony: ++c.air; break;
+			case UnitTypes::Protoss_Photon_Cannon: ++c.ground; ++c.air; break;
+			case UnitTypes::Zerg_Creep_Colony:
+				if (f.u_completed(b) && b->build_queue.empty()) c.creep_colony = b;
+				else ++c.ground; // already turning into something
+				break;
+			case UnitTypes::Protoss_Pylon:
+				if (!c.pylon || f.u_completed(b)) c.pylon = b;
+				break;
+			default: break;
+			}
+		}
+		for (unit_t* u : s.army) {
+			if ((f.unit_is(u, UnitTypes::Terran_Siege_Tank_Tank_Mode) || f.unit_is(u, UnitTypes::Terran_Siege_Tank_Siege_Mode)) &&
+			    dist2(u->sprite->position, at) < 384 * 384) ++c.tanks;
+		}
+		return c;
+	}
+
+	// How heavily a colony is fortified: ground defences (bunkers count with
+	// their tanks for Terran) and air defences.
+	static const int colony_ground = 8, colony_air = 3;
+
+	void colony_defense(action_functions& f, player& p, snapshot& s, int& minerals, int& gas) {
+		if (f.st.current_frame < p.next_colony) return;
+		UnitTypes tech = p.race == race_t::terran ? UnitTypes::Terran_Engineering_Bay
+		                 : p.race == race_t::protoss ? UnitTypes::Protoss_Forge
+		                                             : UnitTypes::Zerg_Spawning_Pool;
+		auto build_once = [&](UnitTypes t) {
+			if (s.done[(size_t)t] || s.planned[(size_t)t]) return;
+			const unit_type_t* ut = f.get_unit_type(t);
+			if (affordable(ut, minerals, gas) && place(f, p, s, t)) {
+				minerals -= ut->mineral_cost;
+				gas -= ut->gas_cost;
+				p.next_colony = f.st.current_frame + 24 * 8;
+			}
+		};
+		if (!s.done[(size_t)tech]) {
+			build_once(tech);
+			return;
+		}
+		if (p.race == race_t::zerg && !s.done[(size_t)UnitTypes::Zerg_Evolution_Chamber]) build_once(UnitTypes::Zerg_Evolution_Chamber);
+		if (p.race == race_t::terran && !s.done[(size_t)UnitTypes::Terran_Barracks]) {
+			build_once(UnitTypes::Terran_Barracks); // bunkers need it
+			return;
+		}
+
+		// The weakest colony first; if nothing fits there, the next. With
+		// money piling up, colonies keep growing past the usual target (up
+		// to twice it).
+		int ground_target = minerals >= 400 ? colony_ground * 2 : colony_ground;
+		a_vector<colony_count> colonies;
+		for (unit_t* d : s.depots) {
+			colony_count c = count_colony(f, p, s, d);
+			if (c.ground + c.tanks >= ground_target && c.air >= colony_air) continue;
+			colonies.push_back(c);
+		}
+		std::stable_sort(colonies.begin(), colonies.end(), [](const colony_count& a, const colony_count& b) {
+			return a.ground + a.tanks + a.air < b.ground + b.tanks + b.air;
+		});
+		for (colony_count& c : colonies) {
+			int r = fortify_colony(f, p, s, c, minerals, gas);
+			if (r != 0) {
+				p.next_colony = f.st.current_frame + (r > 0 ? 24 * 6 : 24 * 2);
+				return;
+			}
+		}
+		p.next_colony = f.st.current_frame + 24 * 3;
+	}
+
+	// One defence (or what it needs) at colony c: 1 built or ordered, -1
+	// out of money (stop for now), 0 nothing fits here (try another colony).
+	int fortify_colony(action_functions& f, player& p, snapshot& s, colony_count& c, int& minerals, int& gas) {
+		bool want_air = c.air < colony_air && (c.air * 3 <= c.ground + c.tanks);
+		xy at = c.hall->sprite->position;
+		auto try_place = [&](UnitTypes type, xy center, int min_r) {
+			const unit_type_t* ut = f.get_unit_type(type);
+			if (!affordable(ut, minerals, gas)) return -1;
+			if (!place_near(f, p, s, type, center, min_r, 10)) return 0;
+			minerals -= ut->mineral_cost;
+			gas -= ut->gas_cost;
+			return 1;
+		};
+		if (p.race == race_t::terran) {
+			UnitTypes type = want_air ? UnitTypes::Terran_Missile_Turret
+			                 : c.bunkers < 3 || c.air >= colony_air ? UnitTypes::Terran_Bunker
+			                                                        : UnitTypes::Terran_Missile_Turret;
+			return try_place(type, at, 3);
+		}
+		if (p.race == race_t::protoss) {
+			// Cannons by any finished pylon of the colony; another pylon when
+			// their power fields are full.
+			bool pending_pylon = false;
+			for (unit_t* b : s.buildings) {
+				if (!f.unit_is(b, UnitTypes::Protoss_Pylon) || dist2(b->sprite->position, at) > 352 * 352) continue;
+				if (!f.u_completed(b)) {
+					pending_pylon = true;
+					continue;
+				}
+				int r = try_place(UnitTypes::Protoss_Photon_Cannon, b->sprite->position, 1);
+				if (r != 0) return r;
+			}
+			if (pending_pylon) return 0;
+			return try_place(UnitTypes::Protoss_Pylon, at, 4);
+		}
+		// Zerg: creep colonies grow into spores (air) or sunkens (ground).
+		if (c.creep_colony) {
+			UnitTypes grow = want_air && s.done[(size_t)UnitTypes::Zerg_Evolution_Chamber] ? UnitTypes::Zerg_Spore_Colony
+			                                                                               : UnitTypes::Zerg_Sunken_Colony;
+			const unit_type_t* ut = f.get_unit_type(grow);
+			if (!affordable(ut, minerals, gas)) return -1;
+			if (select(f, p, c.creep_colony) && f.action_morph_building(p.owner, ut)) {
+				minerals -= ut->mineral_cost;
+				return 1;
+			}
+			return 0;
+		}
+		return try_place(UnitTypes::Zerg_Creep_Colony, at, 3);
+	}
+
+	// A few mobile units from the one production building: marines for the
+	// bunkers and siege tanks at every colony (Terran), a handful of
+	// zealots and dragoons (Protoss) or zerglings and hydralisks (Zerg).
+	// Marines go into bunkers with room and tanks siege at their colony.
+	void colony_units(action_functions& f, player& p, snapshot& s, int& minerals, int& gas) {
+		if (f.st.current_frame < p.next_colony_units) return;
+		p.next_colony_units = f.st.current_frame + 24;
+		const int few = 6;
+		int mobile = 0;
+		for (unit_t* u : s.army) {
+			if (!f.unit_is(u, UnitTypes::Terran_Siege_Tank_Tank_Mode) && !f.unit_is(u, UnitTypes::Terran_Siege_Tank_Siege_Mode)) ++mobile;
+		}
+		auto train_at = [&](UnitTypes building, UnitTypes t) {
+			const unit_type_t* ut = f.get_unit_type(t);
+			if (!affordable(ut, minerals, gas)) return false;
+			if (s.supply_used + (int)(ut->supply_required.raw_value / 2) > s.supply_max) return false;
+			for (unit_t* b : s.buildings) {
+				if (!f.unit_is(b, building) || !f.u_completed(b) || !b->build_queue.empty()) continue;
+				if (select(f, p, b) && f.action_train(p.owner, ut)) {
+					minerals -= ut->mineral_cost;
+					gas -= ut->gas_cost;
+					return true;
+				}
+				return false;
+			}
+			return false;
+		};
+		if (p.race == race_t::terran) {
+			int bunkers = 0, tanks = 0;
+			for (unit_t* b : s.buildings) {
+				if (f.unit_is(b, UnitTypes::Terran_Bunker) && f.u_completed(b)) ++bunkers;
+			}
+			for (unit_t* u : s.army) {
+				if (f.unit_is(u, UnitTypes::Terran_Siege_Tank_Tank_Mode) || f.unit_is(u, UnitTypes::Terran_Siege_Tank_Siege_Mode)) ++tanks;
+			}
+			if (mobile < bunkers * 4 + 4) train_at(UnitTypes::Terran_Barracks, UnitTypes::Terran_Marine);
+			// Tanks: one factory with its machine shop, siege mode researched.
+			int want_tanks = 3 * (int)s.depots.size();
+			if (s.done[(size_t)UnitTypes::Terran_Barracks] && tanks < want_tanks) {
+				if (!s.planned[(size_t)UnitTypes::Terran_Factory]) {
+					const unit_type_t* fac = f.get_unit_type(UnitTypes::Terran_Factory);
+					if (affordable(fac, minerals, gas) && place(f, p, s, UnitTypes::Terran_Factory)) {
+						minerals -= fac->mineral_cost;
+						gas -= fac->gas_cost;
+					}
+				}
+				for (unit_t* b : s.buildings) {
+					if (!f.unit_is(b, UnitTypes::Terran_Factory) || !f.u_completed(b)) continue;
+					if (!b->building.addon) {
+						if (b->build_queue.empty()) build_addon(f, p, b, minerals, gas);
+					} else if (f.u_completed(b->building.addon)) {
+						unit_t* shop = b->building.addon;
+						const tech_type_t* siege = f.get_tech_type(TechTypes::Tank_Siege_Mode);
+						if (!shop->building.researching_type && f.unit_can_research(shop, siege, p.owner) &&
+						    minerals >= siege->mineral_cost && gas >= siege->gas_cost && select(f, p, shop) && f.action_research(p.owner, siege)) {
+							minerals -= siege->mineral_cost;
+							gas -= siege->gas_cost;
+						}
+						train_at(UnitTypes::Terran_Factory, UnitTypes::Terran_Siege_Tank_Tank_Mode);
+					}
+					break;
+				}
+			}
+			// Marines into bunkers with room; tanks to the colony with the
+			// fewest, sieged once there.
+			for (unit_t* u : s.army) {
+				if (f.unit_is(u, UnitTypes::Terran_Marine) && is_idle(u)) {
+					unit_t* best = nullptr;
+					int best_d = 0;
+					for (unit_t* b : s.buildings) {
+						if (!f.unit_is(b, UnitTypes::Terran_Bunker) || !f.u_completed(b)) continue;
+						int loaded = 0;
+						for (auto id : b->loaded_units) {
+							if (f.get_unit(id)) ++loaded;
+						}
+						if (loaded >= 4) continue;
+						int d = dist2(b->sprite->position, u->sprite->position);
+						if (!best || d < best_d) {
+							best = b;
+							best_d = d;
+						}
+					}
+					if (best && select(f, p, u)) {
+						f.action_order(p.owner, f.get_order_type(Orders::EnterTransport), best->sprite->position, best, nullptr, false);
+					}
+				} else if (f.unit_is(u, UnitTypes::Terran_Siege_Tank_Tank_Mode) && is_idle(u)) {
+					unit_t* home = nullptr;
+					int fewest = 1 << 30;
+					for (unit_t* d : s.depots) {
+						colony_count c = count_colony(f, p, s, d);
+						if (c.tanks < fewest) {
+							fewest = c.tanks;
+							home = d;
+						}
+					}
+					if (!home) continue;
+					if (dist2(u->sprite->position, home->sprite->position) < 256 * 256 || fewest >= 3) {
+						if (select(f, p, u)) f.action_siege(p.owner, false);
+					} else {
+						order_group(f, p, {u}, Orders::Move, home->sprite->position);
+					}
+				}
+			}
+		} else if (p.race == race_t::protoss) {
+			if (mobile < few) {
+				bool dragoon = s.done[(size_t)UnitTypes::Protoss_Cybernetics_Core] && gas >= 50 &&
+				               count_army(s, UnitTypes::Protoss_Dragoon) <= count_army(s, UnitTypes::Protoss_Zealot);
+				train_at(UnitTypes::Protoss_Gateway, dragoon ? UnitTypes::Protoss_Dragoon : UnitTypes::Protoss_Zealot);
+			}
+		} else {
+			if (mobile < few && s.done[(size_t)UnitTypes::Zerg_Spawning_Pool]) {
+				bool hydra = s.done[(size_t)UnitTypes::Zerg_Hydralisk_Den] && gas >= 25 &&
+				             count_army(s, UnitTypes::Zerg_Hydralisk) < count_army(s, UnitTypes::Zerg_Zergling);
+				const unit_type_t* ut = f.get_unit_type(hydra ? UnitTypes::Zerg_Hydralisk : UnitTypes::Zerg_Zergling);
+				if (affordable(ut, minerals, gas) && s.supply_used + (int)(ut->supply_required.raw_value / 2) <= s.supply_max &&
+				    morph_larva(f, p, s, ut)) {
+					minerals -= ut->mineral_cost;
+					gas -= ut->gas_cost;
+				}
+			}
+		}
+	}
+
 	void research(action_functions& f, player& p, snapshot& s, int& minerals, int& gas) {
 		for (auto& r : research_order(p.race)) {
 			if (s.supply_used < r.supply) continue;
@@ -1640,6 +1935,7 @@ private:
 			a_vector<unit_t*> stray;
 			for (unit_t* u : s.army) {
 				if (std::find(detachment.begin(), detachment.end(), u) != detachment.end()) continue;
+				if (p.colony_mode && guards_colony(f, s, u)) continue;
 				if (is_idle(u) && dist2(u->sprite->position, p.rally) > 192 * 192) stray.push_back(u);
 			}
 			if (!stray.empty()) order_group(f, p, stray, Orders::Move, p.rally);

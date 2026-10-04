@@ -170,7 +170,9 @@ struct bw_bridge {
 		op_explore,
 		op_alliance_share,
 		op_alliance_defensive,
+		op_legacy_ids,
 	};
+	bool legacy_ids = false; // see resolve_unit
 	a_vector<int32_t> cmd_log;
 	void log(int32_t op, std::initializer_list<int32_t> args, const int32_t* extra = nullptr, int extra_n = 0) {
 		cmd_log.push_back((int32_t)player->st().current_frame);
@@ -270,8 +272,24 @@ static bw_bridge* B(bw_bridge_t* bridge) {
 	return reinterpret_cast<bw_bridge*>(bridge);
 }
 
-static unit_t* resolve_unit(state_functions& f, int32_t unit_id_raw) {
+// Unit handles from the API (and in command logs). Saves made before the
+// wider unit ids used an 11-bit index and a 21-bit generation; while the
+// log being replayed says so (op_legacy_ids), handles are read that way.
+static unit_t* resolve_unit(bw_bridge* b, state_functions& f, int32_t unit_id_raw) {
 	if (unit_id_raw == 0) return nullptr;
+	if (b->legacy_ids) {
+		// The old pool held 1700 units. Slots are numbered down from the
+		// top of the pool (slot 0 first, then the highest), in the same
+		// order, so an old slot maps to the new one by the size difference.
+		uint32_t raw = (uint32_t)unit_id_raw;
+		size_t index = raw & 0x7ff;
+		if (!index) return nullptr;
+		size_t slot = index - 1;
+		if (slot != 0) slot += max_units - 1700;
+		unit_t* u = f.get_unit(slot);
+		if (!u || u->unit_id_generation % (1u << 21) != (raw >> 11)) return nullptr;
+		return u;
+	}
 	return f.get_unit(unit_id_32((uint32_t)unit_id_raw));
 }
 
@@ -371,6 +389,7 @@ bw_status bw_bridge_new_melee_game(bw_bridge_t* bridge, const char* map_file, in
 		b->ai.allies = nullptr;
 		b->alliances_on = false;
 		b->groups = {};
+		b->legacy_ids = false;
 		b->cmd_log.clear();
 		b->action_st = action_state();
 		race_t race = static_cast<race_t>(my_race);
@@ -423,6 +442,7 @@ bw_status bw_bridge_new_game(bw_bridge_t* bridge, const char* map_file, const bw
 		b->ai.clear();
 		b->cmd_log.clear();
 		b->groups = {};
+		b->legacy_ids = false;
 		b->viewer = -1;
 		b->psi_owner = -1;
 		b->action_st = action_state();
@@ -547,6 +567,13 @@ bw_status bw_bridge_get_fog(bw_bridge_t* bridge, int player_slot, uint8_t* out_t
 	return BW_OK;
 }
 
+void bw_bridge_set_legacy_unit_ids(bw_bridge_t* bridge, int on) {
+	if (!bridge || !B(bridge)->in_game()) return;
+	bw_bridge* b = B(bridge);
+	b->log(bw_bridge::op_legacy_ids, {on ? 1 : 0});
+	b->legacy_ids = on != 0;
+}
+
 bw_status bw_bridge_explore_map(bw_bridge_t* bridge, int player_slot) {
 	if (!bridge || player_slot < 0 || player_slot > 7) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
@@ -608,6 +635,7 @@ bw_status bw_bridge_replay_commands(bw_bridge_t* bridge, const int32_t* log, int
 			case bw_bridge::op_explore: bw_bridge_explore_map(bridge, arg(0)); break;
 			case bw_bridge::op_alliance_share: bw_bridge_alliance_set_share(bridge, arg(0), arg(1)); break;
 			case bw_bridge::op_alliance_defensive: bw_bridge_alliance_set_defensive(bridge, arg(0), arg(1)); break;
+			case bw_bridge::op_legacy_ids: bw_bridge_set_legacy_unit_ids(bridge, arg(0)); break;
 			default: return BW_ERR_INVALID_ARGUMENT;
 			}
 			i += 3 + (size_t)n;
@@ -1163,7 +1191,7 @@ bw_status bw_bridge_get_unit(bw_bridge_t* bridge, int32_t unit_id, bw_unit_info*
 	if (!b->in_game()) return BW_ERR_NO_GAME;
 	try {
 		auto f = b->actions();
-		unit_t* u = resolve_unit(f, unit_id);
+		unit_t* u = resolve_unit(b, f, unit_id);
 		if (!u || !u->sprite) return BW_ERR_INVALID_ARGUMENT;
 		fill_unit_info(f, u, *out_unit);
 		return BW_OK;
@@ -1256,8 +1284,8 @@ bw_status bw_bridge_select_units(bw_bridge_t* bridge, int owner, const int32_t* 
 	try {
 		auto f = b->actions();
 		a_vector<unit_t*> units;
-		for (int i = 0; i != count && units.size() < 12; ++i) {
-			unit_t* u = resolve_unit(f, unit_ids[i]);
+		for (int i = 0; i != count && units.size() < max_selection; ++i) {
+			unit_t* u = resolve_unit(b, f, unit_ids[i]);
 			if (u) units.push_back(u);
 		}
 		f.action_select(owner, units);
@@ -1291,7 +1319,7 @@ static bw_status order_as(bw_bridge_t* bridge, int owner, int order, int x, int 
 	if (!b->in_game()) return BW_ERR_NO_GAME;
 	try {
 		auto f = b->actions();
-		unit_t* target = resolve_unit(f, target_unit_id);
+		unit_t* target = resolve_unit(b, f, target_unit_id);
 		bool q = queue != 0;
 		xy pos(x, y);
 		bool ok = false;
@@ -1511,7 +1539,7 @@ bw_status bw_bridge_control_group(bw_bridge_t* bridge, int owner, int group, int
 			a_vector<unit_t*> units;
 			for (unit_id id : g) {
 				unit_t* u = f.get_unit(id);
-				if (u && !f.unit_dead(u) && !f.us_hidden(u) && controls(b, owner, u->owner) && units.size() < 12) units.push_back(u);
+				if (u && !f.unit_dead(u) && !f.us_hidden(u) && controls(b, owner, u->owner) && units.size() < max_selection) units.push_back(u);
 			}
 			g.clear();
 			for (unit_t* u : units) g.push_back(f.get_unit_id(u));
@@ -1523,7 +1551,7 @@ bw_status bw_bridge_control_group(bw_bridge_t* bridge, int owner, int group, int
 		for (unit_t* u : f.selected_units(owner)) {
 			if (!controls(b, owner, u->owner)) continue;
 			unit_id id = f.get_unit_id(u);
-			if (std::find(g.begin(), g.end(), id) != g.end() || g.size() >= 12) continue;
+			if (std::find(g.begin(), g.end(), id) != g.end() || g.size() >= max_selection) continue;
 			// Like the original: a building only ever forms a group alone.
 			if (!g.empty() && (!f.unit_can_be_multi_selected(u) || g.size() == 1 && f.get_unit(g[0]) && !f.unit_can_be_multi_selected(f.get_unit(g[0])))) continue;
 			g.push_back(id);
@@ -1545,7 +1573,7 @@ bw_status bw_bridge_get_selection_circle(bw_bridge_t* bridge, int32_t unit_id, i
 	if (!b->in_game()) return BW_ERR_NO_GAME;
 	try {
 		auto f = b->actions();
-		unit_t* u = resolve_unit(f, unit_id);
+		unit_t* u = resolve_unit(b, f, unit_id);
 		if (!u || !u->sprite) return BW_ERR_INVALID_ARGUMENT;
 		const sprite_t* sprite = u->sprite;
 		auto* circle_type = f.get_image_type((ImageTypes)((int)ImageTypes::IMAGEID_Selection_Circle_22pixels + sprite->sprite_type->selection_circle));
@@ -1779,7 +1807,7 @@ static bw_status cast_as(bw_bridge_t* bridge, int owner, int tech_id, int x, int
 			}
 		}
 		if (!order) return BW_ERR_INVALID_ARGUMENT;
-		unit_t* target = resolve_unit(f, target_unit_id);
+		unit_t* target = resolve_unit(b, f, target_unit_id);
 		bool ok = f.action_order(owner, order, xy(x, y), target, target ? target->unit_type : nullptr, queue != 0);
 		return ok ? BW_OK : BW_ERR_REJECTED;
 	} catch (...) {
@@ -1838,7 +1866,7 @@ static bw_status set_rally_as(bw_bridge_t* bridge, int owner, int x, int y, int3
 	if (!b->in_game()) return BW_ERR_NO_GAME;
 	try {
 		auto f = b->actions();
-		unit_t* target = resolve_unit(f, target_unit_id);
+		unit_t* target = resolve_unit(b, f, target_unit_id);
 		const order_type_t* order = f.get_order_type(target ? Orders::RallyPointUnit : Orders::RallyPointTile);
 		bool ok = f.action_order(owner, order, xy(x, y), target, target ? target->unit_type : nullptr, false);
 		return ok ? BW_OK : BW_ERR_REJECTED;

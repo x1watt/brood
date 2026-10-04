@@ -585,6 +585,42 @@ static void test_surrender(const char* dd, const char* mf) {
 /* Auto-play for the human: resources only, then building too; units kept in
  * a control group are left alone and the selection is untouched; full auto
  * holds its own against a computer player; all of it replays. */
+/* Raised limits: more than the original's 12 units in one selection and
+ * one control group (up to 200 now). A computer player builds up an army,
+ * then all of its units are selected, grouped and recalled. */
+static void test_limits(const char* dd, const char* mf) {
+	bw_game_setup setup;
+	memset(&setup, 0, sizeof(setup));
+	setup.player_count = 2;
+	setup.controller[0] = BW_PLAYER_HUMAN; setup.race[0] = 1;
+	setup.controller[1] = BW_PLAYER_COMPUTER; setup.race[1] = 0;
+	setup.seed = 99;
+	int32_t slots[8];
+	bw_bridge_t* b = bw_bridge_create();
+	CHECK(b && bw_bridge_load_assets(b, dd) == BW_OK && bw_bridge_new_game(b, mf, &setup, slots) == BW_OK, "limits: new game");
+	bw_bridge_step(b, 24 * 60 * 9);
+	int cpu = slots[1], n = bw_bridge_get_units(b, units, 4096), k = 0;
+	static int32_t ids[300];
+	for (int i = 0; i != n && k < 300; ++i) {
+		if (units[i].owner != cpu || (units[i].flags & BW_UNIT_FLAG_BUILDING) || units[i].unit_type_id == 35) continue;
+		ids[k++] = units[i].unit_id;
+	}
+	CHECK(k > 12, "limits: the computer has only %d units", k);
+	CHECK(bw_bridge_select_units(b, cpu, ids, k) == BW_OK, "limits: select %d", k);
+	static int32_t sel[300];
+	int got = bw_bridge_get_selected_units(b, cpu, sel, 300);
+	/* (A unit hidden at the moment, e.g. a drone inside an extractor,
+	 * can't be selected, as in the original.) */
+	CHECK(got > 12 && got >= (k < 200 ? k : 200) - 3, "limits: selected %d of %d units", got, k);
+	CHECK(bw_bridge_control_group(b, cpu, 1, BW_GROUP_ASSIGN) == BW_OK, "limits: assign group");
+	bw_bridge_select_units(b, cpu, ids, 1);
+	CHECK(bw_bridge_control_group(b, cpu, 1, BW_GROUP_RECALL) == BW_OK, "limits: recall group");
+	int recalled = bw_bridge_get_selected_units(b, cpu, sel, 300);
+	printf("bridge_smoke_test: limits: selected %d units at once, control group recalled %d\n", got, recalled);
+	CHECK(recalled == got, "limits: control group held %d of %d", recalled, got);
+	bw_bridge_destroy(b);
+}
+
 /* Defensive mode: the human allied (setup teams) with a computer Protoss
  * and a computer Zerg switches it on. Over twelve minutes both fortify
  * their bases (cannons; spore and sunken colonies) and their armies stay
@@ -721,11 +757,16 @@ static void test_autoplay(const char* dd, const char* mf) {
 	bw_bridge_destroy(c);
 	bw_bridge_destroy(b);
 
-	/* Colonizing: new bases with defences (allied with a computer, so no
-	 * war distracts it). */
+	/* Colonizing without attacking: every colony digs in. Allied with a
+	 * computer (so no war distracts it), 16 minutes: it expands, every town
+	 * hall gets heavy defences (cannons; sunken and spore colonies;
+	 * bunkers, turrets and siege tanks), and there is one production
+	 * building at most with a few mobile units. */
 	for (int race = 0; race != 3; ++race) {
 		static const int depot_types[3] = {131, 106, 154};
-		static const int defense_types[3][2] = {{143, 146}, {124, 125}, {162, 162}}; /* creep/sunken, turret/bunker, cannon */
+		/* zerg: creep, sunken, spore; terran: turret, bunker, tank, sieged tank; protoss: cannon */
+		static const int defense_types[3][4] = {{143, 146, 144, -1}, {124, 125, 5, 30}, {162, -1, -1, -1}};
+		static const int production[3][2] = {{-1, -1}, {111, 113}, {160, -1}}; /* barracks, factory; gateway */
 		memset(&setup, 0, sizeof(setup));
 		setup.player_count = 3;
 		setup.controller[0] = BW_PLAYER_HUMAN; setup.race[0] = race; setup.team[0] = 1;
@@ -735,24 +776,49 @@ static void test_autoplay(const char* dd, const char* mf) {
 		b = bw_bridge_create();
 		CHECK(b && bw_bridge_load_assets(b, dd) == BW_OK && bw_bridge_new_game(b, mf, &setup, slots) == BW_OK, "autoplay: colonizing game");
 		bw_bridge_step(b, 1);
+		bw_bridge_explore_map(b, slots[0]); /* as the app does (no fog of war) */
 		CHECK(bw_bridge_set_autoplay(b, slots[0], BW_AUTOPLAY_RESOURCES | BW_AUTOPLAY_BUILDING | BW_AUTOPLAY_COLONIZING) == BW_OK, "autoplay: colonizing on");
-		int32_t ids[32];
-		int max_halls = 0, max_defenses = 0, max_army = 0;
-		for (int m = 1; m <= 14; ++m) {
+		static int32_t ids[512];
+		int halls = 0, defenses = 0, prod[2] = {0, 0}, mobile = 0, max_prod[2] = {0, 0};
+		double best_ratio = 0;
+		for (int m = 1; m <= 16; ++m) {
 			bw_bridge_step(b, 24 * 60);
-			int w, bl, a;
-			count_owned(b, slots[0], &w, &bl, &a);
-			if (a > max_army) max_army = a;
-			int h = find_units(b, slots[0], depot_types[race], ids, 32);
-			int d = find_units(b, slots[0], defense_types[race][0], ids, 32);
-			if (defense_types[race][1] != defense_types[race][0]) d += find_units(b, slots[0], defense_types[race][1], ids, 32);
-			if (h > max_halls) max_halls = h;
-			if (d > max_defenses) max_defenses = d;
+			for (int k = 0; k != 2; ++k) {
+				if (production[race][k] < 0) continue;
+				prod[k] = find_units(b, slots[0], production[race][k], ids, 512);
+				if (prod[k] > max_prod[k]) max_prod[k] = prod[k];
+			}
+			{
+				int h = find_units(b, slots[0], depot_types[race], ids, 512), dsum = 0, w2, bl2, a2;
+				if (race == 0) h += find_units(b, slots[0], 132, ids, 512); /* lair */
+				for (int k = 0; k != 4; ++k)
+					if (defense_types[race][k] >= 0) dsum += find_units(b, slots[0], defense_types[race][k], ids, 512);
+				count_owned(b, slots[0], &w2, &bl2, &a2);
+				if (race == 1) a2 -= find_units(b, slots[0], 5, ids, 512) + find_units(b, slots[0], 30, ids, 512);
+				if (h > halls) halls = h;
+				if (h && dsum > defenses) {
+					defenses = dsum;
+					if (h < halls) {} /* keep the peak */
+				}
+				if (a2 > mobile) mobile = a2;
+				if (h >= 1 && dsum * 1.0 / h > best_ratio) best_ratio = dsum * 1.0 / h;
+			}
+			if (getenv("COLONY_DEBUG")) {
+				int dd2 = 0, w2, bl2, a2;
+				for (int k = 0; k != 4; ++k)
+					if (defense_types[race][k] >= 0) dd2 += find_units(b, slots[0], defense_types[race][k], ids, 512);
+				count_owned(b, slots[0], &w2, &bl2, &a2);
+				printf("  race %d min %d: halls %d defences %d workers %d buildings %d army %d minerals %d gas %d\n", race, m,
+				       find_units(b, slots[0], depot_types[race], ids, 512), dd2, w2, bl2, a2, bw_bridge_minerals(b, slots[0]), bw_bridge_gas(b, slots[0]));
+			}
 		}
-		printf("bridge_smoke_test: autoplay: colonizing as race %d: up to %d town halls and %d defences in 14 min\n", race, max_halls, max_defenses);
-		CHECK(max_halls >= 2, "autoplay: colonizing never expanded (race %d)", race);
-		CHECK(max_defenses >= 1, "autoplay: colonizing never defended a new base (race %d)", race);
-		CHECK(max_army == 0, "autoplay: building and colonizing trained %d army units (race %d)", max_army, race);
+		printf("bridge_smoke_test: autoplay: colonizing as race %d: up to %d town halls and %d defences (best %.1f per colony), production buildings %d/%d, up to %d mobile units\n",
+		       race, halls, defenses, best_ratio, max_prod[0], max_prod[1], mobile);
+		CHECK(halls >= 2, "autoplay: colonizing never expanded (race %d)", race);
+		CHECK(best_ratio >= 4, "autoplay: colonies barely defended: at best %.1f defences per colony (race %d)", best_ratio, race);
+		CHECK(max_prod[0] <= 1 && max_prod[1] <= 1, "autoplay: colonizing built %d/%d production buildings (race %d)", max_prod[0], max_prod[1], race);
+		CHECK(race == 1 || mobile <= 8, "autoplay: colonizing trained %d mobile units (race %d)", mobile, race);
+		CHECK(race != 1 || mobile <= 4 * defenses + 6, "autoplay: colonizing trained %d marines for %d defences", mobile, defenses);
 		bw_bridge_destroy(b);
 	}
 
@@ -814,6 +880,7 @@ static void test_autoplay(const char* dd, const char* mf) {
 	bw_bridge_destroy(b);
 }
 
+static void test_autoplay(const char* dd, const char* mf);
 int main(int argc, char** argv) {
 	char data_dir[1024], map_file[1100];
 	const char* home = getenv("HOME");
@@ -825,6 +892,7 @@ int main(int argc, char** argv) {
 
 	CHECK(bw_bridge_abi_version() == BW_BRIDGE_ABI_VERSION, "abi mismatch");
 	if (getenv("DEF_ONLY")) { test_defensive(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
+	if (getenv("AUTOPLAY_ONLY")) { test_autoplay(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
 	bw_bridge_t* b = bw_bridge_create();
 	CHECK(b, "create");
 	CHECK(bw_bridge_load_assets(b, dd) == BW_OK, "load_assets(%s)", dd);
@@ -1126,6 +1194,7 @@ int main(int argc, char** argv) {
 	test_save_replay(dd, mf);
 	test_alliances(dd, mf);
 	test_surrender(dd, mf);
+	test_limits(dd, mf);
 	test_defensive(dd, mf);
 	test_autoplay(dd, mf);
 	test_ai(dd, mf);

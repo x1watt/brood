@@ -137,6 +137,9 @@ class BridgeRawWeb extends BridgeRaw {
   int bw_bridge_explore_map(int bridge, int player_slot) => _call('_bw_bridge_explore_map', [bridge, player_slot]);
 
   @override
+  void bw_bridge_set_legacy_unit_ids(int bridge, int on) => _call('_bw_bridge_set_legacy_unit_ids', [bridge, on]);
+
+  @override
   int bw_bridge_command_log(int bridge, int out, int out_cap) => _call('_bw_bridge_command_log', [bridge, out, out_cap]);
 
   @override

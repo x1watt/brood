@@ -512,6 +512,20 @@ class BwBridgeBindings {
   late final _bw_bridge_explore_map = _bw_bridge_explore_mapPtr
       .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int)>();
 
+  /// Unit handles in the old form (saves from before ABI 20: an 11-bit index)
+  /// while on. Logged: a save made before loads with it on for its old log,
+  /// then turns it off, and replaying that save switches at the same point.
+  void bw_bridge_set_legacy_unit_ids(ffi.Pointer<bw_bridge_t> bridge, int on$) {
+    return _bw_bridge_set_legacy_unit_ids(bridge, on$);
+  }
+
+  late final _bw_bridge_set_legacy_unit_idsPtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Void Function(ffi.Pointer<bw_bridge_t>, ffi.Int)>
+      >('bw_bridge_set_legacy_unit_ids');
+  late final _bw_bridge_set_legacy_unit_ids = _bw_bridge_set_legacy_unit_idsPtr
+      .asFunction<void Function(ffi.Pointer<bw_bridge_t>, int)>();
+
   /// Copies the command log into out (pass NULL to just get its length).
   /// Returns the length in int32 values, or -1 without a game.
   int bw_bridge_command_log(
@@ -1199,7 +1213,8 @@ class BwBridgeBindings {
         )
       >();
 
-  /// Replaces the selection (max 12, as in the original game).
+  /// Replaces the selection (max 200; the original allowed 12). Control
+  /// groups hold up to 200 units too.
   bw_status bw_bridge_select_units(
     ffi.Pointer<bw_bridge_t> bridge,
     int owner,
@@ -2708,7 +2723,7 @@ final class bw_sound_info extends ffi.Struct {
   external ffi.Array<ffi.Char> filename;
 }
 
-const int BW_BRIDGE_ABI_VERSION = 19;
+const int BW_BRIDGE_ABI_VERSION = 20;
 
 const int BW_MAX_PLAYERS = 8;
 

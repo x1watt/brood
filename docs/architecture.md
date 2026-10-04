@@ -245,6 +245,21 @@ glue\\Palmm for Random and saved games), the menus' green, and their button
 sounds (sound\\glue). Nothing from the game is bundled. The menu music was
 on the CD, not in the archives, so there is none.
 
+Raised limits (engine/vendor/openbw on the local branch brood-limits, the
+same change kept as engine/patches/openbw-brood-limits.patch): supply cap
+2000 (the original 200), unit ids with a 16-bit index so the unit pool
+holds 10000 units, and selections and control groups of 200 units (the
+original 12). Saves from before name units the old way; they replay with
+bw_bridge_set_legacy_unit_ids on (GameSetup.legacyIds), which maps old
+unit slots onto the larger pool.
+
+Colonizing without attacking (auto-play): colonies dig in (bw_ai.h
+colony_defense): each town hall is fortified, weakest first, with up to
+eight ground and three air defences (twice the ground with money piling
+up): bunkers, missile turrets and sieged tanks; photon cannons by extra
+pylons; sunken and spore colonies. One of each production building at
+most, for a few mobile units (marines fill the bunkers).
+
 Still missing: lift off/land and nukes.
 
 ## Layers

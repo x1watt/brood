@@ -245,7 +245,9 @@ class GameController {
         _notifyHud(force: true);
         // Older saves were played with everyone sharing resources.
         if (setup.legacyRules && setup.players.length > 1) e.setAllianceShare(myPlayer, true);
+        if (setup.legacyIds) e.setLegacyUnitIds(true);
         await e.replayCommands(saved.commandLog, saved.frame);
+        if (setup.legacyIds) e.setLegacyUnitIds(false);
         if (setup.legacyRules && !fogOfWar) e.exploreMap(myPlayer);
         loadingSave = false;
       } else {
@@ -693,14 +695,15 @@ class GameController {
     gas = engine.gas(myPlayer);
     final (used, max) = engine.supply(myPlayer, myRace);
     supplyUsed = used;
-    supplyMax = max;
+    // Like the original's display, never above the cap (2000 here, 200 there).
+    supplyMax = max > supplyCap ? supplyCap : max;
     // Selected allied units use their owner's supply.
     final sel = selection.isEmpty ? null : unitsById[selection.first];
     if (sel != null && sel.owner != myPlayer && canControl(sel.owner)) {
       final (u2, m2) = engine.supply(sel.owner, alliance[sel.owner].race.clamp(0, 2));
-      _selectionSupply = (u2, m2);
+      _selectionSupply = (u2, m2 > supplyCap ? supplyCap : m2);
     } else {
-      _selectionSupply = (used, max);
+      _selectionSupply = (used, supplyMax);
     }
     frame = engine.currentFrame;
     _buildable = selectionCommandable ? engine.getBuildable(myPlayer).toSet() : const {};
@@ -935,8 +938,14 @@ class GameController {
   /// The selection holds only units I may command (mine and my allies').
   bool get selectionCommandable => selection.isNotEmpty && selectedUnits.every((u) => canControl(u.owner));
 
+  /// Units selected (or in a control group) at once; the original allowed 12.
+  static const int maxSelection = 200;
+
+  /// The supply limit per player (the original's was 200).
+  static const double supplyCap = 2000;
+
   void select(List<int> ids, {bool voice = true, bool repeatedClick = false}) {
-    engine.selectUnits(myPlayer, ids.take(12).toList());
+    engine.selectUnits(myPlayer, ids.take(maxSelection).toList());
     if (mode != CommandMode.none) mode = CommandMode.none;
     buildTypeId = null;
     cardMenu = CardMenu.main;
