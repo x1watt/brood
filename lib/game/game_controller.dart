@@ -500,7 +500,9 @@ class GameController {
 
   void inviteToAlliance(int slot) {
     if (!ready) return;
-    if (!engine.allianceInvite(myPlayer, slot)) showMessage("An alliance can't include every player still in the game.");
+    if (!engine.allianceInvite(myPlayer, slot)) {
+      showMessage("Not possible: an alliance holds at most three players, and can't include every player still in the game.");
+    }
     _allianceChanged();
   }
 

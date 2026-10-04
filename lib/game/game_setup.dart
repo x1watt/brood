@@ -16,8 +16,8 @@ String raceName(int race) => race >= 0 && race < 3 ? raceNames[race] : 'Random';
 
 enum AllianceMode {
   freeForAll('Free for all', 'Everyone fights everyone.'),
-  allAgainstYou('All against you', 'The computer players are allied against you.'),
-  randomTeams('Random teams', 'Players are split into two random teams.');
+  allAgainstYou('All against you', 'The computer players are allied against you, in alliances of up to three.'),
+  randomTeams('Random teams', 'Players are split into random alliances of up to three.');
 
   final String label;
   final String description;
@@ -41,6 +41,9 @@ class PlayerSetup {
 
 class GameSetup {
   static const int maxPlayers = 8;
+
+  /// The most members an alliance has (the engine's cap, bw_alliances.h).
+  static const int maxAllianceSize = 3;
 
   /// The human player first, then the computer opponents.
   final List<PlayerSetup> players;
@@ -73,14 +76,21 @@ class GameSetup {
     switch (alliances) {
       case AllianceMode.freeForAll:
         break;
+      // Alliances hold at most three members, starting teams too.
       case AllianceMode.allAgainstYou:
+        final computers = [for (int i = 0; i < players.length; ++i) if (!players[i].human) i];
+        final count = (computers.length + GameSetup.maxAllianceSize - 1) ~/ GameSetup.maxAllianceSize;
         for (int i = 0; i < players.length; ++i) {
-          teams[i] = players[i].human ? 1 : 2;
+          if (players[i].human) teams[i] = 1;
+        }
+        for (int k = 0; k < computers.length; ++k) {
+          teams[computers[k]] = 2 + k % count;
         }
       case AllianceMode.randomTeams:
         final order = List<int>.generate(players.length, (i) => i)..shuffle(rng);
+        final count = math.max(2, (order.length + GameSetup.maxAllianceSize - 1) ~/ GameSetup.maxAllianceSize);
         for (int k = 0; k < order.length; ++k) {
-          teams[order[k]] = k.isEven ? 1 : 2;
+          teams[order[k]] = 1 + k % count;
         }
     }
     return GameSetup(

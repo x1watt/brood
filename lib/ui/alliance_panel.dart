@@ -542,7 +542,12 @@ class _GroupCard extends StatelessWidget {
       final surrendering = members.where((m) => me.offersSurrender(m.slot)).firstOrNull;
       final inviter = members.where((m) => me.invitedBySlot(m.slot)).firstOrNull;
       final sent = members.any((m) => c.invitedByMe(m.slot));
-      final allowed = c.alliance.any((a) => a.active && a.group != me.group && a.group != first.group);
+      // Someone must stay outside, and the joined alliance holds at most
+      // three members (players who surrendered don't count).
+      int sizeOf(int group) => c.alliance.where((a) => a.playing && a.active && a.group == group && !a.isVassal).length;
+      final allowed =
+          c.alliance.any((a) => a.active && a.group != me.group && a.group != first.group) &&
+          sizeOf(me.group) + sizeOf(first.group) <= GameSetup.maxAllianceSize;
       if (surrendering != null) {
         widgets.add(_small('Refuse', () => c.answerSurrender(surrendering.slot, false), color: _dim));
         widgets.add(_small('Accept surrender', () => c.answerSurrender(surrendering.slot, true), icon: Icons.flag, color: _vassalColor, filled: true));
