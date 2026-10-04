@@ -378,12 +378,28 @@ class GameController {
     return c >= 0 && c < _colorTable.length ? _colorTable[c] : const Color(0xFF888888);
   }
 
+  static Color _brightest(List<int> shades, Uint8List palette) {
+    Color best = const Color(0xFF888888);
+    int bestLuma = -1;
+    for (final i in shades) {
+      final r = palette[i * 4], g = palette[i * 4 + 1], b = palette[i * 4 + 2];
+      final luma = r * 3 + g * 6 + b;
+      if (luma > bestLuma) {
+        bestLuma = luma;
+        best = Color.fromARGB(255, r, g, b);
+      }
+    }
+    return best;
+  }
+
   void _loadColors() {
     final palette = engine.getPalette();
     final remap = engine.getPlayerColors();
+    // The brightest of each player color's eight shades: the alliance
+    // panel's swatches and the minimap's dots use the same one, so a player
+    // is recognizable in both.
     _colorTable = [
-      for (int c = 0; c < remap.length ~/ 8; ++c)
-        Color.fromARGB(255, palette[remap[c * 8 + 1] * 4], palette[remap[c * 8 + 1] * 4 + 1], palette[remap[c * 8 + 1] * 4 + 2]),
+      for (int c = 0; c < remap.length ~/ 8; ++c) _brightest([for (int k = 0; k < 8; ++k) remap[c * 8 + k]], palette),
     ];
   }
 

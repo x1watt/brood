@@ -1,9 +1,9 @@
 // lib/rendering/minimap_painter.dart
 //
 // Whole map scaled into the minimap box: terrain, fog of war, a dot per
-// unit the player can see (own green, allies yellow, neutral resources
-// cyan, enemies red), rings around allies' town halls and the camera's
-// view rectangle.
+// unit the player can see in its owner's player color (the alliance
+// panel's swatches; resources cyan), rings around allies' town halls and
+// the camera's view rectangle.
 
 import 'dart:math' as math;
 
@@ -52,21 +52,23 @@ class MinimapPainter extends CustomPainter {
       );
     }
 
-    final own = Paint()..color = const Color(0xFF3CFF3C);
+    // Each unit in its owner's color (the alliance panel's swatch color),
+    // with a dark edge so dark colors stand out on the terrain; minerals
+    // and gas in cyan.
     final neutral = Paint()..color = const Color(0xFF6FD3FF);
-    final enemy = Paint()..color = const Color(0xFFFF3B30);
-    final ally = Paint()..color = const Color(0xFFFFE14D);
+    final edge = Paint()..color = const Color(0xCC000000);
+    final byOwner = <int, Paint>{};
     for (final u in c.units) {
       final p = origin + Offset(u.x * scale, u.y * scale);
       final w = math.max(2.0, u.width * scale);
       final h = math.max(2.0, u.height * scale);
-      final paint = switch (c.relation(u.owner)) {
-        Relation.own => own,
-        Relation.ally => ally,
-        Relation.neutral => neutral,
-        Relation.enemy => enemy,
-      };
-      canvas.drawRect(Rect.fromCenter(center: p, width: w, height: h), paint);
+      final rect = Rect.fromCenter(center: p, width: w, height: h);
+      if (c.relation(u.owner) == Relation.neutral) {
+        canvas.drawRect(rect, neutral);
+        continue;
+      }
+      canvas.drawRect(rect.inflate(0.75), edge);
+      canvas.drawRect(rect, byOwner.putIfAbsent(u.owner, () => Paint()..color = c.colorOf(u.owner)));
     }
 
     // Allies' town halls: a ring in the ally's color, so you can see at a
