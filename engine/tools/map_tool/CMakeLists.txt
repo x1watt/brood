@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.18)
+project(map_tool CXX)
+set(CMAKE_CXX_STANDARD 14)
+add_executable(map_tool main.cpp)
+target_include_directories(map_tool PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../vendor/openbw)
+target_compile_options(map_tool PRIVATE -O2)

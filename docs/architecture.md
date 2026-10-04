@@ -301,6 +301,18 @@ minutes of lockstep with a player joining at minute two and checks the
 hashes match. Desktop and phones could join with BROOD_SERVER=ws://host:9191/ws
 (lib/net/ws_io.dart), not tried yet.
 
+Maps made from other maps (tool/make_island_map.py): "(8)Big Game Islands"
+is Big Game Hunters with every land path cut by deep water, one island per
+start location and per group of resources. The script reads the map's
+tiles and their flags through engine/tools/map_tool (a small CMake program
+on the vendored MPQ/tileset code: `map_tool extract` gives the scenario.chk,
+`map_tool info` the tiles, starts and resources as JSON), grows the islands
+over walkable ground from those seeds, turns the tiles where two islands
+meet into deep water and writes a new .scm (uncompressed sectors, which
+OpenBW accepts). The new water has straight edges, without shore tiles.
+Browsers that already keep the game files fetch maps the home server got
+since (game_files_web.dart compares with the server's manifest).
+
 Still missing: lift off/land and nukes.
 
 ## Layers

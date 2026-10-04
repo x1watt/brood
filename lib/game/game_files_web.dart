@@ -47,8 +47,11 @@ class WebGameFiles extends GameFiles {
       await web.window.navigator.storage.persist().toDart;
     } catch (_) {}
     final db = await BroodDb.open();
-    final keys = await db.keys(BroodDb.files);
+    var keys = await db.keys(BroodDb.files);
     if (!requiredArchives.every(keys.contains)) return _ready = false;
+    // From the home server: maps added since (a new map on the server shows
+    // up without importing everything again).
+    if (await _fetchNewFromServer(db, keys)) keys = await db.keys(BroodDb.files);
     final bridge = await BridgeRawWeb.open();
     final fs = bridge.fs;
     _files.clear();
@@ -61,6 +64,25 @@ class WebGameFiles extends GameFiles {
       _files.add(key);
     }
     return _ready = true;
+  }
+
+  Future<bool> _fetchNewFromServer(BroodDb db, List<String> have) async {
+    final base = await serverFiles();
+    if (base == null) return false;
+    try {
+      final r = await web.window.fetch('${base}manifest.json'.toJS).toDart;
+      final list = ((await r.json().toDart) as JSArray<JSString>).toDart.map((e) => e.toDart);
+      var added = false;
+      for (final rel in list.where((f) => !have.contains(f))) {
+        final file = await web.window.fetch('$base$rel'.toJS).toDart;
+        if (!file.ok) continue;
+        await db.put(BroodDb.files, rel, await file.arrayBuffer().toDart);
+        added = true;
+      }
+      return added;
+    } catch (_) {
+      return false;
+    }
   }
 
   static void _mkdirs(JSObject fs, String filePath) {
