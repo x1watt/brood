@@ -392,6 +392,35 @@ class BwBridgeBindings {
       _bw_bridge_alliance_answer_surrenderPtr
           .asFunction<int Function(ffi.Pointer<bw_bridge_t>, int, int, int)>();
 
+  bw_status bw_bridge_player_stats(
+    ffi.Pointer<bw_bridge_t> bridge,
+    int player_slot,
+    ffi.Pointer<bw_player_stats> out,
+  ) {
+    return bw_status.fromValue(
+      _bw_bridge_player_stats(bridge, player_slot, out),
+    );
+  }
+
+  late final _bw_bridge_player_statsPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<bw_bridge_t>,
+            ffi.Int,
+            ffi.Pointer<bw_player_stats>,
+          )
+        >
+      >('bw_bridge_player_stats');
+  late final _bw_bridge_player_stats = _bw_bridge_player_statsPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<bw_bridge_t>,
+          int,
+          ffi.Pointer<bw_player_stats>,
+        )
+      >();
+
   /// Drains alliance events (oldest first). Returns the count written.
   int bw_bridge_poll_alliance_events(
     ffi.Pointer<bw_bridge_t> bridge,
@@ -2415,6 +2444,59 @@ final class bw_alliance_event extends ffi.Struct {
   external int b;
 }
 
+/// The end-of-game score screen, as in the original: per player, all int32.
+final class bw_player_stats extends ffi.Struct {
+  /// units completed (morphs like the Guardian not again)
+  @ffi.Int32()
+  external int units_produced;
+
+  /// enemy units destroyed
+  @ffi.Int32()
+  external int units_killed;
+
+  @ffi.Int32()
+  external int units_lost;
+
+  /// buildings completed
+  @ffi.Int32()
+  external int buildings_built;
+
+  /// enemy buildings destroyed
+  @ffi.Int32()
+  external int buildings_razed;
+
+  @ffi.Int32()
+  external int buildings_lost;
+
+  @ffi.Int32()
+  external int minerals_mined;
+
+  @ffi.Int32()
+  external int gas_mined;
+
+  @ffi.Int32()
+  external int minerals_spent;
+
+  @ffi.Int32()
+  external int gas_spent;
+
+  /// Brood War's build score of the units it made
+  @ffi.Int32()
+  external int unit_score;
+
+  /// ... and of its buildings
+  @ffi.Int32()
+  external int building_score;
+
+  /// destroy score of the enemy units it killed
+  @ffi.Int32()
+  external int kill_units_score;
+
+  /// ... and of the buildings it razed
+  @ffi.Int32()
+  external int kill_buildings_score;
+}
+
 final class bw_draw_item extends ffi.Struct {
   /// BW_DRAW_IMAGE or BW_DRAW_SELECTION_CIRCLE
   @ffi.Int32()
@@ -2723,7 +2805,7 @@ final class bw_sound_info extends ffi.Struct {
   external ffi.Array<ffi.Char> filename;
 }
 
-const int BW_BRIDGE_ABI_VERSION = 20;
+const int BW_BRIDGE_ABI_VERSION = 21;
 
 const int BW_MAX_PLAYERS = 8;
 

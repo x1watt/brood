@@ -260,6 +260,16 @@ up): bunkers, missile turrets and sieged tanks; photon cannons by extra
 pylons; sunken and spore colonies. One of each production building at
 most, for a few mobile units (marines fill the bunkers).
 
+The end of a game shows a score screen like the original's
+(lib/ui/score_screen.dart): Victory or Defeat over the original's picture
+for your race (glue\\Pal{Z,T,P}{v,d}\\Backgnd.pcx from the player's files),
+and every player's numbers (bw_bridge_player_stats) in four tabs: units
+produced, killed and lost; structures constructed, razed and lost;
+minerals and gas mined and spent; and the score (units, structures,
+resources, their total, and the alliance score), counting up as a tab
+opens. BROOD_TEST_OUTCOME=victory:<seconds> (or defeat) ends a desktop
+game that way, to check it.
+
 Still missing: lift off/land and nukes.
 
 ## Layers

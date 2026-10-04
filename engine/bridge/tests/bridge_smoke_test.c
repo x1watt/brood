@@ -606,6 +606,15 @@ static void test_limits(const char* dd, const char* mf) {
 		ids[k++] = units[i].unit_id;
 	}
 	CHECK(k > 12, "limits: the computer has only %d units", k);
+	{
+		bw_player_stats ps;
+		CHECK(bw_bridge_player_stats(b, cpu, &ps) == BW_OK, "stats");
+		printf("bridge_smoke_test: stats after 9 min: produced %d units, %d buildings; mined %d/%d, spent %d/%d; scores %d/%d\n",
+		       ps.units_produced, ps.buildings_built, ps.minerals_mined, ps.gas_mined, ps.minerals_spent, ps.gas_spent, ps.unit_score, ps.building_score);
+		CHECK(ps.units_produced > 12 && ps.buildings_built > 3, "stats: production not counted");
+		CHECK(ps.minerals_spent + bw_bridge_minerals(b, cpu) == ps.minerals_mined, "stats: (with the starting 50) %d mined != %d spent + %d banked", ps.minerals_mined, ps.minerals_spent, bw_bridge_minerals(b, cpu));
+		CHECK(ps.minerals_mined > 1000 && ps.minerals_spent > ps.minerals_mined / 2 && ps.minerals_spent <= ps.minerals_mined + 50, "stats: spending %d of %d mined", ps.minerals_spent, ps.minerals_mined);
+	}
 	CHECK(bw_bridge_select_units(b, cpu, ids, k) == BW_OK, "limits: select %d", k);
 	static int32_t sel[300];
 	int got = bw_bridge_get_selected_units(b, cpu, sel, 300);
@@ -892,6 +901,7 @@ int main(int argc, char** argv) {
 
 	CHECK(bw_bridge_abi_version() == BW_BRIDGE_ABI_VERSION, "abi mismatch");
 	if (getenv("DEF_ONLY")) { test_defensive(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
+	if (getenv("LIMITS_ONLY")) { test_limits(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
 	if (getenv("AUTOPLAY_ONLY")) { test_autoplay(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
 	bw_bridge_t* b = bw_bridge_create();
 	CHECK(b, "create");

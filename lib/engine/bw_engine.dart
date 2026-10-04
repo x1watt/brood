@@ -56,6 +56,7 @@ class BwEngine {
   late final int _idBuf = _r.malloc(_maxIds * 4);
   static const int _maxIds = 1024; // selections (200), buildable types
   late final int _ints = _r.malloc(16); // out parameters
+  late final int _statsBuf = _r.malloc(PlayerStats.fieldCount * 4);
   late final int _soundBuf = _r.malloc(256 * L.soundEventSize);
   late final int _allianceBuf = _r.malloc(8 * L.allianceSize);
   late final int _allianceEvents = _r.malloc(64 * L.allianceEventSize);
@@ -561,6 +562,29 @@ class BwEngine {
     }, growable: false);
   }
 
+  /// The score screen's numbers for [slot] (null without a game).
+  PlayerStats? playerStats(int slot) {
+    if (!_ok(_r.bw_bridge_player_stats(_h, slot, _statsBuf))) return null;
+    final d = _d(_statsBuf, PlayerStats.fieldCount * 4);
+    int f(int i) => d.getInt32(i * 4, Endian.little);
+    return PlayerStats(
+      unitsProduced: f(0),
+      unitsKilled: f(1),
+      unitsLost: f(2),
+      buildingsBuilt: f(3),
+      buildingsRazed: f(4),
+      buildingsLost: f(5),
+      mineralsMined: f(6),
+      gasMined: f(7),
+      mineralsSpent: f(8),
+      gasSpent: f(9),
+      unitScore: f(10),
+      buildingScore: f(11),
+      killUnitsScore: f(12),
+      killBuildingsScore: f(13),
+    );
+  }
+
   bool setAllianceOpen(int slot, bool open) => _ok(_r.bw_bridge_alliance_set_open(_h, slot, open ? 1 : 0));
 
   /// Share resources with the alliance's other sharers (logged).
@@ -723,7 +747,7 @@ class BwEngine {
     if (_disposed) return;
     _disposed = true;
     _r.bw_bridge_destroy(_h);
-    for (final p in [_drawBuf, _unitBuf, _oneUnit, _idBuf, _ints, _soundBuf, _allianceBuf, _allianceEvents]) {
+    for (final p in [_drawBuf, _unitBuf, _oneUnit, _idBuf, _ints, _statsBuf, _soundBuf, _allianceBuf, _allianceEvents]) {
       _r.free(p);
     }
     if (_fogBuf != 0) _r.free(_fogBuf);

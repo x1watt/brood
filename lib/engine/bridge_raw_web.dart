@@ -119,6 +119,9 @@ class BridgeRawWeb extends BridgeRaw {
   int bw_bridge_alliance_answer_surrender(int bridge, int player_slot, int from, int accept) => _call('_bw_bridge_alliance_answer_surrender', [bridge, player_slot, from, accept]);
 
   @override
+  int bw_bridge_player_stats(int bridge, int player_slot, int out) => _call('_bw_bridge_player_stats', [bridge, player_slot, out]);
+
+  @override
   int bw_bridge_poll_alliance_events(int bridge, int out, int max_count) => _call('_bw_bridge_poll_alliance_events', [bridge, out, max_count]);
 
   @override

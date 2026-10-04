@@ -94,6 +94,15 @@ struct alliance_system {
 	std::array<int, max_players> units_killed{};
 	std::array<int, max_players> buildings_razed{};
 	std::array<int, max_players> units_lost{};
+	// For the score screen: buildings lost, destroy score split into units
+	// and buildings, and what each player spent (see sync()).
+	std::array<int, max_players> buildings_lost{};
+	std::array<int64_t, max_players> kill_units_score{};
+	std::array<int64_t, max_players> kill_buildings_score{};
+	std::array<int64_t, max_players> spent_minerals{};
+	std::array<int64_t, max_players> spent_gas{};
+	std::array<int, max_players> spend_seen_minerals{};
+	std::array<int, max_players> spend_seen_gas{};
 	matrix value_lost_to{}; // mineral + gas value lost: [victim][killer]
 	matrix recent_lost{};   // the same, fading over about half a minute
 	std::array<uint32_t, max_players> fighting{}; // players each one is clashing with now
@@ -126,6 +135,10 @@ struct alliance_system {
 			gathered_seen[p] = st.total_minerals_gathered[p] + st.total_gas_gathered[p];
 			points[p] = own_points[p] = kill_score[p] = 0;
 			units_killed[p] = buildings_razed[p] = units_lost[p] = 0;
+			buildings_lost[p] = 0;
+			kill_units_score[p] = kill_buildings_score[p] = spent_minerals[p] = spent_gas[p] = 0;
+			spend_seen_minerals[p] = st.total_minerals_gathered[p];
+			spend_seen_gas[p] = st.total_gas_gathered[p];
 			value_lost_to[p] = {};
 			recent_lost[p] = {};
 			fighting[p] = 0;
@@ -516,8 +529,11 @@ struct alliance_system {
 		if (u->unit_type->id == UnitTypes::Zerg_Larva || u->unit_type->id == UnitTypes::Zerg_Egg) return;
 		bool building = (u->unit_type->group_flags & GroupFlags::Building) != 0;
 		if (!building) ++units_lost[victim];
+		else ++buildings_lost[victim];
 		if (killer < 0 || killer >= max_players || killer == victim) return;
 		int score = u->unit_type->destroy_score;
+		if (building) kill_buildings_score[killer] += score;
+		else kill_units_score[killer] += score;
 		// A vassal's tribute: half to its lord.
 		if (vassal(killer)) {
 			kill_score[lord[killer]] += score - score / 2;
@@ -536,6 +552,17 @@ struct alliance_system {
 	// Folds every sharer's spending and income since the last sync into its
 	// treasury and hands everyone the result.
 	void sync(state& st) {
+		// Spending since the last sync: money that left the player's purse
+		// beyond what it mined (refunds count back).
+		for (int p = 0; p != max_players; ++p) {
+			if (!playing[p]) continue;
+			int gm = st.total_minerals_gathered[p] - spend_seen_minerals[p];
+			int gg = st.total_gas_gathered[p] - spend_seen_gas[p];
+			spend_seen_minerals[p] = st.total_minerals_gathered[p];
+			spend_seen_gas[p] = st.total_gas_gathered[p];
+			spent_minerals[p] += synced_minerals[p] + gm - st.current_minerals[p];
+			spent_gas[p] += synced_gas[p] + gg - st.current_gas[p];
+		}
 		std::array<bool, max_players> done{};
 		for (int p = 0; p != max_players; ++p) {
 			if (!playing[p] || done[(size_t)p]) continue;

@@ -305,3 +305,42 @@ enum AutoplayMode {
 
   static const int all = 15;
 }
+
+/// One player's numbers for the end-of-game score screen
+/// (bw_bridge_player_stats).
+class PlayerStats {
+  final int unitsProduced, unitsKilled, unitsLost;
+  final int buildingsBuilt, buildingsRazed, buildingsLost;
+  final int mineralsMined, gasMined, mineralsSpent, gasSpent;
+  final int unitScore, buildingScore, killUnitsScore, killBuildingsScore;
+
+  const PlayerStats({
+    this.unitsProduced = 0,
+    this.unitsKilled = 0,
+    this.unitsLost = 0,
+    this.buildingsBuilt = 0,
+    this.buildingsRazed = 0,
+    this.buildingsLost = 0,
+    this.mineralsMined = 0,
+    this.gasMined = 0,
+    this.mineralsSpent = 0,
+    this.gasSpent = 0,
+    this.unitScore = 0,
+    this.buildingScore = 0,
+    this.killUnitsScore = 0,
+    this.killBuildingsScore = 0,
+  });
+
+  static const fieldCount = 14;
+
+  /// The original's score tab: units made and destroyed.
+  int get unitsScore => unitScore + killUnitsScore;
+
+  /// Buildings built and razed.
+  int get structuresScore => buildingScore + killBuildingsScore;
+
+  /// Everything mined and spent.
+  int get resourcesScore => mineralsMined + gasMined + mineralsSpent + gasSpent;
+
+  int get totalScore => unitsScore + structuresScore + resourcesScore;
+}

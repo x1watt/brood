@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 20
+#define BW_BRIDGE_ABI_VERSION 21
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -168,6 +168,26 @@ typedef struct bw_alliance_event {
 	int32_t a;
 	int32_t b;
 } bw_alliance_event;
+
+// The end-of-game score screen, as in the original: per player, all int32.
+typedef struct bw_player_stats {
+	int32_t units_produced;      // units completed (morphs like the Guardian not again)
+	int32_t units_killed;        // enemy units destroyed
+	int32_t units_lost;
+	int32_t buildings_built;     // buildings completed
+	int32_t buildings_razed;     // enemy buildings destroyed
+	int32_t buildings_lost;
+	int32_t minerals_mined;
+	int32_t gas_mined;
+	int32_t minerals_spent;
+	int32_t gas_spent;
+	int32_t unit_score;          // Brood War's build score of the units it made
+	int32_t building_score;      // ... and of its buildings
+	int32_t kill_units_score;    // destroy score of the enemy units it killed
+	int32_t kill_buildings_score;// ... and of the buildings it razed
+} bw_player_stats;
+
+bw_status bw_bridge_player_stats(bw_bridge_t* bridge, int player_slot, bw_player_stats* out);
 
 // Drains alliance events (oldest first). Returns the count written.
 int bw_bridge_poll_alliance_events(bw_bridge_t* bridge, bw_alliance_event* out, int max_count);

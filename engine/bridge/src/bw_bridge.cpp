@@ -2098,6 +2098,34 @@ static bool alliance_slot_ok(bw_bridge* b, int slot) {
 	return b->in_game() && b->alliances_on && slot >= 0 && slot < bw_alliances::max_players;
 }
 
+bw_status bw_bridge_player_stats(bw_bridge_t* bridge, int player_slot, bw_player_stats* out) {
+	if (!bridge || !out || player_slot < 0 || player_slot >= bw_alliances::max_players) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	state& st = b->player->st();
+	auto& a = b->alliances;
+	auto clamp = [](int64_t v) { return (int32_t)std::max<int64_t>(0, std::min<int64_t>(v, 0x7fffffff)); };
+	size_t p = (size_t)player_slot;
+	std::memset(out, 0, sizeof(*out));
+	out->units_produced = st.total_non_buildings_ever_completed[p];
+	out->buildings_built = st.total_buildings_ever_completed[p];
+	out->unit_score = st.unit_score[p];
+	out->building_score = st.building_score[p];
+	out->minerals_mined = st.total_minerals_gathered[p];
+	out->gas_mined = st.total_gas_gathered[p];
+	if (b->alliances_on) {
+		out->units_killed = a.units_killed[p];
+		out->units_lost = a.units_lost[p];
+		out->buildings_razed = a.buildings_razed[p];
+		out->buildings_lost = a.buildings_lost[p];
+		out->minerals_spent = clamp(a.spent_minerals[p]);
+		out->gas_spent = clamp(a.spent_gas[p]);
+		out->kill_units_score = clamp(a.kill_units_score[p]);
+		out->kill_buildings_score = clamp(a.kill_buildings_score[p]);
+	}
+	return BW_OK;
+}
+
 bw_status bw_bridge_alliance_set_open(bw_bridge_t* bridge, int player_slot, int open) {
 	if (!bridge || !alliance_slot_ok(B(bridge), player_slot)) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);

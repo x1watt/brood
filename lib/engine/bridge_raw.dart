@@ -6,7 +6,7 @@
 
 import 'dart:typed_data';
 
-const int BW_BRIDGE_ABI_VERSION = 20;
+const int BW_BRIDGE_ABI_VERSION = 21;
 const int BW_MAX_PLAYERS = 8;
 const int BW_PLAYER_HUMAN = 1;
 const int BW_PLAYER_COMPUTER = 2;
@@ -95,6 +95,7 @@ abstract class BridgeRaw {
   int bw_bridge_alliance_leave(int bridge, int player_slot);
   int bw_bridge_alliance_surrender(int bridge, int from, int to);
   int bw_bridge_alliance_answer_surrender(int bridge, int player_slot, int from, int accept);
+  int bw_bridge_player_stats(int bridge, int player_slot, int out);
   int bw_bridge_poll_alliance_events(int bridge, int out, int max_count);
   int bw_bridge_set_autoplay(int bridge, int player_slot, int modes);
   int bw_bridge_get_autoplay(int bridge, int player_slot);

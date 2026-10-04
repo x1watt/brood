@@ -25,6 +25,7 @@ import 'game_viewport.dart';
 import 'hud.dart';
 import 'minimap_view.dart';
 import 'saved_games_list.dart';
+import 'score_screen.dart';
 import 'start_screen.dart';
 import 'window_control.dart';
 
@@ -785,7 +786,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                 onAutosave: _setAutosave,
                 c: _c,
               ),
-            if (_outcomeVisible) _OutcomeScreen(outcome: _c.outcome!, onWatch: _keepWatching, onExit: () => _exitToMenu(confirm: false)),
+            if (_outcomeVisible) ListenableBuilder(listenable: _c.hud, builder: (_, _) => ScoreScreen(c: _c, onWatch: _keepWatching, onExit: () => _exitToMenu(confirm: false))),
           ],
         ),
       ),
@@ -971,50 +972,6 @@ class _GameMenu extends StatelessWidget {
             'Esc or F10 opens and closes this menu.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 12, color: Color(0xFF5E5E5E)),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _OutcomeScreen extends StatelessWidget {
-  final GameOutcome outcome;
-  final VoidCallback onWatch;
-  final VoidCallback onExit;
-  const _OutcomeScreen({required this.outcome, required this.onWatch, required this.onExit});
-
-  @override
-  Widget build(BuildContext context) {
-    final won = outcome == GameOutcome.victory;
-    const button = Size.fromHeight(44);
-    return _Overlay(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            won ? 'Victory!' : 'Defeat',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 34, fontWeight: FontWeight.w800, color: won ? const Color(0xFF3CFF3C) : const Color(0xFFFF6B5E)),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            won ? 'Every enemy has been defeated.' : 'All your buildings have been destroyed.',
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Color(0xFFBDBDBD)),
-          ),
-          const SizedBox(height: 24),
-          FilledButton(
-            style: FilledButton.styleFrom(minimumSize: button),
-            onPressed: onExit,
-            child: const Text('Exit to main menu'),
-          ),
-          const SizedBox(height: 10),
-          OutlinedButton(
-            style: OutlinedButton.styleFrom(minimumSize: button),
-            onPressed: onWatch,
-            child: Text(won ? 'Keep playing' : 'Watch the rest of the game'),
           ),
         ],
       ),

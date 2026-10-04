@@ -7,6 +7,7 @@ import 'dart:typed_data';
 
 import 'package:brood/engine/bw_bridge_gen.dart';
 import 'package:brood/engine/bw_engine.dart';
+import 'package:brood/engine/models.dart';
 import 'package:ffi/ffi.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -24,6 +25,7 @@ void main() {
     expect(ffi.sizeOf<bw_sound_info>(), L.soundInfoSize);
     expect(ffi.sizeOf<bw_alliance_player>(), L.allianceSize);
     expect(ffi.sizeOf<bw_alliance_event>(), L.allianceEventSize);
+    expect(ffi.sizeOf<bw_player_stats>(), PlayerStats.fieldCount * 4);
   });
 
   test('field offsets match', () {

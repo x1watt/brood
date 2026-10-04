@@ -18,6 +18,7 @@ import 'package:flutter/painting.dart';
 import '../audio/sound_system.dart';
 import '../engine/bw_engine.dart';
 import '../engine/models.dart';
+import '../platform/env.dart';
 import '../rendering/icon_atlas.dart';
 import '../rendering/creep_layer.dart';
 import '../rendering/sprite_atlas.dart';
@@ -529,14 +530,45 @@ class GameController {
 
   void _checkOutcome() {
     if (outcome != null) return;
-    final v = engine.victoryState(myPlayer);
+    var v = engine.victoryState(myPlayer);
+    // Testing knob: BROOD_TEST_OUTCOME=victory|defeat:<seconds> ends the
+    // game that way after that much game time (to check the score screen).
+    final forced = env('BROOD_TEST_OUTCOME')?.split(':');
+    if (forced != null && forced.length == 2 && frame * frameMicros ~/ 1000000 >= (int.tryParse(forced[1]) ?? 1 << 30)) {
+      v = forced[0] == 'victory' ? 3 : 2;
+    }
     if (v == 1 || v == 2) {
       outcome = GameOutcome.defeat;
     } else if (v >= 3) {
       outcome = GameOutcome.victory;
     }
-    if (outcome != null) setPaused(true);
+    if (outcome != null) {
+      setPaused(true);
+      _loadOutcomeArt();
+    }
   }
+
+  /// The score screen's background: the original's victory or defeat
+  /// picture for your race (glue\Pal{Z,T,P}{v,d}\Backgnd.pcx).
+  ui.Image? outcomeArt;
+
+  void _loadOutcomeArt() {
+    final race = 'ZTP'[myRace.clamp(0, 2)];
+    final r = engine.loadPcxRgba('glue\\Pal$race${outcome == GameOutcome.victory ? 'v' : 'd'}\\Backgnd.pcx');
+    if (r == null) return;
+    final (w, h, rgba) = r;
+    ui.decodeImageFromPixels(rgba, w, h, ui.PixelFormat.rgba8888, (img) {
+      if (_disposed) {
+        img.dispose();
+        return;
+      }
+      outcomeArt = img;
+      _notifyHud(force: true);
+    });
+  }
+
+  /// Every player's score screen numbers, by slot.
+  Map<int, PlayerStats> playerStats() => {for (final p in players) p.slot: ?engine.playerStats(p.slot)};
 
   /// What a save point needs: the command log so far, the frame and where
   /// the camera looks.
@@ -585,6 +617,7 @@ class GameController {
     _disposed = true;
     fogImage?.dispose();
     fogImage = null;
+    outcomeArt?.dispose();
     creep?.dispose();
     sound?.dispose();
     _engine?.dispose();

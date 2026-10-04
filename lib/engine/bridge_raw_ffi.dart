@@ -129,6 +129,10 @@ class BridgeRawFfi extends BridgeRaw {
   @override
   int bw_bridge_alliance_answer_surrender(int bridge, int player_slot, int from, int accept) => _bw_bridge_alliance_answer_surrender(bridge, player_slot, from, accept);
 
+  late final _bw_bridge_player_stats = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.IntPtr), int Function(int, int, int)>('bw_bridge_player_stats');
+  @override
+  int bw_bridge_player_stats(int bridge, int player_slot, int out) => _bw_bridge_player_stats(bridge, player_slot, out);
+
   late final _bw_bridge_poll_alliance_events = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.IntPtr, ffi.Int32), int Function(int, int, int)>('bw_bridge_poll_alliance_events');
   @override
   int bw_bridge_poll_alliance_events(int bridge, int out, int max_count) => _bw_bridge_poll_alliance_events(bridge, out, max_count);
