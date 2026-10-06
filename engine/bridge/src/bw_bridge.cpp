@@ -2299,7 +2299,12 @@ bw_status bw_bridge_bot_strategies(bw_bridge_t* bridge, int player_slot, char* o
 	if (!bridge || player_slot < 0 || player_slot > 7) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
 	if (!b->in_game()) return BW_ERR_NO_GAME;
-	std::string r = b->ai.strategies_report(player_slot);
+	std::string r;
+	try {
+		r = b->ai.strategies_report(b->player->st(), b->action_st, player_slot);
+	} catch (...) {
+		return BW_ERR_UNKNOWN;
+	}
 	write_report(out, out_cap, r);
 	return r.empty() ? BW_ERR_INVALID_ARGUMENT : BW_OK;
 }

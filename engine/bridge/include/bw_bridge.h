@@ -617,7 +617,9 @@ bw_status bw_bridge_bot_steer(bw_bridge_t* bridge, int player_slot, int what, in
 bw_status bw_bridge_keep_selection(bw_bridge_t* bridge, int owner, int on);
 
 // The strategies the computer player of `player_slot` can be steered to
-// (its profile's), as text: "current<TAB>name or -<TAB>target", then one
+// (its profile's), as text: "current<TAB>name or -<TAB>target<TAB>fighting
+// units<TAB>the attack wave's size<TAB>attacking (1/0)<TAB>seconds of
+// holding attacks left", then one
 // "index<TAB>name<TAB>parameters (0 or 1)<TAB>description" line each (the
 // index is what BW_STEER_STRATEGY takes). Pure query.
 bw_status bw_bridge_bot_strategies(bw_bridge_t* bridge, int player_slot, char* out, int out_cap);

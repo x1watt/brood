@@ -761,7 +761,7 @@ static void test_bot_profiles(const char* dd, const char* mf) {
 	/* Strategies and alliance preferences (LLM strategists). */
 	{
 		char report[4096];
-		CHECK(bw_bridge_bot_strategies(a, slots[1], report, sizeof(report)) == BW_OK && strncmp(report, "current\t-\t-1\n", 13) == 0, "bots: strategies: %s", report);
+		CHECK(bw_bridge_bot_strategies(a, slots[1], report, sizeof(report)) == BW_OK && strncmp(report, "current\t-\t-1\t", 13) == 0, "bots: strategies: %s", report);
 		CHECK(strstr(report, "\tmassive_attack\t1\t"), "bots: massive_attack offered: %s", report);
 		/* Each line: index, name, parameters, description. */
 		int defend = -1, massive = -1;

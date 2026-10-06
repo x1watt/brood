@@ -398,7 +398,18 @@ class BotStrategies {
   final List<BotStrategy> list;
   final String current; // empty: the profile's own way
   final int target;
-  const BotStrategies(this.list, this.current, this.target);
+
+  /// Where the army stands: fighting units, the size the next attack wave
+  /// waits for, whether a wave is out, seconds attacks are still held.
+  final int fighters, waveSize, holdSeconds;
+  final bool attacking;
+  const BotStrategies(this.list, this.current, this.target, {this.fighters = 0, this.waveSize = 0, this.attacking = false, this.holdSeconds = 0});
+
+  String get armyStatus => attacking
+      ? 'an attack wave is out ($fighters fighting units)'
+      : holdSeconds > 0
+      ? 'held at home for $holdSeconds more seconds ($fighters fighting units)'
+      : 'at home, gathering: $fighters fighting units of the $waveSize the next wave waits for';
 }
 
 /// How a computer player sees another player (bw_bridge_bot_diplomacy).

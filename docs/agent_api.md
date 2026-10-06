@@ -113,7 +113,9 @@ plays:
   every other player, the alliance utility the AI acts on, the strength of
   that player's alliance, the favor, recent losses to them, distance,
   invitations and surrender offers. **`GET /strategies`** (MCP
-  `get_strategies`) shows the strategies and the one in use.
+  `get_strategies`) shows the strategies, the one in use, and where the
+  army stands: out on a wave, held at home, or gathering N fighting units
+  of the M the next wave waits for (also a line of `/describe`).
 
 Both are logged engine commands (`BW_STEER_STRATEGY`, `BW_STEER_FAVOR`), so
 they stay in sync and replay. For a human's player they need the
@@ -126,7 +128,13 @@ Auto-play permission, and they steer that person's auto-play.
 and the alliances, with its notes from earlier rounds. Claude answers with
 the tools above (`set_strategy`, `steer`, `set_relations`, `diplomacy`,
 `advise` for a human, `remember` for its plan) and the agent carries them
-out at once.
+out at once. Each round allows one batch of decisions, then a closing
+summary. A second batch comes only to fix a decision that failed, which
+keeps a model from changing its mind several times in one round. The
+description it reads states its own army, mining and workers next to
+everyone else's, and warns when an enemy army is more than twice its own,
+when an enemy is that much weaker, and when its strategy's target has left
+the game.
 
 ```sh
 dart run tool/brood_agent.dart --game 1 --slot 2 --strategist \
@@ -139,8 +147,23 @@ dart run tool/brood_agent.dart --game 1 --slot 2 --strategist \
 | `--effort` | `medium` by default |
 | `--goal` | the player's wishes, in words |
 
-It needs `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or a profile from
-`ant auth login`. `ANTHROPIC_BASE_URL` points it elsewhere. Each round is
+Other models work too, through any server that speaks the OpenAI chat
+completions API (`--provider`):
+
+| `--provider` | Server | Key | Default `--model` |
+|---|---|---|---|
+| `openrouter` | OpenRouter (its `:free` models cost nothing) | `OPENROUTER_API_KEY` | `nvidia/nemotron-3-super-120b-a12b:free` |
+| `ollama` | a local Ollama at 127.0.0.1:11434 | none | `qwen3:8b` |
+| `huggingface` | the Hugging Face router | `HF_TOKEN` | `Qwen/Qwen3-32B` |
+| `openai` | any other, with `--base-url` | `OPENAI_API_KEY` | (give one) |
+
+`--key-file <file>` reads the key from a file instead. For Ollama, start
+the server with `OLLAMA_CONTEXT_LENGTH=8192` or more: its default window
+is too small for the situation report. An 8B model on a 10 GB GPU answers
+a round in about half a minute.
+
+The default provider, Anthropic, needs `ANTHROPIC_API_KEY`,
+`ANTHROPIC_AUTH_TOKEN`, or a profile from `ant auth login`. `ANTHROPIC_BASE_URL` points it elsewhere. Each round is
 one request or a few, with server-side fallback on declined requests. A
 round that is still thinking when the next is due is skipped. Its rounds
 show in `/events` (`strategist`).

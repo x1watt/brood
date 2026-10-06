@@ -331,15 +331,27 @@ struct ai_system {
 		return false;
 	}
 
-	// For agents (bw_bridge_bot_strategies): the strategy in use, then each
-	// one the player's profile offers.
-	std::string strategies_report(int owner) const {
+	// For agents (bw_bridge_bot_strategies): the strategy in use and where
+	// the army stands, then each strategy the player's profile offers.
+	std::string strategies_report(state& st, action_state& action_st, int owner) {
 		for (auto& p : players) {
 			if (p.owner != owner) continue;
 			auto* pr = profile_of(p);
 			std::string out = "current\t";
 			out += pr && p.strategy >= 0 && (size_t)p.strategy < pr->strategies.size() ? pr->strategies[(size_t)p.strategy].name : "-";
-			out += "\t" + std::to_string(p.strategy_target) + "\n";
+			// Fighting units (as an attack wave counts them, roughly),
+			// the wave it waits for, attacking or not, seconds of holding left.
+			action_functions f(st, action_st);
+			snapshot s = take_snapshot(f, p);
+			int fighters = 0;
+			for (unit_t* u : s.army) {
+				auto t = u->unit_type->id;
+				if (is_transport(t) || is_support(t) || (!f.unit_can_attack(u) && t != UnitTypes::Terran_Medic)) continue;
+				++fighters;
+			}
+			int hold = std::max(0, (p.hold_until - st.current_frame) / 24);
+			out += "\t" + std::to_string(p.strategy_target) + "\t" + std::to_string(fighters) + "\t" + std::to_string(p.wave_size) + "\t" +
+			       (p.attacking ? "1" : "0") + "\t" + std::to_string(hold) + "\n";
 			if (pr) {
 				for (size_t i = 0; i != pr->strategies.size(); ++i) {
 					auto& s = pr->strategies[i];

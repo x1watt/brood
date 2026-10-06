@@ -743,17 +743,25 @@ class BwEngine {
     final lines = _report((o, c) => _r.bw_bridge_bot_strategies(_h, slot, o, c)).split('\n');
     var current = '';
     var target = -1;
+    var fighters = 0, waveSize = 0, hold = 0;
+    var attacking = false;
     final list = <BotStrategy>[];
     for (final l in lines) {
       final f = l.split('\t');
       if (f.length >= 3 && f[0] == 'current') {
         current = f[1] == '-' ? '' : f[1];
         target = int.tryParse(f[2]) ?? -1;
+        if (f.length >= 7) {
+          fighters = int.tryParse(f[3]) ?? 0;
+          waveSize = int.tryParse(f[4]) ?? 0;
+          attacking = f[5] == '1';
+          hold = int.tryParse(f[6]) ?? 0;
+        }
       } else if (f.length >= 4) {
         list.add(BotStrategy(int.parse(f[0]), f[1], int.parse(f[2]) > 0, f.sublist(3).join('\t')));
       }
     }
-    return BotStrategies(list, current, target);
+    return BotStrategies(list, current, target, fighters: fighters, waveSize: waveSize, attacking: attacking, holdSeconds: hold);
   }
 
   /// How the computer player of [slot] sees every other player still in

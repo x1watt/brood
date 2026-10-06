@@ -22,7 +22,10 @@
 // alliances every --every seconds (30), with --model (claude-opus-5-5),
 // --effort (medium) and an optional --goal "..." in the player's words.
 // It needs ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN, or `ant auth login`)
-// and costs a request or a few each round.
+// and costs a request or a few each round. --provider openrouter, ollama,
+// huggingface or openai (with --base-url) uses an OpenAI-compatible server
+// instead (keys: OPENROUTER_API_KEY, HF_TOKEN, OPENAI_API_KEY, or
+// --key-file; none for a local Ollama), with a fitting --model.
 //
 // Other options: --server ws://127.0.0.1:9191/ws, --data <game folder>
 // (BROOD_DATA), --http <port> (9292; 0: none), --mcp, --fog (see only what
@@ -93,13 +96,29 @@ Future<void> main(List<String> args) async {
   final port = int.tryParse(arg('http') ?? '9292') ?? 9292;
   if (port > 0) await HttpApi(agent).serve(port);
   if (flag('strategist')) {
-    Strategist(
+    // Where the model runs: Anthropic, or an OpenAI-compatible server.
+    final provider = arg('provider') ?? 'anthropic';
+    const bases = {'openrouter': 'https://openrouter.ai/api/v1', 'ollama': 'http://127.0.0.1:11434/v1', 'huggingface': 'https://router.huggingface.co/v1'};
+    const models = {'openrouter': 'nvidia/nemotron-3-super-120b-a12b:free', 'ollama': 'qwen3:8b', 'huggingface': 'Qwen/Qwen3-32B'};
+    const keys = {'openrouter': 'OPENROUTER_API_KEY', 'huggingface': 'HF_TOKEN', 'openai': 'OPENAI_API_KEY'};
+    String? key;
+    if (arg('key-file') case final f?) key = File(f).readAsStringSync().trim();
+    key ??= Platform.environment[keys[provider] ?? ''];
+    final strategist = Strategist(
       agent,
       every: (int.tryParse(arg('every') ?? '') ?? 30).clamp(10, 3600),
-      model: arg('model') ?? 'claude-opus-5-5',
+      model: arg('model') ?? models[provider] ?? 'claude-opus-5-5',
       effort: arg('effort') ?? 'medium',
       goal: arg('goal') ?? '',
-    ).start();
+      provider: provider == 'anthropic' ? 'anthropic' : 'openai',
+      baseUrl: arg('base-url') ?? bases[provider] ?? '',
+      apiKey: key,
+    );
+    if (strategist.provider == 'openai' && strategist.baseUrl.isEmpty) {
+      log('--provider $provider needs --base-url');
+      exit(1);
+    }
+    strategist.start();
   }
   if (mcpMode) await Mcp(agent).serve();
 }
@@ -522,6 +541,7 @@ class Agent {
     return {
       'current': s.current.isEmpty ? 'none (the profile\'s own way)' : s.current,
       if (s.current.isNotEmpty && s.target >= 0) 'target': s.target,
+      'army': s.armyStatus,
       'strategies': [
         for (final x in s.list) {'name': x.name, 'target': x.takesTarget ? 'a player slot' : 'none', 'description': x.description},
       ],
@@ -635,8 +655,28 @@ class Agent {
       ..writeln('Resources: ${mine['minerals']} minerals, ${mine['gas']} gas, supply ${_n(mine['supply_used'])}/${_n(mine['supply_max'])}. '
           'Auto-play: ${(mine['autoplay'] as List).isEmpty ? 'off' : (mine['autoplay'] as List).join(', ')}.')
       ..writeln('Your units: ${_list(mine['units'])}.')
-      ..writeln('Your buildings: ${_list(mine['buildings'])}.')
-      ..writeln('Players:');
+      ..writeln('Your buildings: ${_list(mine['buildings'])}.');
+    // Where this player stands against the others, in plain words.
+    final players = [for (final p in s['players'] as List) p as Map<String, Object?>];
+    final me = players.where((p) => p['me'] == true).firstOrNull;
+    if (me != null) {
+      final enemies = players.where((p) => p['me'] != true && p['ally'] != true && p['active'] == true).toList();
+      int army(Map<String, Object?> p) => (p['army_value'] as int?) ?? 0;
+      int mining(Map<String, Object?> p) => (p['mining_per_minute'] as int?) ?? 0;
+      b.writeln('Your army value ${army(me)}, mining ${mining(me)}/min, ${me['workers']} workers.');
+      if (enemies.isNotEmpty) {
+        final strongest = enemies.reduce((a, c) => army(a) >= army(c) ? a : c);
+        final weakest = enemies.reduce((a, c) => army(a) <= army(c) ? a : c);
+        if (army(strongest) > army(me) * 2 && army(strongest) > 500) {
+          b.writeln('WARNING: ${strongest['name']} (slot ${strongest['slot']}) has ${army(strongest)} army value, more than twice yours: '
+              'you need an army (defend, build_up) or allies.');
+        }
+        if (army(me) > army(weakest) * 2 && army(me) > 500) {
+          b.writeln('OPPORTUNITY: your army is more than twice ${weakest['name']}\'s (slot ${weakest['slot']}, ${army(weakest)}).');
+        }
+      }
+    }
+    b.writeln('Players:');
     for (final p in s['players'] as List) {
       final m = p as Map<String, Object?>;
       if (m['me'] == true) continue;
@@ -649,6 +689,11 @@ class Agent {
     if (st.list.isNotEmpty) {
       b.writeln('Strategy: ${st.current.isEmpty ? 'none (the profile\'s own way)' : st.current}${st.current.isNotEmpty && st.target >= 0 ? ' against slot ${st.target}' : ''}. '
           'Available: ${[for (final x in st.list) x.takesTarget ? '${x.name}(target)' : x.name].join(', ')}.');
+      b.writeln('Army: ${st.armyStatus}. (steer attack:true sends it now; wave_size lowers what it waits for.)');
+      final al = e.alliances();
+      if (st.current.isNotEmpty && st.target >= 0 && st.target < al.length && !al[st.target].active) {
+        b.writeln('WARNING: the target of your strategy, slot ${st.target}, is out of the game: choose another.');
+      }
     }
     final rel = e.botDiplomacy(slot);
     if (rel.isNotEmpty) {
@@ -1089,7 +1134,7 @@ class Mcp {
         'attack': {'type': 'boolean'},
         'hold_seconds': _int,
         'focus_player': {'type': 'integer', 'description': 'player slot, -1 for the nearest enemy'},
-        'wave_size': _int,
+        'wave_size': {'type': 'integer', 'description': 'fighting units the next wave waits for: smaller attacks sooner'},
         'numbers': {'type': 'object', 'description': 'e.g. {"army.wave_max": 30, "diplomacy.betray_after": 600} (times in seconds)'},
       }),
     },
@@ -1243,7 +1288,26 @@ class Strategist {
   final String model;
   final String effort;
   final String goal;
-  Strategist(this.agent, {required this.every, required this.model, required this.effort, required this.goal});
+
+  /// 'anthropic' (the Messages API), or 'openai': any server speaking the
+  /// OpenAI chat completions API (OpenRouter, Ollama, the Hugging Face
+  /// router, ...) at [baseUrl] with [apiKey] (none for a local one).
+  final String provider;
+  final String baseUrl;
+  final String? apiKey;
+  Strategist(
+    this.agent, {
+    required this.every,
+    required this.model,
+    required this.effort,
+    required this.goal,
+    this.provider = 'anthropic',
+    this.baseUrl = '',
+    this.apiKey,
+  });
+
+  /// Tokens used so far (as the servers report them).
+  int inputTokens = 0, outputTokens = 0, requests = 0;
 
   final List<String> _journal = [];
   bool _busy = false;
@@ -1295,6 +1359,8 @@ gather a big army before a decisive attack on the weakest or nearest enemy; ally
 surrender when the tribute is worth more than finishing them; offer yours only when the game is lost. Score counts mining,
 production and destruction; winning counts most.
 
+Watch the army line: an army gathering for a wave much bigger than it can reach in a minute or two wastes time (lower wave_size
+or attack now); a wave that is out and losing should be held back.
 Each round: read the situation, then either change nothing (say why in one line) or make a few decisive changes and remember the plan.
 Do not repeat a change that is already in effect.${goal.isEmpty ? '' : '\nThe player\'s goal: $goal'}''';
 
@@ -1329,27 +1395,38 @@ Do not repeat a change that is already in effect.${goal.isEmpty ? '' : '\nThe pl
     return (header: 'authorization', value: 'Bearer $token');
   }
 
-  Future<Map<String, dynamic>> _post(Map<String, Object?> body) async {
-    final auth = await _credentials();
+  Future<Map<String, dynamic>> _http(String url, Map<String, String> headers, Map<String, Object?> body) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 30);
     try {
-      final base = Platform.environment['ANTHROPIC_BASE_URL'] ?? 'https://api.anthropic.com';
-      final req = await client.postUrl(Uri.parse('${base.replaceAll(RegExp(r'/+$'), '')}/v1/messages'));
+      final req = await client.postUrl(Uri.parse(url));
       req.headers.contentType = ContentType.json;
-      req.headers.set('anthropic-version', '2023-06-01');
-      req.headers.set(auth.header, auth.value);
-      // Server-side fallback for declined requests; OAuth tokens need their own beta.
-      req.headers.set('anthropic-beta', ['server-side-fallback-2026-07-01', if (auth.header == 'authorization') 'oauth-2025-04-20'].join(','));
+      headers.forEach(req.headers.set);
       final bytes = utf8.encode(jsonEncode(body));
       req.contentLength = bytes.length;
       req.add(bytes);
       final res = await req.close().timeout(const Duration(minutes: 5));
       final text = await utf8.decoder.bind(res).join();
-      if (res.statusCode != 200) throw StateError('Claude API ${res.statusCode}: $text');
+      if (res.statusCode != 200) throw StateError('$url ${res.statusCode}: ${text.length > 500 ? text.substring(0, 500) : text}');
+      ++requests;
       return jsonDecode(text) as Map<String, dynamic>;
     } finally {
       client.close();
     }
+  }
+
+  Future<Map<String, dynamic>> _post(Map<String, Object?> body) async {
+    final auth = await _credentials();
+    final base = Platform.environment['ANTHROPIC_BASE_URL'] ?? 'https://api.anthropic.com';
+    final r = await _http('${base.replaceAll(RegExp(r'/+$'), '')}/v1/messages', {
+      'anthropic-version': '2023-06-01',
+      auth.header: auth.value,
+      // Server-side fallback for declined requests; OAuth tokens need their own beta.
+      'anthropic-beta': ['server-side-fallback-2026-07-01', if (auth.header == 'authorization') 'oauth-2025-04-20'].join(','),
+    }, body);
+    final usage = r['usage'] as Map? ?? const {};
+    inputTokens += (usage['input_tokens'] as num? ?? 0).toInt() + (usage['cache_read_input_tokens'] as num? ?? 0).toInt();
+    outputTokens += (usage['output_tokens'] as num? ?? 0).toInt();
+    return r;
   }
 
   void start() {
@@ -1371,19 +1448,119 @@ Do not repeat a change that is already in effect.${goal.isEmpty ? '' : '\nThe pl
     }
   }
 
+  /// Carries out one tool call; the result goes back to the model.
+  Map<String, Object?> _carryOut(String name, Map<String, dynamic> input, List<String> decisions) {
+    Map<String, Object?> out;
+    if (name == 'remember') {
+      final note = '${input['note'] ?? ''}'.trim();
+      // (Small models copy their notes; the same one again adds nothing.)
+      if (note.isNotEmpty && !_journal.any((j) => j.endsWith('note: $note'))) _journal.add('${Agent.clock(agent.e.currentFrame)} note: $note');
+      out = {'ok': true};
+    } else if (!_tools().any((t) => t['name'] == name)) {
+      out = {'ok': false, 'error': 'no tool "$name"'};
+    } else {
+      out = agent.act({...input, 'action': name});
+      decisions.add('$name ${jsonEncode(input)}${out['ok'] == true ? '' : ' (failed: ${out['error']})'}');
+    }
+    log('strategist: $name ${jsonEncode(input)} -> ${jsonEncode(out)}');
+    return out;
+  }
+
+  void _said(String text, List<String> decisions) {
+    // (Reasoning some models put in their answer.)
+    final t = text.replaceAll(RegExp(r'<think>.*?</think>', dotAll: true), '').trim();
+    if (t.isEmpty) return;
+    log('strategist: $t');
+    decisions.add(t.length > 300 ? '${t.substring(0, 300)}...' : t);
+  }
+
+  void _endRound(List<String> decisions) {
+    final at = Agent.clock(agent.e.currentFrame);
+    agent.event('strategist', {'round': _round, 'decisions': decisions, 'requests': requests, 'input_tokens': inputTokens, 'output_tokens': outputTokens});
+    if (decisions.isNotEmpty && !_journal.any((j) => j.endsWith(' ${decisions.join('; ')}'))) _journal.add('$at ${decisions.join('; ')}');
+    while (_journal.length > 12) {
+      _journal.removeAt(0);
+    }
+  }
+
+  /// One round with an OpenAI-compatible server.
+  Future<void> _decideOpenAi() async {
+    final tools = [
+      for (final t in _tools())
+        {
+          'type': 'function',
+          'function': {'name': t['name'], 'description': t['description'], 'parameters': t['input_schema']},
+        },
+    ];
+    final messages = <Map<String, Object?>>[
+      {'role': 'system', 'content': _system},
+      {'role': 'user', 'content': _situation()},
+    ];
+    final decisions = <String>[];
+    // One batch of decisions; then a summary without tools (another batch
+    // only to fix a call that failed). Small models otherwise keep
+    // changing their minds within a round.
+    var tooling = true;
+    for (int turn = 0; turn < 4; ++turn) {
+      final r = await _http('${baseUrl.replaceAll(RegExp(r'/+$'), '')}/chat/completions', {
+        if (apiKey != null && apiKey!.isNotEmpty) 'authorization': 'Bearer $apiKey',
+        // OpenRouter's attribution headers (ignored elsewhere).
+        'HTTP-Referer': 'https://github.com/brood',
+        'X-Title': 'Brood strategist',
+      }, {
+        'model': model,
+        'messages': messages,
+        'tools': tools,
+        'tool_choice': tooling ? 'auto' : 'none',
+        'max_tokens': 4096,
+      });
+      final usage = r['usage'] as Map? ?? const {};
+      inputTokens += (usage['prompt_tokens'] as num? ?? 0).toInt();
+      outputTokens += (usage['completion_tokens'] as num? ?? 0).toInt();
+      final choices = r['choices'] as List? ?? const [];
+      if (choices.isEmpty) throw StateError('no answer: ${jsonEncode(r)}');
+      final message = Map<String, Object?>.from((choices.first as Map)['message'] as Map);
+      messages.add({'role': 'assistant', 'content': message['content'] ?? '', if (message['tool_calls'] != null) 'tool_calls': message['tool_calls']});
+      if (message['content'] case final String text) _said(text, decisions);
+      final calls = [for (final c in message['tool_calls'] as List? ?? const []) Map<String, Object?>.from(c as Map)];
+      if (calls.isEmpty || !tooling) break;
+      var failed = false;
+      for (final c in calls) {
+        final fn = Map<String, Object?>.from(c['function'] as Map);
+        Map<String, dynamic> input;
+        Map<String, Object?> out;
+        try {
+          final args = fn['arguments'];
+          input = args is String ? Map<String, dynamic>.from(jsonDecode(args.isEmpty ? '{}' : args) as Map) : Map<String, dynamic>.from(args as Map? ?? const {});
+          out = _carryOut('${fn['name']}', input, decisions);
+        } catch (err) {
+          out = {'ok': false, 'error': 'arguments are not valid JSON: $err'};
+        }
+        failed |= out['ok'] != true;
+        messages.add({'role': 'tool', 'tool_call_id': c['id'], 'content': jsonEncode(out)});
+      }
+      tooling = failed;
+    }
+    _endRound(decisions);
+  }
+
   Future<void> _decide() async {
+    if (provider != 'anthropic') return _decideOpenAi();
     final tools = _tools();
     final messages = <Map<String, Object?>>[
       {'role': 'user', 'content': _situation()},
     ];
     final decisions = <String>[];
-    // A few tool rounds at most; each answer is carried out at once.
-    for (int turn = 0; turn < 6; ++turn) {
+    // One batch of decisions, carried out at once; then a summary without
+    // tools (another batch only to fix a call that failed).
+    var tooling = true;
+    for (int turn = 0; turn < 4; ++turn) {
       final r = await _post({
         'model': model,
         'max_tokens': 16000,
         'system': _system,
         'tools': tools,
+        if (!tooling) 'tool_choice': {'type': 'none'},
         'messages': messages,
         'output_config': {'effort': effort},
         'fallbacks': 'default',
@@ -1398,37 +1575,20 @@ Do not repeat a change that is already in effect.${goal.isEmpty ? '' : '\nThe pl
       // The whole answer goes back as it came (thinking blocks included).
       messages.add({'role': 'assistant', 'content': content});
       for (final c in content.where((c) => c['type'] == 'text')) {
-        final t = '${c['text']}'.trim();
-        if (t.isNotEmpty) {
-          log('strategist: $t');
-          decisions.add(t.length > 300 ? '${t.substring(0, 300)}...' : t);
-        }
+        _said('${c['text']}', decisions);
       }
       final calls = content.where((c) => c['type'] == 'tool_use').toList();
-      if (stop != 'tool_use' || calls.isEmpty) break;
+      if (stop != 'tool_use' || calls.isEmpty || !tooling) break;
       final results = <Map<String, Object?>>[];
+      var failed = false;
       for (final c in calls) {
-        final name = c['name'] as String;
-        final input = Map<String, dynamic>.from(c['input'] as Map? ?? const {});
-        Map<String, Object?> out;
-        if (name == 'remember') {
-          final note = '${input['note'] ?? ''}'.trim();
-          if (note.isNotEmpty) _journal.add('${Agent.clock(agent.e.currentFrame)} note: $note');
-          out = {'ok': true};
-        } else {
-          out = agent.act({...input, 'action': name});
-          decisions.add('$name ${jsonEncode(input)}${out['ok'] == true ? '' : ' (failed: ${out['error']})'}');
-        }
-        log('strategist: $name ${jsonEncode(input)} -> ${jsonEncode(out)}');
+        final out = _carryOut(c['name'] as String, Map<String, dynamic>.from(c['input'] as Map? ?? const {}), decisions);
+        failed |= out['ok'] != true;
         results.add({'type': 'tool_result', 'tool_use_id': c['id'], 'content': jsonEncode(out), if (out['ok'] != true) 'is_error': true});
       }
       messages.add({'role': 'user', 'content': results});
+      tooling = failed;
     }
-    final at = Agent.clock(agent.e.currentFrame);
-    agent.event('strategist', {'round': _round, 'decisions': decisions});
-    if (decisions.isNotEmpty) _journal.add('$at ${decisions.join('; ')}');
-    while (_journal.length > 12) {
-      _journal.removeAt(0);
-    }
+    _endRound(decisions);
   }
 }
