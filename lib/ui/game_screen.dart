@@ -13,6 +13,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../game/game_controller.dart';
+import '../net/multiplayer.dart';
 import '../platform/env.dart';
 import '../game/game_data.dart';
 import '../game/game_setup.dart';
@@ -813,6 +814,11 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                 child: game,
               ),
             ),
+            if (_c.mp case final mp?)
+              ListenableBuilder(
+                listenable: mp,
+                builder: (_, _) => mp.advice == null ? const SizedBox.shrink() : _AdviceCard(advice: mp.advice!, onClose: mp.dismissAdvice),
+              ),
             if (_menuOpen)
               _GameMenu(
                 onResume: _closeMenu,
@@ -865,6 +871,54 @@ class _Overlay extends StatelessWidget {
               ),
             ),
           ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// Advice from an assistant following this game (docs/agent_api.md),
+/// until closed or the next advice.
+class _AdviceCard extends StatelessWidget {
+  final ({String from, String text}) advice;
+  final VoidCallback onClose;
+  const _AdviceCard({required this.advice, required this.onClose});
+
+  @override
+  Widget build(BuildContext context) => Positioned(
+    top: 44,
+    left: 0,
+    right: 0,
+    child: Center(
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 560),
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
+        decoration: BoxDecoration(
+          color: const Color(0xE6101A12),
+          border: Border.all(color: const Color(0xFF32D25A)),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(padding: EdgeInsets.only(top: 2, right: 10), child: Icon(Icons.tips_and_updates_outlined, size: 18, color: Color(0xFF32D25A))),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(advice.from, style: const TextStyle(fontSize: 12, color: Color(0xFF32D25A), fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 160),
+                    child: SingleChildScrollView(child: Text(advice.text, style: const TextStyle(fontSize: 13, color: Color(0xFFE8E8E8)))),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(tooltip: 'Close', iconSize: 18, onPressed: onClose, icon: const Icon(Icons.close)),
+          ],
         ),
       ),
     ),
@@ -996,6 +1050,7 @@ class _GameMenu extends StatelessWidget {
               label: const Text('Quit Brood'),
             ),
           ],
+          if (c.mp case final mp?) _assistants(mp),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -1015,4 +1070,33 @@ class _GameMenu extends StatelessWidget {
       ),
     );
   }
+
+  // Assistants following your game from outside (docs/agent_api.md) and
+  // what they may do.
+  Widget _assistants(MpSession mp) => ListenableBuilder(
+    listenable: mp,
+    builder: (_, _) => Padding(
+      padding: const EdgeInsets.only(top: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            mp.assistants.isEmpty ? 'Assistants: none connected' : 'Assistants: ${mp.assistants.join(', ')}',
+            style: const TextStyle(fontSize: 13, color: Color(0xFFBDBDBD)),
+          ),
+          const SizedBox(height: 6),
+          SegmentedButton<int>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: 0, label: Text('Advise'), tooltip: 'They may only send you advice'),
+              ButtonSegment(value: 1, label: Text('Auto-play'), tooltip: 'They may also steer your auto-play (attacks, targets, its numbers)'),
+              ButtonSegment(value: 2, label: Text('Command'), tooltip: 'They may command all your units'),
+            ],
+            selected: {mp.allow},
+            onSelectionChanged: (s) => mp.setAllow(s.first),
+          ),
+        ],
+      ),
+    ),
+  );
 }

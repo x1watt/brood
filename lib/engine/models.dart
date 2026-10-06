@@ -372,3 +372,15 @@ class BotProfileReport {
     );
   }
 }
+
+/// A profile's numbers at the start of a game (bw_bridge_bot_numbers).
+class BotNumbers {
+  /// By name ("army.wave_first"), in order; times in seconds.
+  final Map<String, int> values;
+
+  /// Some depend on random(): these are the lowest they can be.
+  final bool random;
+
+  final String error;
+  const BotNumbers(this.values, {this.random = false, this.error = ''});
+}

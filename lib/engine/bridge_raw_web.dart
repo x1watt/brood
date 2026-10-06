@@ -257,6 +257,9 @@ class BridgeRawWeb extends BridgeRaw {
   int bw_bridge_can_place(int bridge, int owner, int unit_type_id, int tile_x, int tile_y) => _call('_bw_bridge_can_place', [bridge, owner, unit_type_id, tile_x, tile_y]);
 
   @override
+  int bw_bridge_can_place_by(int bridge, int builder_unit_id, int unit_type_id, int tile_x, int tile_y) => _call('_bw_bridge_can_place_by', [bridge, builder_unit_id, unit_type_id, tile_x, tile_y]);
+
+  @override
   int bw_bridge_build(int bridge, int owner, int unit_type_id, int tile_x, int tile_y) => _call('_bw_bridge_build', [bridge, owner, unit_type_id, tile_x, tile_y]);
 
   @override
@@ -315,6 +318,15 @@ class BridgeRawWeb extends BridgeRaw {
 
   @override
   int bw_bridge_set_bot_profile(int bridge, int player_index, int bundle, int profile) => _call('_bw_bridge_set_bot_profile', [bridge, player_index, bundle, profile]);
+
+  @override
+  int bw_bridge_bot_steer(int bridge, int player_slot, int what, int a, int b) => _call('_bw_bridge_bot_steer', [bridge, player_slot, what, a, b]);
+
+  @override
+  int bw_bridge_keep_selection(int bridge, int owner, int on) => _call('_bw_bridge_keep_selection', [bridge, owner, on]);
+
+  @override
+  int bw_bridge_bot_numbers(int bridge, int bundle, int profile, int out, int out_cap) => _call('_bw_bridge_bot_numbers', [bridge, bundle, profile, out, out_cap]);
 
   @override
   int bw_bridge_set_rally(int bridge, int owner, int x, int y, int target_unit_id) => _call('_bw_bridge_set_rally', [bridge, owner, x, y, target_unit_id]);

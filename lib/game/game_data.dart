@@ -14,6 +14,9 @@ abstract class GameFiles {
   static GameFiles? _instance;
   static GameFiles get instance => _instance ??= platform.createGameFiles();
 
+  /// Tests: a stand-in for the player's files.
+  static set instance(GameFiles files) => _instance = files;
+
   /// Whether the game data is there and ready for the engine.
   bool get ready;
 
@@ -31,6 +34,13 @@ abstract class GameFiles {
   /// The player's own bot profiles (lib/game/bot_profiles.dart): every .bot
   /// file under bots/, by path relative to it.
   Future<Map<String, String>> botFiles() async => const {};
+
+  /// Writes one of the player's bot profile files ([relativePath] under
+  /// bots/, "mine/profile.bot"), creating or replacing it.
+  Future<void> saveBotFile(String relativePath, String text);
+
+  /// Deletes one of the player's bot profile files.
+  Future<void> deleteBotFile(String relativePath);
 
   bool exists(String path);
 

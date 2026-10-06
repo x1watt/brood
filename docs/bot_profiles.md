@@ -22,6 +22,23 @@ A game keeps the text of every file its profiles use (`GameSetup.botFiles`).
 A saved game loads with the profiles it was played with, and every player
 of a multiplayer game runs the same ones.
 
+## The editor
+
+The start screen's Bot profiles button (next to the opponents) opens the
+editor. It lists every profile. A shipped one opens as a copy, and yours
+open as they are. New profile starts from the standard player or a copy of
+any profile. A profile has two tabs:
+
+- **Settings**: its name, its description and every number it plays by,
+  grouped, with what each does and its standard value. Changed numbers are
+  kept in the profile's `settings.bot`, which `profile.bot` includes last,
+  so they win over its own `set` statements.
+- **Code**: its files in a text editor, with line numbers. New files are
+  included from `profile.bot`.
+
+Check compiles the profile as it stands, saved or not. An error names its
+place, and Show goes there.
+
 ## A profile
 
 A profile is a folder with a `profile.bot`; the folder's name identifies it.
@@ -190,6 +207,10 @@ army and economy), `utility(q)` (how much we want its alliance),
 `use_research(name)`, `use_mix(name)`, `print(x)` (to `BROOD_AI_LOG`).
 Diplomacy actions do nothing for auto-play, a vassal or a player out of
 the game.
+
+Agents and assistants (docs/agent_api.md) can steer a profile's player
+from outside during the game: start or hold attack waves, pick a target,
+or set any of its numbers.
 
 ## Engine side
 

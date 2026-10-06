@@ -155,6 +155,13 @@ class MpSession extends ChangeNotifier {
   bool outOfSync = false;
   String? lastNotice;
 
+  /// Assistants (docs/agent_api.md): programs following this player's game
+  /// (tool/brood_agent.dart), what they may do (0 advise, 1 steer the
+  /// auto-play, 2 command everything), and their latest advice.
+  List<String> assistants = const [];
+  int allow = 0;
+  ({String from, String text})? advice;
+
   /// Commands to run, by frame (entries in log format).
   final SplayTreeMap<int, List<int>> pending = SplayTreeMap();
 
@@ -188,6 +195,11 @@ class MpSession extends ChangeNotifier {
         names = {for (final e in (m['names'] as Map).entries) int.parse(e.key as String): e.value as String};
       case 'desync':
         outOfSync = true;
+      case 'assistants':
+        assistants = [for (final n in m['names'] as List? ?? const []) n as String];
+        allow = m['allow'] as int? ?? 0;
+      case 'advice':
+        advice = (from: m['from'] as String? ?? 'Assistant', text: m['text'] as String? ?? '');
     }
     notifyListeners();
   }
@@ -233,6 +245,18 @@ class MpSession extends ChangeNotifier {
   }
 
   void pause(bool on) => client.send({'t': 'pause', 'on': on});
+
+  /// What this player's assistants may do (see [allow]).
+  void setAllow(int level) {
+    allow = level;
+    client.send({'t': 'allow', 'level': level});
+    notifyListeners();
+  }
+
+  void dismissAdvice() {
+    advice = null;
+    notifyListeners();
+  }
 
   /// Every few seconds: a hash of the game at [frame] (to catch players
   /// drifting apart) and the alliances, for the lobby.

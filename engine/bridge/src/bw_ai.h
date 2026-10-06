@@ -129,6 +129,7 @@ struct player_state {
 	ai_tunables cfg;
 	std::array<int32_t, botscript::max_globals> vars{};
 	int plan_variant = 0, research_variant = 0, mix_variant = 0;
+	int hold_until = -1; // no attack wave before this frame (steered from outside)
 
 	uint32_t next() {
 		rng = rng * 1103515245u + 12345u;
@@ -262,6 +263,41 @@ struct ai_system {
 		cast_frame.clear();
 		version = 2;
 		for (auto& pr : slot_profile) pr.reset();
+	}
+
+	// Steering from outside (bw_bridge_bot_steer, logged): an agent or a
+	// person directing this computer player, or a human's auto-play.
+	enum steer_t : int { steer_attack = 1, steer_hold = 2, steer_focus = 3, steer_number = 4, steer_wave = 5 };
+	bool steer(int owner, int what, int a, int b, int frame) {
+		for (auto& p : players) {
+			if (p.owner != owner) continue;
+			switch (what) {
+			case steer_attack: // the next wave goes now
+				p.hold_until = -1;
+				p.attacking = true;
+				p.last_attack_order = -10000;
+				return true;
+			case steer_hold: // the army comes home and waits `a` seconds
+				p.attacking = false;
+				p.hold_until = frame + std::max(0, a) * 24;
+				return true;
+			case steer_focus:
+				p.focus = a >= 0 && a < 8 && a != owner ? a : -1;
+				return true;
+			case steer_number: {
+				auto& names = tunable_names();
+				if (a < 0 || (size_t)a >= names.size()) return false;
+				tunable_at(p.cfg, names[(size_t)a].offset) = botscript::wrap((int64_t)b * names[(size_t)a].scale);
+				botscript::sanitize(p.cfg);
+				return true;
+			}
+			case steer_wave:
+				p.wave_size = std::max(1, a);
+				return true;
+			default: return false;
+			}
+		}
+		return false;
 	}
 
 	const botscript::profile* profile_of(const player_state& p) const {
@@ -2946,11 +2982,12 @@ private:
 		// base to walk to (or a transport to carry them).
 		int ready = (int)air.size() + (ground_target ? (int)ground.size() : can_drop ? (int)ground.size() / 2 : 0);
 		if (!p.attacking) {
-			bool go = ready >= p.wave_size && any_target;
+			bool go = ready >= p.wave_size && any_target && frame >= p.hold_until;
 			if (any_target && ready > 0) {
 				auto r = fire(f, p, &s, botscript::h_wave, {ready});
 				if (r.value) go = r.v != 0;
 			}
+			if (frame < p.hold_until) go = false; // steered from outside: that comes first
 			if (go) {
 				p.attacking = true;
 				p.last_attack_order = -10000;

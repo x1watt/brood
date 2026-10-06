@@ -78,6 +78,10 @@ flutter:
         - asset: assets/fonts/NotoSans-Regular.ttf
         - asset: assets/fonts/NotoSans-Bold.ttf
           weight: 700
+    # The bot profile editor's code (same license).
+    - family: NotoSansMono
+      fonts:
+        - asset: assets/fonts/NotoSansMono-Regular.ttf
 
   # Bot profiles shipped with the game (docs/bot_profiles.md); a folder
   # each, so each is listed.

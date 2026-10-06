@@ -23,6 +23,7 @@ import '../game/play_stats.dart';
 import '../game/saved_games.dart';
 import '../game/settings.dart';
 import '../net/multiplayer.dart';
+import 'bot_editor.dart';
 import 'game_screen.dart';
 import 'lobby_panel.dart';
 import 'map_editor/map_editor_screen.dart';
@@ -67,7 +68,7 @@ class _StartScreenState extends State<StartScreen> {
   List<int> _opponentRaces = [randomRace];
   // Each opponent's bot profile (folder; empty: the standard player).
   List<String> _opponentBots = [''];
-  BotLibrary _bots = const BotLibrary({});
+  BotLibrary _bots = BotLibrary.empty;
   final Map<String, BotProfileReport> _botChecks = {};
   AllianceMode _alliances = AllianceMode.freeForAll;
 
@@ -105,6 +106,22 @@ class _StartScreenState extends State<StartScreen> {
         _checkBot(b);
       }
     });
+  }
+
+  /// The bot profile editor; profiles changed there are read again.
+  Future<void> _editBots() async {
+    _click();
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const BotProfilesScreen()));
+    final bots = await BotLibrary.load();
+    if (!mounted) return;
+    setState(() {
+      _bots = bots;
+      _botChecks.clear();
+      _opponentBots = [for (final b in _opponentBots) bots.byFolder(b) != null ? b : ''];
+    });
+    for (final b in _opponentBots.toSet()) {
+      _checkBot(b);
+    }
   }
 
   /// Compiles a chosen profile once, so a broken one shows its error.
@@ -602,7 +619,19 @@ class _StartScreenState extends State<StartScreen> {
                       },
                     ),
                   ),
-                  _heading('Opponents'),
+                  Row(
+                    children: [
+                      Expanded(child: _heading('Opponents')),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8, top: 6),
+                        child: TextButton.icon(
+                          onPressed: _editBots,
+                          icon: const Icon(Icons.tune, size: 16),
+                          label: const Text('Bot profiles', style: TextStyle(fontSize: 12)),
+                        ),
+                      ),
+                    ],
+                  ),
                   for (int i = 0; i < n - 1; ++i) _opponentRow(i),
                 ],
               ),

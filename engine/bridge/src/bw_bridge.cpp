@@ -149,7 +149,9 @@ struct bw_bridge {
 	// only holds the player's own units: allies' units can be grouped too.
 	std::array<std::array<a_vector<unit_id>, 10>, 8> groups;
 
-	// Command log for saved games: [frame, op, n, n args] per command.
+	// Command log for saved games: [frame, op, n, n args] per command. The
+	// numbers are kept in saves; tool/brood_server.dart also uses some
+	// (set_controller, autoplay, bot_steer and the game settings).
 	enum : int32_t {
 		op_select = 1,
 		op_order,
@@ -179,8 +181,13 @@ struct bw_bridge {
 		op_alliance_rules,
 		op_unload_unit,
 		op_ai_version,
+		op_bot_steer,
+		op_keep_selection,
 	};
 	bool legacy_ids = false; // see resolve_unit
+	// A player's selection kept while an assistant's commands run
+	// (bw_bridge_keep_selection).
+	std::array<decltype(action_st.selection)::value_type, 8> kept_selection;
 	a_vector<int32_t> cmd_log;
 	// Multiplayer (lockstep): while deferred, commands aren't run; they are
 	// queued in the outbox, sent to the server, and run when they come back
@@ -655,6 +662,8 @@ static bool run_logged(bw_bridge_t* bridge, int32_t op, int32_t n, const int32_t
 	case bw_bridge::op_alliance_rules: bw_bridge_alliance_set_capped(bridge, arg(0)); break;
 	case bw_bridge::op_unload_unit: bw_bridge_unload_unit(bridge, arg(0), arg(1)); break;
 	case bw_bridge::op_ai_version: bw_bridge_set_ai_version(bridge, arg(0)); break;
+	case bw_bridge::op_bot_steer: bw_bridge_bot_steer(bridge, arg(0), arg(1), arg(2), arg(3)); break;
+	case bw_bridge::op_keep_selection: bw_bridge_keep_selection(bridge, arg(0), arg(1)); break;
 	default: return false;
 	}
 	return true;
@@ -1606,6 +1615,22 @@ int bw_bridge_can_place(bw_bridge_t* bridge, int owner, int unit_type_id, int ti
 	}
 }
 
+int bw_bridge_can_place_by(bw_bridge_t* bridge, int32_t builder_unit_id, int unit_type_id, int tile_x, int tile_y) {
+	if (!bridge || unit_type_id < 0 || unit_type_id >= (int)UnitTypes::None || tile_x < 0 || tile_y < 0) return 0;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return 0;
+	try {
+		auto f = b->actions();
+		unit_t* u = resolve_unit(b, f, builder_unit_id);
+		if (!u) return 0;
+		const unit_type_t* ut = f.get_unit_type((UnitTypes)unit_type_id);
+		xy pos(tile_x * 32 + ut->placement_size.x / 2, tile_y * 32 + ut->placement_size.y / 2);
+		return f.can_place_building(u, u->owner, ut, pos, false, true) ? 1 : 0;
+	} catch (...) {
+		return 0;
+	}
+}
+
 static bw_status build_as(bw_bridge_t* bridge, int owner, int unit_type_id, int tile_x, int tile_y) {
 	if (!bridge || owner < 0 || owner > 7 || unit_type_id < 0 || unit_type_id >= (int)UnitTypes::None) return BW_ERR_INVALID_ARGUMENT;
 	if (tile_x < 0 || tile_y < 0) return BW_ERR_INVALID_ARGUMENT;
@@ -2210,6 +2235,44 @@ bw_status bw_bridge_bot_compile(bw_bridge_t* bridge, const char* bundle, const c
 	return BW_OK;
 }
 
+bw_status bw_bridge_bot_numbers(bw_bridge_t* bridge, const char* bundle, const char* profile, char* out, int out_cap) {
+	if (!bridge) return BW_ERR_INVALID_ARGUMENT;
+	// The start of a game for one player: only random() and arithmetic
+	// mean anything there.
+	struct start_host : botscript::host {
+		bw_ai::ai_tunables t;
+		std::array<int32_t, botscript::max_globals> g{};
+		bool random = false;
+		int32_t builtin(int id, const int32_t* x, int) override {
+			switch (id) {
+			case botscript::b_random: random = true; return std::min(x[0], x[1]);
+			case botscript::b_min: return std::min(x[0], x[1]);
+			case botscript::b_max: return std::max(x[0], x[1]);
+			case botscript::b_abs: return x[0] < 0 ? botscript::wrap(-(int64_t)x[0]) : x[0];
+			case botscript::b_clamp: return std::max(x[1], std::min(x[2], x[0]));
+			default: return 0;
+			}
+		}
+		int32_t* globals() override { return g.data(); }
+		bw_ai::ai_tunables& tunables() override { return t; }
+		void warn(const char*) override {}
+	} h;
+	if (profile && *profile) {
+		std::string message;
+		auto p = botscript::compile(botscript::parse_bundle(bundle), profile, message);
+		if (!p) {
+			write_report(out, out_cap, "ERROR\n" + message);
+			return BW_ERR_INVALID_ARGUMENT;
+		}
+		for (int fn : p->init) botscript::run(*p, fn, nullptr, 0, h);
+	}
+	std::string report;
+	for (auto& n : bw_ai::tunable_names()) report += std::string(n.name) + " " + std::to_string(bw_ai::tunable_at(h.t, n.offset) / n.scale) + "\n";
+	if (h.random) report += "random\n";
+	write_report(out, out_cap, report);
+	return BW_OK;
+}
+
 bw_status bw_bridge_set_bot_profile(bw_bridge_t* bridge, int player_index, const char* bundle, const char* profile) {
 	if (!bridge || player_index < 0 || player_index >= BW_MAX_PLAYERS) return BW_ERR_INVALID_ARGUMENT;
 	bw_bridge* b = B(bridge);
@@ -2222,6 +2285,24 @@ bw_status bw_bridge_set_bot_profile(bw_bridge_t* bridge, int player_index, const
 	slot = botscript::compile(botscript::parse_bundle(bundle), profile, message);
 	if (!slot) std::fprintf(stderr, "bot profile %s: %s\n", profile, message.c_str());
 	return slot ? BW_OK : BW_ERR_INVALID_ARGUMENT;
+}
+
+bw_status bw_bridge_bot_steer(bw_bridge_t* bridge, int player_slot, int what, int a, int b) {
+	if (!bridge || player_slot < 0 || player_slot > 7) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* bb = B(bridge);
+	if (!bb->in_game()) return BW_ERR_NO_GAME;
+	if (!bb->log(bw_bridge::op_bot_steer, {player_slot, what, a, b})) return BW_OK;
+	return bb->ai.steer(player_slot, what, a, b, bb->player->st().current_frame) ? BW_OK : BW_ERR_INVALID_ARGUMENT;
+}
+
+bw_status bw_bridge_keep_selection(bw_bridge_t* bridge, int owner, int on) {
+	if (!bridge || owner < 0 || owner > 7) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	if (!b->log(bw_bridge::op_keep_selection, {owner, on ? 1 : 0})) return BW_OK;
+	if (on) b->kept_selection[(size_t)owner] = b->action_st.selection.at((size_t)owner);
+	else b->action_st.selection.at((size_t)owner) = b->kept_selection[(size_t)owner];
+	return BW_OK;
 }
 
 bw_status bw_bridge_set_ai_version(bw_bridge_t* bridge, int version) {

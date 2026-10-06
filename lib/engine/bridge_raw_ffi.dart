@@ -313,6 +313,10 @@ class BridgeRawFfi extends BridgeRaw {
   @override
   int bw_bridge_can_place(int bridge, int owner, int unit_type_id, int tile_x, int tile_y) => _bw_bridge_can_place(bridge, owner, unit_type_id, tile_x, tile_y);
 
+  late final _bw_bridge_can_place_by = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.Int32, ffi.Int32, ffi.Int32), int Function(int, int, int, int, int)>('bw_bridge_can_place_by');
+  @override
+  int bw_bridge_can_place_by(int bridge, int builder_unit_id, int unit_type_id, int tile_x, int tile_y) => _bw_bridge_can_place_by(bridge, builder_unit_id, unit_type_id, tile_x, tile_y);
+
   late final _bw_bridge_build = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.Int32, ffi.Int32, ffi.Int32), int Function(int, int, int, int, int)>('bw_bridge_build');
   @override
   int bw_bridge_build(int bridge, int owner, int unit_type_id, int tile_x, int tile_y) => _bw_bridge_build(bridge, owner, unit_type_id, tile_x, tile_y);
@@ -392,6 +396,18 @@ class BridgeRawFfi extends BridgeRaw {
   late final _bw_bridge_set_bot_profile = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.IntPtr, ffi.IntPtr), int Function(int, int, int, int)>('bw_bridge_set_bot_profile');
   @override
   int bw_bridge_set_bot_profile(int bridge, int player_index, int bundle, int profile) => _bw_bridge_set_bot_profile(bridge, player_index, bundle, profile);
+
+  late final _bw_bridge_bot_steer = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.Int32, ffi.Int32, ffi.Int32), int Function(int, int, int, int, int)>('bw_bridge_bot_steer');
+  @override
+  int bw_bridge_bot_steer(int bridge, int player_slot, int what, int a, int b) => _bw_bridge_bot_steer(bridge, player_slot, what, a, b);
+
+  late final _bw_bridge_keep_selection = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.Int32), int Function(int, int, int)>('bw_bridge_keep_selection');
+  @override
+  int bw_bridge_keep_selection(int bridge, int owner, int on) => _bw_bridge_keep_selection(bridge, owner, on);
+
+  late final _bw_bridge_bot_numbers = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.IntPtr, ffi.IntPtr, ffi.IntPtr, ffi.Int32), int Function(int, int, int, int, int)>('bw_bridge_bot_numbers');
+  @override
+  int bw_bridge_bot_numbers(int bridge, int bundle, int profile, int out, int out_cap) => _bw_bridge_bot_numbers(bridge, bundle, profile, out, out_cap);
 
   late final _bw_bridge_set_rally = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.Int32, ffi.Int32, ffi.Int32), int Function(int, int, int, int, int)>('bw_bridge_set_rally');
   @override

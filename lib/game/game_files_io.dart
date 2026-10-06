@@ -69,6 +69,24 @@ class _FolderGameFiles extends GameFiles {
   }
 
   @override
+  Future<void> saveBotFile(String relativePath, String text) async {
+    final file = File('$dataDir/bots/$relativePath');
+    await file.parent.create(recursive: true);
+    final tmp = File('${file.path}.tmp');
+    await tmp.writeAsString(text, flush: true);
+    await tmp.rename(file.path);
+  }
+
+  @override
+  Future<void> deleteBotFile(String relativePath) async {
+    final file = File('$dataDir/bots/$relativePath');
+    if (await file.exists()) await file.delete();
+    // An empty profile folder goes too.
+    final dir = file.parent;
+    if (await dir.exists() && await dir.list().isEmpty) await dir.delete();
+  }
+
+  @override
   bool exists(String path) => File(path).existsSync();
 
   @override

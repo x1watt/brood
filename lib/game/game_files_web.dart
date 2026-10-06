@@ -41,6 +41,20 @@ class WebGameFiles extends GameFiles {
   @override
   Future<Map<String, String>> botFiles() async => Map.of(_bots);
 
+  @override
+  Future<void> saveBotFile(String relativePath, String text) async {
+    final db = await BroodDb.open();
+    await db.put(BroodDb.files, 'bots/$relativePath', Uint8List.fromList(utf8.encode(text)).buffer.toJS);
+    _bots[relativePath] = text;
+  }
+
+  @override
+  Future<void> deleteBotFile(String relativePath) async {
+    final db = await BroodDb.open();
+    await db.delete(BroodDb.files, 'bots/$relativePath');
+    _bots.remove(relativePath);
+  }
+
   /// Whether a game folder's file is a bot profile file ("bots/x/profile.bot").
   static bool isBotFile(String relativePath) => relativePath.startsWith('bots/') && relativePath.endsWith('.bot');
 

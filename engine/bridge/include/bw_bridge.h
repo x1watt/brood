@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 27
+#define BW_BRIDGE_ABI_VERSION 31
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -478,6 +478,10 @@ bw_status bw_bridge_train(bw_bridge_t* bridge, int owner, int unit_type_id);
 // top-left corner on tile (tile_x, tile_y).
 int bw_bridge_can_place(bw_bridge_t* bridge, int owner, int unit_type_id, int tile_x, int tile_y);
 
+// The same for builder `builder_unit_id`, whatever is selected (agents,
+// whose selection only changes when their commands come back).
+int bw_bridge_can_place_by(bw_bridge_t* bridge, int32_t builder_unit_id, int unit_type_id, int tile_x, int tile_y);
+
 // Orders the selected builder to construct unit_type_id at tile (tile_x, tile_y).
 bw_status bw_bridge_build(bw_bridge_t* bridge, int owner, int unit_type_id, int tile_x, int tile_y);
 
@@ -592,6 +596,30 @@ bw_status bw_bridge_bot_compile(bw_bridge_t* bridge, const char* bundle, const c
 // bw_bridge_new_game, also when that game is a saved one to load or
 // replay. BW_ERR_INVALID_ARGUMENT when it doesn't compile.
 bw_status bw_bridge_set_bot_profile(bw_bridge_t* bridge, int player_index, const char* bundle, const char* profile);
+
+// Steering a computer player (or a human's auto-play) from outside, for
+// agents and assistants (docs/agent_api.md); logged. The player keeps
+// playing by itself; these direct it:
+#define BW_STEER_ATTACK 1 // the next attack wave goes now
+#define BW_STEER_HOLD 2   // the army comes home; no wave for `a` seconds
+#define BW_STEER_FOCUS 3  // attack player `a`'s buildings first (-1: the nearest)
+#define BW_STEER_NUMBER 4 // number `a` (its place in bw_bridge_bot_numbers' list) = `b`
+#define BW_STEER_WAVE 5   // the next wave waits for `a` units
+// BW_ERR_INVALID_ARGUMENT when that slot has no computer player.
+bw_status bw_bridge_bot_steer(bw_bridge_t* bridge, int player_slot, int what, int a, int b);
+
+// An assistant's commands for a human (docs/agent_api.md) select the units
+// they order; on = 1 before them keeps the player's own selection, and
+// on = 0 after them puts it back, in the same frame. Logged.
+bw_status bw_bridge_keep_selection(bw_bridge_t* bridge, int owner, int on);
+
+// The numbers a player of profile `profile` starts the game with (after its
+// set statements), in the script's units (seconds for times): one
+// "name value" line each, in a fixed order, then "random" when a number
+// depends on random(). A NULL profile gives the standard values. Returns
+// BW_ERR_INVALID_ARGUMENT (and the error, as bw_bridge_bot_compile does)
+// when it doesn't compile.
+bw_status bw_bridge_bot_numbers(bw_bridge_t* bridge, const char* bundle, const char* profile, char* out, int out_cap);
 
 // Sets the selected building's rally point to a position or a unit.
 bw_status bw_bridge_set_rally(bw_bridge_t* bridge, int owner, int x, int y, int32_t target_unit_id);

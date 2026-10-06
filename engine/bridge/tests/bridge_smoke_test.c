@@ -751,7 +751,14 @@ static void test_bot_profiles(const char* dd, const char* mf) {
 	CHECK(bw_bridge_new_game(a, mf, &setup, slots) == BW_OK, "bots: game");
 	bw_bridge_set_autoplay(a, slots[0], BW_AUTOPLAY_ALL);
 	clock_t t0 = clock();
-	bw_bridge_step(a, 24 * 60 * 8);
+	bw_bridge_step(a, 24 * 60 * 6);
+	/* Steered from outside (agents): logged, so loading and replaying agree. */
+	CHECK(bw_bridge_bot_steer(a, slots[2], BW_STEER_ATTACK, 0, 0) == BW_OK, "bots: steer attack");
+	CHECK(bw_bridge_bot_steer(a, slots[1], BW_STEER_NUMBER, 0, 77) == BW_OK, "bots: steer a number");
+	CHECK(bw_bridge_bot_steer(a, slots[3], BW_STEER_HOLD, 60, 0) == BW_OK, "bots: steer hold");
+	CHECK(bw_bridge_bot_steer(a, slots[0], BW_STEER_WAVE, 5, 0) == BW_OK, "bots: steer the human's auto-play");
+	CHECK(bw_bridge_bot_steer(a, 7, BW_STEER_ATTACK, 0, 0) != BW_OK, "bots: steer nobody");
+	bw_bridge_step(a, 24 * 60 * 2);
 	for (int i = 1; i != 4; ++i) {
 		int w, bl, ar;
 		count_owned(a, slots[i], &w, &bl, &ar);

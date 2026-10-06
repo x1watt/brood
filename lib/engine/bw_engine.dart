@@ -540,6 +540,10 @@ class BwEngine {
 
   bool train(int owner, int unitTypeId) => _ok(_r.bw_bridge_train(_h, owner, unitTypeId));
 
+  /// Whether worker [builderUnitId] could place [unitTypeId] there,
+  /// whatever is selected.
+  bool canPlaceBy(int builderUnitId, int unitTypeId, int tileX, int tileY) => _r.bw_bridge_can_place_by(_h, builderUnitId, unitTypeId, tileX, tileY) != 0;
+
   bool canPlace(int owner, int unitTypeId, int tileX, int tileY) => _r.bw_bridge_can_place(_h, owner, unitTypeId, tileX, tileY) != 0;
 
   bool build(int owner, int unitTypeId, int tileX, int tileY) => _ok(_r.bw_bridge_build(_h, owner, unitTypeId, tileX, tileY));
@@ -694,6 +698,39 @@ class BwEngine {
       _r.free(out);
     }
   }
+
+  /// The numbers a player of profile [profile] starts with (null: the
+  /// standard ones), by name ("army.wave_first"), times in seconds.
+  /// [BotNumbers.error] says what is wrong when it doesn't compile.
+  BotNumbers botNumbers(Map<String, String> files, String? profile) {
+    const cap = 1 << 16;
+    final out = _r.malloc(cap);
+    try {
+      _withString(botBundle(files), (b) => _withString(profile ?? '', (p) => _r.bw_bridge_bot_numbers(_h, b, p, out, cap)));
+      final bytes = _r.bytes(out, cap);
+      final end = bytes.indexOf(0);
+      final text = utf8.decode(bytes.sublist(0, end < 0 ? cap : end), allowMalformed: true);
+      if (text.startsWith('ERROR\n')) return BotNumbers(const {}, error: text.substring(6).trim());
+      final values = <String, int>{};
+      var random = false;
+      for (final line in text.split('\n')) {
+        if (line == 'random') random = true;
+        final sp = line.indexOf(' ');
+        if (sp > 0) values[line.substring(0, sp)] = int.parse(line.substring(sp + 1));
+      }
+      return BotNumbers(values, random: random);
+    } finally {
+      _r.free(out);
+    }
+  }
+
+  /// Brackets an assistant's commands for [owner]: on keeps the player's
+  /// selection, off puts it back (same frame). Logged.
+  void keepSelection(int owner, bool on) => _r.bw_bridge_keep_selection(_h, owner, on ? 1 : 0);
+
+  /// Directs the computer player of [slot] (or a human's auto-play) from
+  /// outside (BW_STEER_*, docs/agent_api.md). Logged.
+  bool botSteer(int slot, int what, [int a = 0, int b = 0]) => _ok(_r.bw_bridge_bot_steer(_h, slot, what, a, b));
 
   /// The profile the computer player at [playerIndex] (its place in the
   /// setup) plays with in the games started after this; null or empty: the

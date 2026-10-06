@@ -131,7 +131,19 @@ computer player before bw_bridge_new_game (bw_bridge_set_bot_profile); the
 game's setup carries the text of the files it uses (GameSetup.botFiles),
 so saves and multiplayer games compile exactly the same profiles, and
 profiles' script variables count in bw_bridge_state_hash. Without a
-profile, or with "standard", the computer plays exactly as before.
+profile, or with "standard", the computer plays exactly as before. The
+start screen's Bot profiles button opens the editor (lib/ui/bot_editor.dart):
+profiles listed, made, copied and deleted, their numbers as a form
+(written to settings.bot), their files in a code editor with Check.
+
+Agents (docs/agent_api.md, tool/brood_agent.dart) follow a multiplayer
+game without a screen: the same engine (dart:ffi) in lockstep, an HTTP API
+on 127.0.0.1 and MCP on stdin/stdout for LLM tools. They assist a player
+(the server's assist message): a computer player fully, a human only as
+that person allows in the game menu (advice, steering their auto-play, or
+everything); or they host a game in the human's seat. Steering the
+built-in AI is a logged engine command (bw_bridge_bot_steer), so it stays
+in sync and replays.
 
 In-game alliances (engine/bridge/src/bw_alliances.h, lib/ui/alliance_panel.dart,
 F9 or the top bar button): players invite each other and accept or decline;
