@@ -385,6 +385,14 @@ class BridgeRawFfi extends BridgeRaw {
   @override
   int bw_bridge_set_ai_version(int bridge, int version) => _bw_bridge_set_ai_version(bridge, version);
 
+  late final _bw_bridge_bot_compile = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.IntPtr, ffi.IntPtr, ffi.IntPtr, ffi.Int32), int Function(int, int, int, int, int)>('bw_bridge_bot_compile');
+  @override
+  int bw_bridge_bot_compile(int bridge, int bundle, int profile, int out, int out_cap) => _bw_bridge_bot_compile(bridge, bundle, profile, out, out_cap);
+
+  late final _bw_bridge_set_bot_profile = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.IntPtr, ffi.IntPtr), int Function(int, int, int, int)>('bw_bridge_set_bot_profile');
+  @override
+  int bw_bridge_set_bot_profile(int bridge, int player_index, int bundle, int profile) => _bw_bridge_set_bot_profile(bridge, player_index, bundle, profile);
+
   late final _bw_bridge_set_rally = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.Int32, ffi.Int32, ffi.Int32), int Function(int, int, int, int, int)>('bw_bridge_set_rally');
   @override
   int bw_bridge_set_rally(int bridge, int owner, int x, int y, int target_unit_id) => _bw_bridge_set_rally(bridge, owner, x, y, target_unit_id);

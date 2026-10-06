@@ -6,7 +6,7 @@
 
 import 'dart:typed_data';
 
-const int BW_BRIDGE_ABI_VERSION = 26;
+const int BW_BRIDGE_ABI_VERSION = 27;
 const int BW_MAX_PLAYERS = 8;
 const int BW_PLAYER_HUMAN = 1;
 const int BW_PLAYER_COMPUTER = 2;
@@ -162,6 +162,8 @@ abstract class BridgeRaw {
   int bw_bridge_save_snapshot(int bridge, int out_data, int out_cap, int out_len);
   int bw_bridge_load_snapshot(int bridge, int data, int len);
   int bw_bridge_set_ai_version(int bridge, int version);
+  int bw_bridge_bot_compile(int bridge, int bundle, int profile, int out, int out_cap);
+  int bw_bridge_set_bot_profile(int bridge, int player_index, int bundle, int profile);
   int bw_bridge_set_rally(int bridge, int owner, int x, int y, int target_unit_id);
   int bw_bridge_grp_load(int bridge, int path);
   int bw_bridge_grp_frame_count(int bridge, int handle);

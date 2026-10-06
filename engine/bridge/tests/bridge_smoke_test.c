@@ -11,9 +11,11 @@
 
 #include "bw_bridge.h"
 
+#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 
 #define CHECK(cond, ...) do { if (!(cond)) { printf("bridge_smoke_test: FAIL - " __VA_ARGS__); printf("\n"); exit(1); } } while (0)
@@ -674,6 +676,122 @@ static void test_snapshot(const char* dd, const char* mf, int players, int minut
 	bw_bridge_destroy(b);
 }
 
+/* Bot profiles (assets/bots): the bundle of every .bot file below `root`,
+ * as bw_bridge_set_bot_profile takes it. */
+static void add_bot_files(char** buf, size_t* len, size_t* cap, const char* root, const char* rel) {
+	char dir[2048];
+	snprintf(dir, sizeof(dir), "%s/%s", root, rel);
+	DIR* d = opendir(dir);
+	if (!d) return;
+	struct dirent* e;
+	while ((e = readdir(d))) {
+		if (e->d_name[0] == '.') continue;
+		char path[1024], full[3072];
+		snprintf(path, sizeof(path), "%s%s%s", rel, *rel ? "/" : "", e->d_name);
+		snprintf(full, sizeof(full), "%s/%s", root, path);
+		struct stat st;
+		if (stat(full, &st) != 0) continue;
+		if (S_ISDIR(st.st_mode)) {
+			add_bot_files(buf, len, cap, root, path);
+			continue;
+		}
+		size_t n = strlen(path);
+		if (n < 4 || strcmp(path + n - 4, ".bot") != 0) continue;
+		FILE* f = fopen(full, "rb");
+		if (!f) continue;
+		size_t need = *len + n + (size_t)st.st_size + 3;
+		if (need > *cap) {
+			*cap = need * 2;
+			*buf = (char*)realloc(*buf, *cap);
+		}
+		memcpy(*buf + *len, path, n);
+		*len += n;
+		(*buf)[(*len)++] = 0x1F;
+		*len += fread(*buf + *len, 1, (size_t)st.st_size, f);
+		(*buf)[(*len)++] = 0x1E;
+		(*buf)[*len] = 0;
+		fclose(f);
+	}
+	closedir(d);
+}
+
+/* Computer players with bot profiles: the shipped ones compile, a broken
+ * one is reported with its place, and a game with profiles plays on
+ * identically from a loaded state and from its replayed log. */
+static void test_bot_profiles(const char* dd, const char* mf) {
+#ifdef BOTS_DIR
+	char* bundle = NULL;
+	size_t len = 0, cap = 0;
+	add_bot_files(&bundle, &len, &cap, BOTS_DIR, "");
+	CHECK(bundle && len > 0, "bots: no profiles in %s", BOTS_DIR);
+	bw_bridge_t* a = bw_bridge_create();
+	CHECK(a && bw_bridge_load_assets(a, dd) == BW_OK, "bots: load");
+	char report[4096];
+	CHECK(bw_bridge_bot_compile(a, bundle, "rusher", report, sizeof(report)) == BW_OK && strncmp(report, "OK\nRusher\n", 10) == 0, "bots: rusher: %s", report);
+	CHECK(strstr(report, "standard/numbers.bot") && strstr(report, "lib/common.bot"), "bots: rusher's files: %s", report);
+	const char* broken = "bad/profile.bot\x1F" "on think {\n  attack(;\n}\x1E";
+	CHECK(bw_bridge_bot_compile(a, broken, "bad", report, sizeof(report)) != BW_OK && strstr(report, "ERROR\nbad/profile.bot:2:"), "bots: error report: %s", report);
+	CHECK(bw_bridge_set_bot_profile(a, 1, broken, "bad") != BW_OK, "bots: a broken profile is refused");
+
+	bw_game_setup setup;
+	memset(&setup, 0, sizeof(setup));
+	setup.player_count = 4;
+	const char* profiles[4] = {NULL, "rusher", "turtle", "opportunist"};
+	for (int i = 0; i != 4; ++i) {
+		setup.controller[i] = i == 0 ? BW_PLAYER_HUMAN : BW_PLAYER_COMPUTER;
+		setup.race[i] = (i + 1) % 3;
+	}
+	setup.seed = 777;
+	int32_t slots[8];
+	bw_bridge_t* games[3] = {a, bw_bridge_create(), bw_bridge_create()};
+	for (int g = 0; g != 3; ++g) {
+		if (g) CHECK(games[g] && bw_bridge_load_assets(games[g], dd) == BW_OK, "bots: load %d", g);
+		for (int i = 1; i != 4; ++i) CHECK(bw_bridge_set_bot_profile(games[g], i, bundle, profiles[i]) == BW_OK, "bots: set %s", profiles[i]);
+	}
+	CHECK(bw_bridge_new_game(a, mf, &setup, slots) == BW_OK, "bots: game");
+	bw_bridge_set_autoplay(a, slots[0], BW_AUTOPLAY_ALL);
+	clock_t t0 = clock();
+	bw_bridge_step(a, 24 * 60 * 8);
+	for (int i = 1; i != 4; ++i) {
+		int w, bl, ar;
+		count_owned(a, slots[i], &w, &bl, &ar);
+		printf("bridge_smoke_test: bots: %s (race %d): %d workers, %d buildings, %d army at 8 min\n", profiles[i], setup.race[i], w, bl, ar);
+		if (bw_bridge_victory_state(a, slots[i]) == 0) CHECK(w >= 8 && bl >= 3, "bots: %s did not build up", profiles[i]);
+	}
+	int slen = 0;
+	CHECK(bw_bridge_save_snapshot(a, NULL, 0, &slen) == BW_OK && slen > 0, "bots: snapshot size");
+	uint8_t* data = (uint8_t*)malloc((size_t)slen);
+	CHECK(bw_bridge_save_snapshot(a, data, slen, &slen) == BW_OK, "bots: snapshot");
+	int32_t slots_b[8];
+	CHECK(bw_bridge_new_game(games[1], mf, &setup, slots_b) == BW_OK && bw_bridge_load_snapshot(games[1], data, slen) == BW_OK, "bots: load state");
+	free(data);
+	int diverged = -1;
+	for (int i = 0; i <= 24 * 60 * 4; i += 240) {
+		if (bw_bridge_state_hash(a) != bw_bridge_state_hash(games[1])) {
+			diverged = i;
+			break;
+		}
+		bw_bridge_step(a, 240);
+		bw_bridge_step(games[1], 240);
+	}
+	CHECK(diverged < 0, "bots: the loaded game drifted apart after %d frames", diverged);
+	/* The whole log replayed in a new game with the same profiles. */
+	int loglen = bw_bridge_command_log(a, NULL, 0);
+	int32_t* log = (int32_t*)malloc(sizeof(int32_t) * (size_t)(loglen + 1));
+	bw_bridge_command_log(a, log, loglen);
+	CHECK(bw_bridge_new_game(games[2], mf, &setup, slots_b) == BW_OK, "bots: replay game");
+	CHECK(bw_bridge_replay_commands(games[2], log, loglen, bw_bridge_current_frame(a)) == BW_OK, "bots: replay");
+	free(log);
+	CHECK(bw_bridge_state_hash(a) == bw_bridge_state_hash(games[2]), "bots: the replayed game differs");
+	printf("bridge_smoke_test: bots: 12 min with profiles, state and replay identical (%.1fs cpu)\n", (double)(clock() - t0) / CLOCKS_PER_SEC);
+	for (int g = 0; g != 3; ++g) bw_bridge_destroy(games[g]);
+	free(bundle);
+#else
+	(void)dd;
+	(void)mf;
+#endif
+}
+
 static void test_multiplayer(const char* dd, const char* mf) {
 	bw_game_setup setup;
 	memset(&setup, 0, sizeof(setup));
@@ -1158,6 +1276,7 @@ int main(int argc, char** argv) {
 	}
 	if (getenv("LIMITS_ONLY")) { test_limits(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
 	if (getenv("AUTOPLAY_ONLY")) { test_autoplay(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
+	if (getenv("BOTS_ONLY")) { test_bot_profiles(dd, mf); printf("bridge_smoke_test: OK\n"); return 0; }
 	bw_bridge_t* b = bw_bridge_create();
 	CHECK(b, "create");
 	CHECK(bw_bridge_load_assets(b, dd) == BW_OK, "load_assets(%s)", dd);
@@ -1466,6 +1585,7 @@ int main(int argc, char** argv) {
 	test_defensive(dd, mf);
 	test_snapshot(dd, mf, 4, 12);
 	test_autoplay(dd, mf);
+	test_bot_profiles(dd, mf);
 	test_ai(dd, mf);
 	printf("bridge_smoke_test: OK\n");
 	return 0;

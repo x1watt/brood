@@ -30,14 +30,23 @@ class PlayerSetup {
   final int race; // 0 zerg, 1 terran, 2 protoss, 3 random (before resolving)
   final int team; // 0 = no team; equal teams are allied
 
-  const PlayerSetup({required this.human, required this.race, this.team = 0});
+  /// A computer player's bot profile (its folder, docs/bot_profiles.md);
+  /// empty: the standard player.
+  final String bot;
 
-  PlayerSetup copyWith({int? race, int? team}) => PlayerSetup(human: human, race: race ?? this.race, team: team ?? this.team);
+  const PlayerSetup({required this.human, required this.race, this.team = 0, this.bot = ''});
 
-  Map<String, dynamic> toJson() => {'human': human, 'race': race, 'team': team};
+  PlayerSetup copyWith({int? race, int? team, String? bot}) =>
+      PlayerSetup(human: human, race: race ?? this.race, team: team ?? this.team, bot: bot ?? this.bot);
 
-  static PlayerSetup fromJson(Map<String, dynamic> j) =>
-      PlayerSetup(human: j['human'] == true, race: (j['race'] as num).toInt(), team: (j['team'] as num?)?.toInt() ?? 0);
+  Map<String, dynamic> toJson() => {'human': human, 'race': race, 'team': team, if (bot.isNotEmpty) 'bot': bot};
+
+  static PlayerSetup fromJson(Map<String, dynamic> j) => PlayerSetup(
+    human: j['human'] == true,
+    race: (j['race'] as num).toInt(),
+    team: (j['team'] as num?)?.toInt() ?? 0,
+    bot: j['bot'] as String? ?? '',
+  );
 }
 
 class GameSetup {
@@ -68,6 +77,11 @@ class GameSetup {
   /// nukes, drops, air play on islands): replays with the earlier player.
   final bool legacyAi;
 
+  /// The text of every bot profile file the players' profiles are made of
+  /// (path relative to the bots folder): kept with the game, so a saved
+  /// game and everyone in a multiplayer game play the same profiles.
+  final Map<String, String> botFiles;
+
   const GameSetup({
     required this.players,
     required this.alliances,
@@ -76,6 +90,7 @@ class GameSetup {
     this.legacyIds = false,
     this.legacyAlliances = false,
     this.legacyAi = false,
+    this.botFiles = const {},
   });
 
   bool get isResolved => players.every((p) => p.race >= 0 && p.race < 3);
@@ -107,15 +122,28 @@ class GameSetup {
         }
     }
     return GameSetup(
-      players: [for (int i = 0; i < players.length; ++i) PlayerSetup(human: players[i].human, race: races[i], team: teams[i])],
+      players: [for (int i = 0; i < players.length; ++i) players[i].copyWith(race: races[i], team: teams[i])],
       alliances: alliances,
       seed: seed,
       legacyRules: legacyRules,
       legacyIds: legacyIds,
       legacyAlliances: legacyAlliances,
       legacyAi: legacyAi,
+      botFiles: botFiles,
     );
   }
+
+  /// The same setup with the bot profile files given.
+  GameSetup withBotFiles(Map<String, String> files) => GameSetup(
+    players: players,
+    alliances: alliances,
+    seed: seed,
+    legacyRules: legacyRules,
+    legacyIds: legacyIds,
+    legacyAlliances: legacyAlliances,
+    legacyAi: legacyAi,
+    botFiles: files,
+  );
 
   Map<String, dynamic> toJson() => {
     'players': [for (final p in players) p.toJson()],
@@ -125,6 +153,7 @@ class GameSetup {
     'wideIds': !legacyIds,
     'allianceCap': !legacyAlliances,
     'aiV2': !legacyAi,
+    if (botFiles.isNotEmpty) 'botFiles': botFiles,
   };
 
   static GameSetup fromJson(Map<String, dynamic> j) => GameSetup(
@@ -135,6 +164,7 @@ class GameSetup {
     legacyIds: j['wideIds'] != true,
     legacyAlliances: j['allianceCap'] != true,
     legacyAi: j['aiV2'] != true,
+    botFiles: {for (final e in (j['botFiles'] as Map? ?? const {}).entries) e.key as String: e.value as String},
   );
 
   static int newSeed() => DateTime.now().microsecondsSinceEpoch & 0x7fffffff;

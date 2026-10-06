@@ -135,8 +135,9 @@ Future<void> serveStatic(HttpRequest req, Directory root) async {
   await req.response.close();
 }
 
-/// The player's game files: the three archives and the melee maps, by
-/// their path relative to the game folder (as the page stores them).
+/// The player's game files: the three archives, the melee maps and the bot
+/// profiles (bots/**.bot), by their path relative to the game folder (as
+/// the page stores them).
 class GameDataFiles {
   final Directory dir;
   final Map<String, File> byKey = {};
@@ -152,6 +153,10 @@ class GameDataFiles {
         continue;
       }
       final parts = rel.split('/');
+      if (parts.first == 'bots' && rel.endsWith('.bot')) {
+        byKey[rel] = e;
+        continue;
+      }
       final mapsAt = parts.indexWhere((p) => p.toLowerCase() == 'maps');
       final lower = rel.toLowerCase();
       if (mapsAt < 0 || !(lower.endsWith('.scm') || lower.endsWith('.scx'))) continue;

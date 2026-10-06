@@ -311,6 +311,12 @@ class BridgeRawWeb extends BridgeRaw {
   int bw_bridge_set_ai_version(int bridge, int version) => _call('_bw_bridge_set_ai_version', [bridge, version]);
 
   @override
+  int bw_bridge_bot_compile(int bridge, int bundle, int profile, int out, int out_cap) => _call('_bw_bridge_bot_compile', [bridge, bundle, profile, out, out_cap]);
+
+  @override
+  int bw_bridge_set_bot_profile(int bridge, int player_index, int bundle, int profile) => _call('_bw_bridge_set_bot_profile', [bridge, player_index, bundle, profile]);
+
+  @override
   int bw_bridge_set_rally(int bridge, int owner, int x, int y, int target_unit_id) => _call('_bw_bridge_set_rally', [bridge, owner, x, y, target_unit_id]);
 
   @override

@@ -1,0 +1,31 @@
+// assets/bots/loyal/profile.bot
+//
+// A faithful friend: trusting, open to alliances from the start, sends its
+// whole army to an ally in trouble, accepts surrenders, and never turns on
+// an ally.
+
+profile "Loyal ally" {
+	extends "standard";
+	description "Trusting and faithful: seeks friends early, helps allies with everything it has, never betrays.";
+}
+
+set personality.trust_min = 70;
+set personality.trust_span = 30;
+set diplomacy.first_invite = 2 * MINUTE;
+set diplomacy.invite_utility = 20;
+set diplomacy.accept_open = 20;
+set help.whole_army = 200;
+set help.range = 640;
+
+on invite(from) {
+	// Anyone who isn't clearly using us.
+	return utility(from) >= 10;
+}
+
+on surrender_offer(from, tribute, conquest) {
+	return true;
+}
+
+on betray(friend) {
+	return false;
+}

@@ -1,8 +1,12 @@
 // Not a regular test: runs computer-only games and prints what each player
 // fields. Run with: flutter test test/probe/ai_probe.dart --dart-define=MAP=... --dart-define=MINUTES=...
+// BOTS gives each player's bot profile from assets/bots, by player index
+// (",rusher,turtle": player 1 rushes, player 2 turtles, the others play
+// the standard player).
 import 'dart:io';
 
 import 'package:brood/engine/bw_engine.dart';
+import 'package:brood/game/bot_profiles.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -12,9 +16,21 @@ void main() {
     const players = int.fromEnvironment('PLAYERS', defaultValue: 4);
     const races = String.fromEnvironment('RACES', defaultValue: '1,2,0,1,2,0,1,2');
     const teams = String.fromEnvironment('TEAMS', defaultValue: '0,0,0,0,0,0,0,0');
+    const bots = String.fromEnvironment('BOTS');
     const data = '/home/brito/box/media/games/BROOD';
     final e = await BwEngine.open();
     e.loadAssets(data);
+    final dir = Directory('assets/bots');
+    final library = BotLibrary({
+      for (final f in dir.listSync(recursive: true).whereType<File>())
+        if (f.path.endsWith('.bot')) f.path.substring(dir.path.length + 1): f.readAsStringSync(),
+    });
+    final botOf = bots.split(',');
+    for (int i = 1; i < botOf.length && i < players; ++i) {
+      if (botOf[i].isEmpty) continue;
+      if (!e.setBotProfile(i, library.filesOf(botOf[i]), botOf[i])) throw StateError('bot profile ${botOf[i]}: ${e.compileBot(library.filesOf(botOf[i]), botOf[i]).error}');
+      stdout.writeln('player $i plays ${botOf[i]}');
+    }
     final r = races.split(',').map(int.parse).toList();
     final slots = e.newGame('$data/$map', [for (int i = 0; i < players; ++i) (human: i == 0, race: r[i], team: int.parse(teams.split(',')[i]))], 11);
     e.setAutoplay(slots[0], 15);

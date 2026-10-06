@@ -1,0 +1,41 @@
+// assets/bots/opportunist/profile.bot
+//
+// Plays the alliances for profit: joins only those stronger than itself,
+// turns on a weak ally early, takes every surrender worth something and
+// gives up quickly when it can't win.
+
+profile "Opportunist" {
+	extends "standard";
+	description "Joins the strong, turns on weak allies early, surrenders quickly when beaten.";
+}
+
+include "lib/common.bot";
+
+set personality.trust_min = 0;
+set personality.trust_span = 30;
+set diplomacy.betray_after = 5 * MINUTE;
+set diplomacy.betray_check = 30;
+set diplomacy.betray_edge = 110;
+set diplomacy.betray_outside = 2;
+set diplomacy.strong_ally = 30;
+set diplomacy.hopeless_after = 40;
+
+on invite(from) {
+	// Only a group stronger than ours.
+	return strength(from) > strength(me);
+}
+
+on surrender_offer(from, tribute, conquest) {
+	return tribute * 2 >= conquest;
+}
+
+var next_ask = 4 * MINUTE;
+
+on think {
+	// Alone: once a minute, ask the strongest enemy to team up.
+	if (group_size(me) == 1 && time >= next_ask) {
+		next_ask = time + MINUTE;
+		int s = strongest_enemy();
+		if (s >= 0 && strength(s) > strength(me)) invite(s);
+	}
+}

@@ -27,6 +27,11 @@
 // bw_bridge.cpp). Units a human ally took over recently are left alone, and
 // sharing a treasury with a human it spends only its share of it.
 //
+// Bot profiles (docs/bot_profiles.md, botscript.h) change how a player
+// plays: its numbers and tables (bw_ai_params.h), and scripts that make
+// decisions at the events fired here (think, attack waves, invitations,
+// surrenders, betrayal, helping allies). Without one it plays as always.
+//
 // It plays through OpenBW's action functions (select, train, build, order),
 // the same way a human's commands reach the simulation. It runs inside
 // bw_bridge_step and only uses deterministic inputs (unit list order, its
@@ -39,12 +44,14 @@
 #include "bwgame.h"
 #include "actions.h"
 #include "bw_alliances.h"
+#include "botscript.h"
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 
 namespace bw_ai {
 
@@ -117,6 +124,11 @@ struct player_state {
 	int next_scan = 0;
 	uint32_t expander = 0; // a worker ferried to build a town hall
 	int next_base = 0;
+	// Bot profile (botscript.h): the numbers it plays by, its script's
+	// variables, and the plan, research and mix variants in use.
+	ai_tunables cfg;
+	std::array<int32_t, botscript::max_globals> vars{};
+	int plan_variant = 0, research_variant = 0, mix_variant = 0;
 
 	uint32_t next() {
 		rng = rng * 1103515245u + 12345u;
@@ -168,6 +180,9 @@ struct ai_system {
 	bool thinking_human = false;
 	bool relaxed_placement = false;
 	a_vector<int> cast_frame; // by unit index: when it last used an ability
+	// Bot profiles by player slot (none: the standard player). Set before
+	// the players are added, like the rest of the game's setup.
+	std::array<std::shared_ptr<const botscript::profile>, 8> slot_profile;
 
 	// Turns auto-play for a human player on (with modes) or off (0).
 	void set_autoplay(int owner, race_t race, uint32_t seed, xy home, int modes) {
@@ -228,8 +243,14 @@ struct ai_system {
 		p.rng = seed * 2654435761u + (uint32_t)owner * 40503u + 1;
 		p.home = home;
 		p.rally = home;
-		p.trust = (int)(p.next() % 100);
-		p.next_invite = 24 * 60 * 3 + (int)(p.next() % (24 * 60));
+		// The profile's set statements and variables first: they may change
+		// the numbers below.
+		if (auto* pr = profile_of(p)) {
+			for (int fn : pr->init) run_script(nullptr, p, nullptr, fn, nullptr, 0);
+		}
+		p.trust = p.cfg.personality.trust_min + (int)(p.next() % (uint32_t)p.cfg.personality.trust_span);
+		p.next_invite = p.cfg.diplomacy.first_invite + (int)(p.next() % (uint32_t)p.cfg.diplomacy.first_invite_spread);
+		p.wave_size = p.cfg.army.wave_first;
 		players.push_back(p);
 	}
 
@@ -240,6 +261,23 @@ struct ai_system {
 		human_frame.clear();
 		cast_frame.clear();
 		version = 2;
+		for (auto& pr : slot_profile) pr.reset();
+	}
+
+	const botscript::profile* profile_of(const player_state& p) const {
+		return p.owner >= 0 && p.owner < 8 ? slot_profile[(size_t)p.owner].get() : nullptr;
+	}
+
+	// The variables of profiles' scripts, for the multiplayer sync check
+	// (0 without any).
+	uint32_t script_hash() const {
+		uint32_t h = 0;
+		for (auto& p : players) {
+			auto* pr = profile_of(p);
+			if (!pr || pr->globals.empty()) continue;
+			for (size_t i = 0; i != pr->globals.size(); ++i) h = (h ^ (uint32_t)p.vars[i]) * 16777619u;
+		}
+		return h;
 	}
 
 	void update(state& st, action_state& action_st) {
@@ -743,12 +781,13 @@ private:
 	// How much this player wants to be allied with `g` (another group).
 	int alliance_utility(action_functions& f, player& p, const assessment& a, const a_vector<int>& g) {
 		auto& al = *allies;
-		int u = (p.trust - 50) / 2;
+		auto& c = p.cfg.diplomacy;
+		int u = (p.trust - c.trust_center) / c.trust_div;
 		// Neighbours make the most useful allies (and the worst enemies).
 		int d = a.map_diagonal;
 		for (int m : g) d = std::min(d, f.xy_length(a.base[(size_t)m] - a.base[(size_t)p.owner]));
 		int closeness = 100 - std::min(100, d * 100 / a.map_diagonal);
-		u += closeness / 4;
+		u += closeness / c.closeness_div;
 		a_vector<int> my_group = al.members(al.group[p.owner]);
 		int mine = strength(a, my_group), theirs = strength(a, g);
 		// The strongest of everyone else.
@@ -759,21 +798,21 @@ private:
 		}
 		if (p.losing) {
 			bool has_attacker = std::find(g.begin(), g.end(), p.attacker) != g.end();
-			if (has_attacker) u += 55; // peace with whoever is winning against us
+			if (has_attacker) u += c.peace; // peace with whoever is winning against us
 			else {
 				int threat = 0;
 				for (int q = 0; q != 8; ++q) threat += a.near_me[(size_t)q];
-				if (theirs >= threat) u += 40 + closeness / 4; // they can come and help
+				if (theirs >= threat) u += c.helper + closeness / c.closeness_div; // they can come and help
 			}
 		} else {
-			if (mine > 0 && mine * 10 > std::max(strongest, theirs) * 16) u -= 35; // we don't need anyone
-			if (theirs * 3 < mine) u -= 15;                                      // they'd be dead weight
+			if (mine > 0 && mine * 100 > std::max(strongest, theirs) * c.dominant_pct) u -= c.dominant; // we don't need anyone
+			if (theirs * c.dead_weight_ratio < mine) u -= c.dead_weight;                                    // they'd be dead weight
 			// Winning a fight against them right now: no reason to stop.
 			int beating = 0;
 			for (int m : g) beating += allies->value_lost_to[(size_t)m][(size_t)p.owner];
-			if (beating > 0 && p.pressure[(size_t)g.front()] == 0 && beating > 400) u -= 20;
+			if (beating > 0 && p.pressure[(size_t)g.front()] == 0 && beating > c.beating_value) u -= c.beating;
 		}
-		if (strongest * 10 > mine * 13 && strongest > theirs) u += 25; // a common stronger enemy
+		if (strongest * 100 > mine * c.common_enemy_pct && strongest > theirs) u += c.common_enemy; // a common stronger enemy
 		// Allies share mining points: partners who mine a lot are worth more.
 		int my_rate = 0, their_rate = 0;
 		for (int m : my_group) {
@@ -782,19 +821,20 @@ private:
 		for (int m : g) {
 			if (!al.vassal(m)) their_rate += al.mineral_rate[m] + al.gas_rate[m];
 		}
-		if (their_rate > 0) u += std::min(25, their_rate * 20 / std::max(1, my_rate));
-		if (theirs > mine * 2 && !p.losing) u += 10;                    // safety with the strong
+		if (their_rate > 0) u += std::min(c.mining_max, their_rate * c.mining_scale / std::max(1, my_rate));
+		if (theirs > mine * 2 && !p.losing) u += c.strong_ally;                   // safety with the strong
 		return u;
 	}
 
 	void diplomacy(action_functions& f, player& p) {
 		auto& al = *allies;
+		auto& c = p.cfg.diplomacy;
 		state& st = f.st;
 		if (!al.active(st, p.owner) || al.vassal(p.owner)) return;
 		int frame = st.current_frame;
 		if (!p.diplomacy_started) {
 			p.diplomacy_started = true;
-			if (p.trust >= 30) al.set_open(st, p.owner, true);
+			if (p.trust >= c.open_trust) al.set_open(st, p.owner, true);
 		}
 		if (frame < p.next_assess) return;
 		p.next_assess = frame + 24;
@@ -820,7 +860,7 @@ private:
 			}
 		}
 		// Invaders at home that the defenders can't stop.
-		p.losing = threat > 300 && threat * 10 > a.my_home_army * 13 && recent > 150;
+		p.losing = threat > c.losing_threat && threat * 100 > a.my_home_army * c.losing_pct && recent > c.losing_losses;
 		if (!p.losing) p.losing_since = -1;
 		else if (p.losing_since < 0) p.losing_since = frame;
 		if (p.attacker >= 0 && al.vassal(p.attacker)) p.attacker = al.lord[p.attacker];
@@ -835,10 +875,10 @@ private:
 		// Openness follows the situation: under pressure or outmatched,
 		// look for friends; dominant and distrustful, keep to yourself.
 		if (frame >= p.next_open_change) {
-			bool want_open = p.losing || others_best * 10 > mine * 13 || (p.trust >= 30 && !(mine > others_best * 2 && p.trust < 60));
+			bool want_open = p.losing || others_best * 100 > mine * c.outmatched_pct || (p.trust >= c.open_trust && !(mine > others_best * 2 && p.trust < c.closed_trust));
 			if (want_open != al.open[p.owner]) {
 				al.set_open(st, p.owner, want_open);
-				p.next_open_change = frame + 24 * 60;
+				p.next_open_change = frame + c.open_check;
 			}
 		}
 
@@ -848,8 +888,10 @@ private:
 			if (sent < 0 || frame - sent < 24 * (3 + p.trust % 5)) continue;
 			bool yes = false;
 			if (al.merge_allowed(st, from, p.owner)) {
-				int u = alliance_utility(f, p, a, al.members(al.group[from])) + (int)(p.next() % 20);
-				yes = u >= (al.open[p.owner] ? 35 : 55);
+				int u = alliance_utility(f, p, a, al.members(al.group[from])) + (int)(p.next() % (uint32_t)c.accept_noise);
+				yes = u >= (al.open[p.owner] ? c.accept_open : c.accept_closed);
+				auto r = fire(f, p, nullptr, botscript::h_invite, {from});
+				if (r.value) yes = r.v != 0;
 			}
 			al.respond(st, p.owner, from, yes);
 		}
@@ -866,9 +908,11 @@ private:
 				for (unit_t* u : ptr(st.player_units.at(from))) {
 					if (!f.unit_dead(u)) conquest += u->unit_type->destroy_score;
 				}
-				int tribute = (al.mineral_rate[from] + al.gas_rate[from]) * 5 + a.army[(size_t)from] / 2;
+				int tribute = (al.mineral_rate[from] + al.gas_rate[from]) * c.tribute_rate + a.army[(size_t)from] / c.tribute_army_div;
 				bool busy = (al.fighting[p.owner] & ~(1u << from)) != 0;
-				yes = tribute + (busy ? conquest / 2 : 0) + p.trust * 20 >= conquest * 6 / 10;
+				yes = tribute + (busy ? conquest / 2 : 0) + p.trust * c.tribute_trust >= conquest * c.conquest_pct / 100;
+				auto r = fire(f, p, nullptr, botscript::h_surrender_offer, {from, tribute, conquest});
+				if (r.value) yes = r.v != 0;
 			}
 			al.answer_surrender(st, p.owner, from, yes);
 		}
@@ -876,11 +920,18 @@ private:
 		// Losing at home and turned down by the others: offer to surrender to
 		// whoever is winning (also after a long hopeless defence).
 		if (p.losing && p.attacker >= 0 && frame >= p.next_surrender) {
-			bool refused = frame - al.last_declined[p.owner] < 24 * 120;
-			bool hopeless = p.losing_since >= 0 && frame - p.losing_since > 24 * 75;
-			if ((refused || hopeless) && al.surrender_allowed(st, p.owner, p.attacker) && al.surrender_frame[p.attacker][p.owner] < 0) {
+			bool refused = frame - al.last_declined[p.owner] < c.refused_window;
+			bool hopeless = p.losing_since >= 0 && frame - p.losing_since > c.hopeless_after;
+			bool offer = refused || hopeless;
+			if (al.surrender_allowed(st, p.owner, p.attacker) && al.surrender_frame[p.attacker][p.owner] < 0) {
+				auto r = fire(f, p, nullptr, botscript::h_surrender, {p.attacker});
+				if (r.value) offer = r.v != 0;
+			} else {
+				offer = false;
+			}
+			if (offer) {
 				al.offer_surrender(st, p.owner, p.attacker);
-				p.next_surrender = frame + 24 * 60;
+				p.next_surrender = frame + c.surrender_retry;
 				return;
 			}
 		}
@@ -888,8 +939,8 @@ private:
 		// The best score comes from winning: once no meaningful enemy is left,
 		// turn on a clearly weaker ally (the more trusting wait for a bigger
 		// edge) to conquer it.
-		if (my_group.size() > 1 && frame >= p.next_betrayal_check && frame > 24 * 60 * 8) {
-			p.next_betrayal_check = frame + 24 * 60;
+		if (my_group.size() > 1 && frame >= p.next_betrayal_check && frame > c.betray_after) {
+			p.next_betrayal_check = frame + c.betray_check;
 			int outside = 0;
 			for (int q = 0; q != 8; ++q) {
 				if (al.active(st, q) && !al.same_group(q, p.owner)) outside += a.army[(size_t)q] + a.economy[(size_t)q] / 4;
@@ -911,8 +962,13 @@ private:
 					weakest_strength = sm;
 				}
 			}
-			int edge = 140 + p.trust; // percent
-			if (weakest >= 0 && !p.losing && outside * 4 < mine && me_strength * 100 > weakest_strength * edge) {
+			int edge = c.betray_edge + p.trust; // percent
+			bool betray = weakest >= 0 && !p.losing && outside * c.betray_outside < mine && me_strength * 100 > weakest_strength * edge;
+			if (weakest >= 0) {
+				auto r = fire(f, p, nullptr, botscript::h_betray, {weakest});
+				if (r.value) betray = r.v != 0;
+			}
+			if (betray) {
 				if (al.leave(st, p.owner)) {
 					p.focus = weakest;
 					return;
@@ -924,8 +980,8 @@ private:
 		// (With a human in the alliance, the humans decide who joins.)
 		if (al.capped && al.human_in(al.group[p.owner]) >= 0) return;
 		if (frame < p.next_invite) return;
-		if (!p.losing && frame < 24 * 60 * 3) return;
-		p.next_invite = frame + (p.losing ? 24 * 15 : 24 * (45 + (int)(p.next() % 45)));
+		if (!p.losing && frame < c.first_invite) return;
+		p.next_invite = frame + (p.losing ? c.invite_losing : c.invite_interval + 24 * (int)(p.next() % (uint32_t)c.invite_spread));
 		int size = al.capped ? al.free_members(al.group[p.owner]) : (int)my_group.size();
 		if (!p.losing && (!al.open[p.owner] || size >= bw_alliances::alliance_system::max_members)) return;
 		int best = -1000;
@@ -943,7 +999,7 @@ private:
 			}
 			// Don't pester someone who was just asked.
 			for (int m : g) {
-				if (p.asked_at[(size_t)m] && frame - (p.asked_at[(size_t)m] - 1) < 24 * 60) pending = true;
+				if (p.asked_at[(size_t)m] && frame - (p.asked_at[(size_t)m] - 1) < c.no_pester) pending = true;
 			}
 			if (pending || !receptive) continue;
 			int u = alliance_utility(f, p, a, g);
@@ -956,7 +1012,7 @@ private:
 			best = u;
 			target = who;
 		}
-		if (target >= 0 && best >= 40 && al.invite(st, p.owner, target)) p.asked_at[(size_t)target] = frame + 1;
+		if (target >= 0 && best >= c.invite_utility && al.invite(st, p.owner, target)) p.asked_at[(size_t)target] = frame + 1;
 	}
 
 	void think(action_functions& f, player& p) {
@@ -982,7 +1038,7 @@ private:
 		// Survival comes before the chosen job (see defend()).
 		unit_t* intruder = p.human ? find_intruder(f, p, s) : nullptr;
 		// Warned early by an enemy army on its way, not just at the gates.
-		if (intruder || (p.human && find_intruder(f, p, s, 1100))) p.threat_until = f.st.current_frame + 24 * 90;
+		if (intruder || (p.human && find_intruder(f, p, s, p.cfg.defense.warning_range))) p.threat_until = f.st.current_frame + p.cfg.defense.threat_hold;
 		// Under attack (and for a while after): the army there is, and the
 		// nearby workers, defend (command_army, defend()). Units are only
 		// trained in the attacking mode: an auto-play without it spending the
@@ -1038,7 +1094,7 @@ private:
 		xy center((int)f.game_st.map_width / 2, (int)f.game_st.map_height / 2);
 		xy d = center - p.home;
 		int len = std::max(1, f.xy_length(d));
-		return f.restrict_pos_to_map_bounds(p.home + d * 288 / len);
+		return f.restrict_pos_to_map_bounds(p.home + d * p.cfg.army.rally_distance / len);
 	}
 
 	void manage_workers(action_functions& f, player& p, snapshot& s) {
@@ -1048,12 +1104,12 @@ private:
 		for (unit_t* b : s.buildings) {
 			if (f.unit_is_refinery(b) && f.u_completed(b)) refineries.push_back(b);
 		}
-		int want_gas = (int)refineries.size() * 3;
+		int want_gas = (int)refineries.size() * p.cfg.economy.workers_per_refinery;
 		for (unit_t* w : s.workers) {
 			if (s.gas_workers >= want_gas) break;
 			auto id = w->order_type->id;
 			if (id != Orders::MoveToMinerals && id != Orders::WaitForMinerals && id != Orders::MiningMinerals) continue;
-			unit_t* refinery = refineries[(size_t)(s.gas_workers / 3) % refineries.size()];
+			unit_t* refinery = refineries[(size_t)(s.gas_workers / p.cfg.economy.workers_per_refinery) % refineries.size()];
 			if (select(f, p, w)) f.action_default_order(p.owner, refinery->sprite->position, refinery, nullptr, false);
 			++s.gas_workers;
 		}
@@ -1094,10 +1150,10 @@ private:
 		for (unit_t* b : s.buildings) {
 			if (f.u_completed(b) && (f.unit_is(b, UnitTypes::Terran_Barracks) || f.unit_is(b, UnitTypes::Terran_Factory) || f.unit_is(b, UnitTypes::Protoss_Gateway) || f.ut_resource_depot(b))) ++producers;
 		}
-		int margin = 2 + producers * 3;
+		int margin = p.cfg.economy.supply_margin + producers * p.cfg.economy.supply_margin_per_producer;
 		int in_progress = s.planned[(size_t)type] - s.done[(size_t)type];
 		int free_supply = s.supply_max - s.supply_used;
-		int wanted_in_progress = free_supply < margin ? (margin > 12 ? 2 : 1) : 0;
+		int wanted_in_progress = free_supply < margin ? (margin > p.cfg.economy.supply_double_margin ? 2 : 1) : 0;
 		if (in_progress >= wanted_in_progress) return false;
 		const unit_type_t* ut = f.get_unit_type(type);
 		if (!affordable(ut, minerals, gas)) return true; // save up for it
@@ -1120,7 +1176,7 @@ private:
 		return f.action_morph(p.owner, ut);
 	}
 
-	int wanted_workers(action_functions& f, snapshot& s) {
+	int wanted_workers(action_functions& f, player& p, snapshot& s) {
 		int refineries = 0;
 		for (unit_t* b : s.buildings) {
 			if (f.unit_is_refinery(b)) ++refineries;
@@ -1133,17 +1189,18 @@ private:
 			}
 			if (near_minerals) ++bases;
 		}
-		return std::min(60, std::max(1, bases) * 16 + refineries * 3);
+		auto& c = p.cfg.economy;
+		return std::min(c.max_workers, std::max(1, bases) * c.workers_per_base + refineries * c.workers_per_refinery);
 	}
 
 	void train_workers(action_functions& f, player& p, snapshot& s, int& minerals, int& gas) {
 		const unit_type_t* ut = f.get_unit_type(worker_of(p.race));
-		int want = wanted_workers(f, s);
+		int want = wanted_workers(f, p, s);
 		int have = s.planned[(size_t)ut->id];
 		if (have >= want) return;
 		if (p.race == race_t::zerg) {
 			// Drones compete with the army for larvae: keep a balance.
-			if (have >= 12 && (int)s.army.size() * 2 < have - 10) return;
+			if (have >= p.cfg.economy.zerg_drones_first && (int)s.army.size() * 2 < have - p.cfg.economy.zerg_drone_lead) return;
 			if (!affordable(ut, minerals, gas)) return;
 			if (s.supply_used + 1 > s.supply_max) return;
 			if (morph_larva(f, p, s, ut)) minerals -= ut->mineral_cost;
@@ -1307,7 +1364,7 @@ private:
 	void balance_workers(action_functions& f, player& p, snapshot& s) {
 		int frame = f.st.current_frame;
 		if (frame < p.next_balance || s.depots.size() < 2) return;
-		p.next_balance = frame + 24 * 10;
+		p.next_balance = frame + p.cfg.economy.balance_interval;
 		struct base_load {
 			unit_t* depot;
 			int patches = 0;
@@ -1340,11 +1397,11 @@ private:
 		}
 		// Two miners per patch is the sweet spot.
 		for (auto& from : bases) {
-			int surplus = (int)from.miners.size() - from.patches * 2;
+			int surplus = (int)from.miners.size() - from.patches * p.cfg.economy.miners_per_patch;
 			for (auto& to : bases) {
 				if (surplus <= 0) break;
 				if (&to == &from || to.patches == 0) continue;
-				int room = to.patches * 2 - (int)to.miners.size();
+				int room = to.patches * p.cfg.economy.miners_per_patch - (int)to.miners.size();
 				while (room > 0 && surplus > 0 && !from.miners.empty()) {
 					unit_t* w = from.miners.back();
 					from.miners.pop_back();
@@ -1388,7 +1445,7 @@ private:
 				if (f.unit_is(b, UnitTypes::Protoss_Pylon) && (!pylon || f.u_completed(b))) pylon = b;
 				if (f.unit_is(b, UnitTypes::Zerg_Creep_Colony) && f.u_completed(b) && b->build_queue.empty()) creep_colony = b;
 			}
-			if (defenses >= 2 && !creep_colony) continue;
+			if (defenses >= p.cfg.defense.expansion_defenses && !creep_colony) continue;
 			UnitTypes type = UnitTypes::None;
 			if (p.race == race_t::terran) {
 				if (s.done[(size_t)UnitTypes::Terran_Engineering_Bay]) type = UnitTypes::Terran_Missile_Turret;
@@ -1409,9 +1466,9 @@ private:
 					if (affordable(sunken, minerals, gas) && select(f, p, creep_colony) && f.action_morph_building(p.owner, sunken)) minerals -= sunken->mineral_cost;
 					return;
 				}
-				if (defenses < 2) type = UnitTypes::Zerg_Creep_Colony;
+				if (defenses < p.cfg.defense.expansion_defenses) type = UnitTypes::Zerg_Creep_Colony;
 			}
-			if (type == UnitTypes::None || defenses >= 2) continue;
+			if (type == UnitTypes::None || defenses >= p.cfg.defense.expansion_defenses) continue;
 			const unit_type_t* ut = f.get_unit_type(type);
 			if (!affordable(ut, minerals, gas)) return;
 			// Cannons must stand in the pylon's power field.
@@ -1454,7 +1511,8 @@ private:
 		for (unit_t* d : s.depots) {
 			xy at = d->sprite->position;
 			bool main = dist2(at, p.home) < 320 * 320;
-			int want_ground = main ? 4 : 2, want_air = main ? 3 : 2;
+			auto& c = p.cfg.defense;
+			int want_ground = main ? c.fortify_main_ground : c.fortify_ground, want_air = main ? c.fortify_main_air : c.fortify_air;
 			int ground = 0, air = 0;
 			unit_t* pylon = nullptr;
 			unit_t* creep_colony = nullptr;
@@ -1569,10 +1627,6 @@ private:
 		return c;
 	}
 
-	// How heavily a colony is fortified: ground defences (bunkers count with
-	// their tanks for Terran) and air defences.
-	static const int colony_ground = 8, colony_air = 3;
-
 	void colony_defense(action_functions& f, player& p, snapshot& s, int& minerals, int& gas) {
 		if (f.st.current_frame < p.next_colony) return;
 		UnitTypes tech = p.race == race_t::terran ? UnitTypes::Terran_Engineering_Bay
@@ -1600,7 +1654,10 @@ private:
 		// The weakest colony first; if nothing fits there, the next. With
 		// money piling up, colonies keep growing past the usual target (up
 		// to twice it).
-		int ground_target = minerals >= 400 ? colony_ground * 2 : colony_ground;
+		// How heavily a colony is fortified: ground defences (bunkers count with
+		// their tanks for Terran) and air defences.
+		int colony_ground = p.cfg.defense.colony_ground, colony_air = p.cfg.defense.colony_air;
+		int ground_target = minerals >= p.cfg.defense.colony_rich ? colony_ground * 2 : colony_ground;
 		a_vector<colony_count> colonies;
 		for (unit_t* d : s.depots) {
 			colony_count c = count_colony(f, p, s, d);
@@ -1623,6 +1680,7 @@ private:
 	// One defence (or what it needs) at colony c: 1 built or ordered, -1
 	// out of money (stop for now), 0 nothing fits here (try another colony).
 	int fortify_colony(action_functions& f, player& p, snapshot& s, colony_count& c, int& minerals, int& gas) {
+		int colony_air = p.cfg.defense.colony_air;
 		bool want_air = c.air < colony_air && (c.air * 3 <= c.ground + c.tanks);
 		xy at = c.hall->sprite->position;
 		auto try_place = [&](UnitTypes type, xy center, int min_r) {
@@ -1677,7 +1735,7 @@ private:
 	void colony_units(action_functions& f, player& p, snapshot& s, int& minerals, int& gas) {
 		if (f.st.current_frame < p.next_colony_units) return;
 		p.next_colony_units = f.st.current_frame + 24;
-		const int few = 6;
+		const int few = p.cfg.defense.colony_mobile;
 		int mobile = 0;
 		for (unit_t* u : s.army) {
 			if (!f.unit_is(u, UnitTypes::Terran_Siege_Tank_Tank_Mode) && !f.unit_is(u, UnitTypes::Terran_Siege_Tank_Siege_Mode)) ++mobile;
@@ -1705,9 +1763,9 @@ private:
 			for (unit_t* u : s.army) {
 				if (f.unit_is(u, UnitTypes::Terran_Siege_Tank_Tank_Mode) || f.unit_is(u, UnitTypes::Terran_Siege_Tank_Siege_Mode)) ++tanks;
 			}
-			if (mobile < bunkers * 4 + 4) train_at(UnitTypes::Terran_Barracks, UnitTypes::Terran_Marine);
+			if (mobile < bunkers * p.cfg.defense.marines_per_bunker + p.cfg.defense.colony_marines) train_at(UnitTypes::Terran_Barracks, UnitTypes::Terran_Marine);
 			// Tanks: one factory with its machine shop, siege mode researched.
-			int want_tanks = 3 * (int)s.depots.size();
+			int want_tanks = p.cfg.defense.colony_tanks * (int)s.depots.size();
 			if (s.done[(size_t)UnitTypes::Terran_Barracks] && tanks < want_tanks) {
 				if (!s.planned[(size_t)UnitTypes::Terran_Factory]) {
 					const unit_type_t* fac = f.get_unit_type(UnitTypes::Terran_Factory);
@@ -1745,7 +1803,7 @@ private:
 						for (auto id : b->loaded_units) {
 							if (f.get_unit(id)) ++loaded;
 						}
-						if (loaded >= 4) continue;
+						if (loaded >= p.cfg.defense.marines_per_bunker) continue;
 						int d = dist2(b->sprite->position, u->sprite->position);
 						if (!best || d < best_d) {
 							best = b;
@@ -1766,7 +1824,7 @@ private:
 						}
 					}
 					if (!home) continue;
-					if (dist2(u->sprite->position, home->sprite->position) < 256 * 256 || fewest >= 3) {
+					if (dist2(u->sprite->position, home->sprite->position) < 256 * 256 || fewest >= p.cfg.defense.colony_tanks) {
 						if (select(f, p, u)) f.action_siege(p.owner, false);
 					} else {
 						order_group(f, p, {u}, Orders::Move, home->sprite->position);
@@ -1916,11 +1974,12 @@ private:
 	}
 
 	// An enemy close to any of our buildings (within `range`), or null.
-	unit_t* find_intruder(action_functions& f, player& p, snapshot& s, int range = 512) {
+	unit_t* find_intruder(action_functions& f, player& p, snapshot& s, int range = 0) {
+		if (range == 0) range = p.cfg.defense.intruder_range;
 		for (unit_t* b : s.buildings) {
 			if (unit_t* e = nearest_enemy(f, p, b->sprite->position, false, range)) {
 				// Further out, only an armed force counts (not a scout or an Overlord).
-				if (range <= 512 || (!f.ut_worker(e) && f.unit_can_attack(e))) return e;
+				if (range <= p.cfg.defense.intruder_range || (!f.ut_worker(e) && f.unit_can_attack(e))) return e;
 			}
 		}
 		return nullptr;
@@ -1947,7 +2006,7 @@ private:
 		}
 		// Workers can't hit air, and an army of our own does better.
 		if (ours >= theirs || f.u_flying(intruder)) return;
-		size_t pull = ours == 0 ? 12 : 6;
+		size_t pull = (size_t)(ours == 0 ? p.cfg.defense.militia_all : p.cfg.defense.militia_some);
 		a_vector<unit_t*> militia;
 		for (unit_t* w : s.workers) {
 			if (militia.size() >= pull) break;
@@ -1955,7 +2014,7 @@ private:
 		}
 		if (militia.empty()) return;
 		order_group(f, p, militia, Orders::AttackMove, intruder->sprite->position);
-		p.militia_until = f.st.current_frame + 24 * 20;
+		p.militia_until = f.st.current_frame + p.cfg.defense.militia_time;
 	}
 
 	// Defensive mode: when an ally's base is attacked, about half the army
@@ -1964,6 +2023,7 @@ private:
 	// goes on to enemy bases. Returns the detachment's units.
 	a_vector<unit_t*> help_allies(action_functions& f, player& p, snapshot& s) {
 		int frame = f.st.current_frame;
+		auto& c = p.cfg.help;
 		if (frame >= p.next_ally_check) {
 			p.next_ally_check = frame + 24;
 			for (int m : allies->members(allies->group[p.owner])) {
@@ -1972,8 +2032,10 @@ private:
 				xy base;
 				for (unit_t* b : ptr(f.st.player_units.at(m))) {
 					if (f.unit_dead(b) || !b->sprite || !f.ut_building(b)) continue;
-					unit_t* e = nearest_enemy(f, p, b->sprite->position, false, 448);
+					unit_t* e = nearest_enemy(f, p, b->sprite->position, false, c.range);
 					if (!e || f.ut_worker(e) || !f.unit_can_attack(e)) continue;
+					auto r = fire(f, p, &s, botscript::h_ally_attacked, {m});
+					if (r.value && !r.v) break;
 					threat = e;
 					base = b->sprite->position;
 					break;
@@ -1984,7 +2046,7 @@ private:
 				p.guard_ally = m;
 				p.guard_pos = base;
 				p.help_target = threat->sprite->position;
-				p.help_until = frame + 24 * 4;
+				p.help_until = frame + c.fresh;
 				break;
 			}
 		}
@@ -2014,14 +2076,14 @@ private:
 				return dist2(a->sprite->position, p.help_target) < dist2(b->sprite->position, p.help_target);
 			});
 			// (Version 2: a small army goes whole.)
-			if (version < 2 || by_distance.size() > 6) by_distance.resize((by_distance.size() + 1) / 2);
+			if (version < 2 || (int)by_distance.size() > c.whole_army) by_distance.resize((by_distance.size() + 1) / 2);
 			group = by_distance;
 			for (unit_t* u : group) p.detached.push_back(f.get_unit_id_32(u).raw_value);
 			p.last_help_order = -10000;
 		}
 		if (group.empty()) return {};
 		if (threat) {
-			bool refresh = frame - p.last_help_order > 24 * 3;
+			bool refresh = frame - p.last_help_order > c.refresh;
 			a_vector<unit_t*> go;
 			for (unit_t* u : group) {
 				if (refresh || is_idle(u) || u->order_type->id == Orders::Move) go.push_back(u);
@@ -2032,7 +2094,7 @@ private:
 			// Threat gone: wait by the ally.
 			a_vector<unit_t*> back;
 			for (unit_t* u : group) {
-				if (is_idle(u) && dist2(u->sprite->position, p.guard_pos) > 224 * 224) back.push_back(u);
+				if (is_idle(u) && dist2(u->sprite->position, p.guard_pos) > c.guard_radius * c.guard_radius) back.push_back(u);
 			}
 			if (!back.empty()) order_group(f, p, back, Orders::Move, p.guard_pos);
 		}
@@ -2129,182 +2191,11 @@ private:
 	// or wait at home, casters stay with the army.
 	// =============================================================================
 
-	struct plan_step {
-		UnitTypes type;
-		int count;
-		int supply;
-		int where; // 0 any map, 1 when bases can be reached on the ground, 2 when they can't
-	};
-
-	struct research2_step {
-		UnitTypes building;
-		bool is_tech;
-		int id;
-		int supply;
-		int where;
-	};
-
 	struct unit_want {
 		UnitTypes type;
 		int share; // relative share of the army
 		int cap;   // at most this many (0: no cap)
 	};
-
-	static const a_vector<plan_step>& plan2(race_t r) {
-		using U = UnitTypes;
-		static const a_vector<plan_step> terran = {
-			{U::Terran_Barracks, 1, 10, 0},
-			{U::Terran_Refinery, 1, 12, 0},
-			{U::Terran_Factory, 1, 14, 2},
-			{U::Terran_Starport, 1, 17, 2},
-			{U::Terran_Barracks, 2, 15, 1},
-			{U::Terran_Academy, 1, 18, 1},
-			{U::Terran_Engineering_Bay, 1, 20, 2},
-			{U::Terran_Factory, 1, 22, 1},
-			{U::Terran_Starport, 2, 26, 2},
-			{U::Terran_Engineering_Bay, 1, 26, 1},
-			{U::Terran_Barracks, 3, 30, 1},
-			{U::Terran_Armory, 1, 32, 2},
-			{U::Terran_Refinery, 2, 34, 0},
-			{U::Terran_Starport, 1, 38, 1},
-			{U::Terran_Science_Facility, 1, 40, 2},
-			{U::Terran_Armory, 1, 44, 1},
-			{U::Terran_Academy, 1, 44, 2},
-			{U::Terran_Factory, 2, 48, 1},
-			{U::Terran_Starport, 3, 50, 2},
-			{U::Terran_Science_Facility, 1, 56, 1},
-			{U::Terran_Barracks, 4, 64, 1},
-			{U::Terran_Starport, 4, 70, 2},
-			{U::Terran_Starport, 2, 80, 1},
-			{U::Terran_Science_Facility, 2, 84, 0},
-			{U::Terran_Factory, 3, 90, 1},
-			{U::Terran_Barracks, 5, 110, 1},
-			{U::Terran_Starport, 5, 120, 2},
-		};
-		static const a_vector<plan_step> protoss = {
-			{U::Protoss_Gateway, 1, 10, 0},
-			{U::Protoss_Assimilator, 1, 12, 0},
-			{U::Protoss_Cybernetics_Core, 1, 14, 0},
-			{U::Protoss_Stargate, 1, 18, 2},
-			{U::Protoss_Gateway, 2, 16, 1},
-			{U::Protoss_Forge, 1, 20, 2},
-			{U::Protoss_Robotics_Facility, 1, 22, 1},
-			{U::Protoss_Forge, 1, 26, 1},
-			{U::Protoss_Stargate, 2, 26, 2},
-			{U::Protoss_Gateway, 3, 28, 1},
-			{U::Protoss_Assimilator, 2, 32, 0},
-			{U::Protoss_Fleet_Beacon, 1, 34, 2},
-			{U::Protoss_Citadel_of_Adun, 1, 34, 1},
-			{U::Protoss_Robotics_Support_Bay, 1, 38, 1},
-			{U::Protoss_Robotics_Facility, 1, 40, 2},
-			{U::Protoss_Observatory, 1, 42, 0},
-			{U::Protoss_Templar_Archives, 1, 46, 1},
-			{U::Protoss_Stargate, 3, 50, 2},
-			{U::Protoss_Gateway, 4, 50, 1},
-			{U::Protoss_Citadel_of_Adun, 1, 56, 2},
-			{U::Protoss_Stargate, 1, 60, 1},
-			{U::Protoss_Templar_Archives, 1, 60, 2},
-			{U::Protoss_Gateway, 5, 66, 1},
-			{U::Protoss_Arbiter_Tribunal, 1, 70, 2},
-			{U::Protoss_Fleet_Beacon, 1, 76, 1},
-			{U::Protoss_Stargate, 4, 80, 2},
-			{U::Protoss_Arbiter_Tribunal, 1, 90, 1},
-			{U::Protoss_Stargate, 2, 100, 1},
-			{U::Protoss_Gateway, 6, 110, 1},
-		};
-		static const a_vector<plan_step> zerg = {
-			{U::Zerg_Spawning_Pool, 1, 9, 0},
-			{U::Zerg_Extractor, 1, 11, 0},
-			{U::Zerg_Hatchery, 2, 13, 1},
-			{U::Zerg_Lair, 1, 14, 2},
-			{U::Zerg_Hydralisk_Den, 1, 18, 1},
-			{U::Zerg_Spire, 1, 20, 2},
-			{U::Zerg_Evolution_Chamber, 1, 22, 0},
-			{U::Zerg_Hatchery, 2, 24, 2},
-			{U::Zerg_Lair, 1, 28, 1},
-			{U::Zerg_Hydralisk_Den, 1, 30, 2},
-			{U::Zerg_Extractor, 2, 32, 0},
-			{U::Zerg_Spire, 1, 34, 1},
-			{U::Zerg_Queens_Nest, 1, 36, 0},
-			{U::Zerg_Hatchery, 3, 40, 1},
-			{U::Zerg_Hive, 1, 44, 2},
-			{U::Zerg_Evolution_Chamber, 2, 50, 1},
-			{U::Zerg_Greater_Spire, 1, 50, 2},
-			{U::Zerg_Hive, 1, 56, 1},
-			{U::Zerg_Hatchery, 3, 60, 2},
-			{U::Zerg_Defiler_Mound, 1, 64, 1},
-			{U::Zerg_Ultralisk_Cavern, 1, 70, 1},
-			{U::Zerg_Defiler_Mound, 1, 70, 2},
-			{U::Zerg_Greater_Spire, 1, 80, 1},
-			{U::Zerg_Hatchery, 4, 90, 0},
-		};
-		return r == race_t::zerg ? zerg : r == race_t::protoss ? protoss : terran;
-	}
-
-	static const a_vector<research2_step>& research_plan2(race_t r) {
-		using U = UnitTypes;
-		using T = TechTypes;
-		using G = UpgradeTypes;
-		static const a_vector<research2_step> terran = {
-			{U::Terran_Academy, true, (int)T::Stim_Packs, 20, 1},
-			{U::Terran_Machine_Shop, true, (int)T::Tank_Siege_Mode, 24, 0},
-			{U::Terran_Academy, false, (int)G::U_238_Shells, 26, 1},
-			{U::Terran_Control_Tower, true, (int)T::Cloaking_Field, 30, 2},
-			{U::Terran_Machine_Shop, true, (int)T::Spider_Mines, 30, 1},
-			{U::Terran_Engineering_Bay, false, (int)G::Terran_Infantry_Weapons, 34, 1},
-			{U::Terran_Armory, false, (int)G::Terran_Ship_Weapons, 36, 2},
-			{U::Terran_Armory, false, (int)G::Terran_Vehicle_Weapons, 50, 1},
-			{U::Terran_Physics_Lab, true, (int)T::Yamato_Gun, 50, 0},
-			{U::Terran_Science_Facility, true, (int)T::Irradiate, 56, 0},
-			{U::Terran_Armory, false, (int)G::Terran_Ship_Plating, 56, 2},
-			{U::Terran_Engineering_Bay, false, (int)G::Terran_Infantry_Armor, 60, 1},
-			{U::Terran_Machine_Shop, false, (int)G::Charon_Boosters, 64, 0},
-			{U::Terran_Covert_Ops, true, (int)T::Personnel_Cloaking, 70, 0},
-			{U::Terran_Covert_Ops, true, (int)T::Lockdown, 76, 0},
-			{U::Terran_Science_Facility, true, (int)T::EMP_Shockwave, 80, 0},
-			{U::Terran_Armory, false, (int)G::Terran_Vehicle_Plating, 90, 1},
-			{U::Terran_Control_Tower, true, (int)T::Cloaking_Field, 90, 1},
-			{U::Terran_Armory, false, (int)G::Terran_Ship_Weapons, 100, 1},
-		};
-		static const a_vector<research2_step> protoss = {
-			{U::Protoss_Cybernetics_Core, false, (int)G::Singularity_Charge, 20, 1},
-			{U::Protoss_Cybernetics_Core, false, (int)G::Protoss_Air_Weapons, 26, 2},
-			{U::Protoss_Forge, false, (int)G::Protoss_Ground_Weapons, 30, 1},
-			{U::Protoss_Fleet_Beacon, false, (int)G::Carrier_Capacity, 36, 0},
-			{U::Protoss_Citadel_of_Adun, false, (int)G::Leg_Enhancements, 38, 1},
-			{U::Protoss_Robotics_Support_Bay, false, (int)G::Reaver_Capacity, 42, 0},
-			{U::Protoss_Robotics_Support_Bay, false, (int)G::Gravitic_Drive, 46, 2},
-			{U::Protoss_Templar_Archives, true, (int)T::Psionic_Storm, 48, 0},
-			{U::Protoss_Cybernetics_Core, false, (int)G::Protoss_Air_Armor, 56, 2},
-			{U::Protoss_Forge, false, (int)G::Protoss_Ground_Armor, 60, 1},
-			{U::Protoss_Arbiter_Tribunal, true, (int)T::Stasis_Field, 72, 0},
-			{U::Protoss_Cybernetics_Core, false, (int)G::Protoss_Air_Weapons, 80, 1},
-			{U::Protoss_Forge, false, (int)G::Protoss_Plasma_Shields, 100, 0},
-		};
-		static const a_vector<research2_step> zerg = {
-			{U::Zerg_Spawning_Pool, false, (int)G::Metabolic_Boost, 14, 1},
-			{U::Zerg_Spire, false, (int)G::Zerg_Flyer_Attacks, 26, 2},
-			{U::Zerg_Hydralisk_Den, false, (int)G::Grooved_Spines, 22, 1},
-			{U::Zerg_Hydralisk_Den, false, (int)G::Muscular_Augments, 26, 1},
-			{U::Zerg_Evolution_Chamber, false, (int)G::Zerg_Missile_Attacks, 30, 1},
-			{U::Zerg_Lair, false, (int)G::Ventral_Sacs, 34, 2},
-			{U::Zerg_Hydralisk_Den, true, (int)T::Lurker_Aspect, 38, 1},
-			{U::Zerg_Spire, false, (int)G::Zerg_Flyer_Carapace, 40, 2},
-			{U::Zerg_Queens_Nest, true, (int)T::Spawn_Broodlings, 46, 0},
-			{U::Zerg_Lair, false, (int)G::Pneumatized_Carapace, 50, 0},
-			{U::Zerg_Evolution_Chamber, false, (int)G::Zerg_Carapace, 50, 1},
-			{U::Zerg_Queens_Nest, true, (int)T::Ensnare, 56, 0},
-			{U::Zerg_Defiler_Mound, true, (int)T::Plague, 66, 0},
-			{U::Zerg_Defiler_Mound, true, (int)T::Consume, 70, 0},
-			{U::Zerg_Lair, false, (int)G::Ventral_Sacs, 70, 1},
-			{U::Zerg_Spawning_Pool, false, (int)G::Adrenal_Glands, 72, 1},
-			{U::Zerg_Ultralisk_Cavern, false, (int)G::Chitinous_Plating, 76, 1},
-			{U::Zerg_Ultralisk_Cavern, false, (int)G::Anabolic_Synthesis, 80, 1},
-			{U::Zerg_Spire, false, (int)G::Zerg_Flyer_Attacks, 80, 1},
-			{U::Zerg_Evolution_Chamber, false, (int)G::Zerg_Melee_Attacks, 84, 1},
-		};
-		return r == race_t::zerg ? zerg : r == race_t::protoss ? protoss : terran;
-	}
 
 	static bool step_applies(const player& p, int where) {
 		return where == 0 || (where == 1 && !p.island) || (where == 2 && p.island);
@@ -2350,42 +2241,15 @@ private:
 	// --- the army's mix ---------------------------------------------------------
 
 	a_vector<unit_want> composition(action_functions& f, player& p, snapshot& s) {
-		using U = UnitTypes;
-		int aa = std::min(24, p.enemy_air / 200);
-		bool late = f.st.current_frame > 24 * 60 * 14;
+		auto& c = p.cfg.army;
+		int aa = std::min(c.aa_max, p.enemy_air / c.aa_per);
+		bool late = f.st.current_frame > c.late_game;
 		bool cloak = p.enemy_cloaked > 0;
 		a_vector<unit_want> w;
-		if (p.race == race_t::terran) {
-			if (p.island) {
-				w = {{U::Terran_Wraith, 10, 0}, {U::Terran_Battlecruiser, 16, 0}, {U::Terran_Valkyrie, 2 + aa, 12},
-				     {U::Terran_Science_Vessel, 2, 3}, {U::Terran_Dropship, 3, 3}, {U::Terran_Marine, 8, 16},
-				     {U::Terran_Siege_Tank_Tank_Mode, 4, 6}, {U::Terran_Goliath, 3 + aa / 2, 16}, {U::Terran_Ghost, 1, 2}};
-			} else {
-				w = {{U::Terran_Marine, 30, 0}, {U::Terran_Medic, 5, 12}, {U::Terran_Firebat, 4, 10}, {U::Terran_Vulture, 8, 16},
-				     {U::Terran_Siege_Tank_Tank_Mode, 14, 0}, {U::Terran_Goliath, 4 + aa, 30}, {U::Terran_Science_Vessel, 3, 4},
-				     {U::Terran_Battlecruiser, late ? 8 : 2, 0}, {U::Terran_Ghost, 2, 3}, {U::Terran_Wraith, 2, 6},
-				     {U::Terran_Valkyrie, aa / 2, 8}};
-				if (p.some_island) w.push_back({U::Terran_Dropship, 2, 2});
-			}
-		} else if (p.race == race_t::protoss) {
-			if (p.island) {
-				w = {{U::Protoss_Scout, 4, 8}, {U::Protoss_Corsair, 4 + aa, 16}, {U::Protoss_Carrier, 18, 0}, {U::Protoss_Arbiter, 1, 2},
-				     {U::Protoss_Shuttle, 3, 3}, {U::Protoss_Reaver, 2, 3}, {U::Protoss_Zealot, 5, 10}, {U::Protoss_Dragoon, 5, 10},
-				     {U::Protoss_Observer, cloak ? 2 : 1, 2}, {U::Protoss_High_Templar, 1, 2}};
-			} else {
-				w = {{U::Protoss_Zealot, 16, 0}, {U::Protoss_Dragoon, 18 + aa, 0}, {U::Protoss_High_Templar, 4, 6}, {U::Protoss_Dark_Templar, 3, 4},
-				     {U::Protoss_Reaver, 3, 4}, {U::Protoss_Observer, cloak ? 3 : 2, 3}, {U::Protoss_Shuttle, 2, 2},
-				     {U::Protoss_Carrier, late ? 8 : 2, 0}, {U::Protoss_Arbiter, 1, 1}, {U::Protoss_Corsair, 1 + aa, 12}};
-			}
-		} else {
-			if (p.island) {
-				w = {{U::Zerg_Mutalisk, 18, 0}, {U::Zerg_Scourge, 3 + aa, 16}, {U::Zerg_Guardian, 10, 0}, {U::Zerg_Devourer, 2 + aa / 2, 10},
-				     {U::Zerg_Queen, 1, 2}, {U::Zerg_Defiler, 1, 1}, {U::Zerg_Hydralisk, 6, 12}, {U::Zerg_Zergling, 6, 16}};
-			} else {
-				w = {{U::Zerg_Zergling, 20, 0}, {U::Zerg_Hydralisk, 18, 0}, {U::Zerg_Lurker, 6, 8}, {U::Zerg_Mutalisk, 10, 0},
-				     {U::Zerg_Ultralisk, late ? 6 : 0, 8}, {U::Zerg_Defiler, 2, 2}, {U::Zerg_Queen, 1, 2}, {U::Zerg_Scourge, aa, 12},
-				     {U::Zerg_Guardian, late ? 5 : 0, 10}, {U::Zerg_Devourer, aa / 3, 6}};
-			}
+		for (auto& r : mix_of(p)) {
+			if (r.some_island && !p.some_island) continue;
+			int share = late && r.late >= 0 ? r.late : cloak && r.cloak >= 0 ? r.cloak : r.share;
+			w.push_back({r.type, share + aa * r.aa_mul / r.aa_div, r.cap});
 		}
 		(void)s;
 		return w;
@@ -2418,10 +2282,10 @@ private:
 			// Short of gas with minerals piling up, units that cost no gas
 			// count more (and may go past their usual number).
 			// (Not walkers on an island: they would only wait at home.)
-			bool starved = ut->gas_cost == 0 && gas < 75 && minerals > 400 && !(p.island && !f.ut_flyer(ut));
-			if (w.cap > 0 && have >= w.cap * (starved ? 3 : 1)) continue;
+			bool starved = ut->gas_cost == 0 && gas < p.cfg.army.starved_gas && minerals > p.cfg.army.starved_minerals && !(p.island && !f.ut_flyer(ut));
+			if (w.cap > 0 && have >= w.cap * (starved ? p.cfg.army.starved_factor : 1)) continue;
 			int share = w.share;
-			if (starved) share *= 3;
+			if (starved) share *= p.cfg.army.starved_factor;
 			options.push_back({ut, share, have});
 			total += have;
 			shares += share;
@@ -2446,10 +2310,10 @@ private:
 	}
 
 	void train_army2(action_functions& f, player& p, snapshot& s, int& minerals, int& gas) {
-		if (minerals < 25) return;
+		if (minerals < p.cfg.army.min_minerals) return;
 		auto wants = composition(f, p, s);
 		if (p.race == race_t::zerg) {
-			while (!s.larvae.empty() && minerals >= 25) {
+			while (!s.larvae.empty() && minerals >= p.cfg.army.min_minerals) {
 				unit_t* larva = s.larvae.back();
 				const unit_type_t* ut = pick_unit(f, p, s, wants, larva, minerals, gas);
 				if (!ut) return;
@@ -2492,7 +2356,7 @@ private:
 			unit_want w = want_of(to);
 			if (w.share <= 0) return;
 			int have = army_count(s, to);
-			int limit = w.cap > 0 ? w.cap : std::max(2, army_count(s, from) / 2);
+			int limit = w.cap > 0 ? w.cap : std::max(p.cfg.army.morph_min, army_count(s, from) / 2);
 			if (have >= limit) return;
 			const unit_type_t* ut = f.get_unit_type(to);
 			if (!affordable(ut, minerals, gas)) return;
@@ -2514,7 +2378,7 @@ private:
 			// Two high templar low on energy become an archon.
 			a_vector<unit_t*> spent;
 			for (unit_t* u : s.army) {
-				if (f.unit_is(u, UnitTypes::Protoss_High_Templar) && u->energy < fp8::integer(50) && is_idle(u)) spent.push_back(u);
+				if (f.unit_is(u, UnitTypes::Protoss_High_Templar) && u->energy < fp8::integer(p.cfg.army.archon_energy) && is_idle(u)) spent.push_back(u);
 			}
 			if (spent.size() >= 2 && army_count(s, UnitTypes::Protoss_High_Templar) > 2) {
 				a_vector<unit_t*> pair{spent[0], spent[1]};
@@ -2535,7 +2399,7 @@ private:
 	}
 
 	void follow_plan(action_functions& f, player& p, snapshot& s, int& minerals, int& gas) {
-		for (auto& step : plan2(p.race)) {
+		for (auto& step : plan_of(p)) {
 			if (!step_applies(p, step.where)) continue;
 			if (s.supply_used < step.supply) break;
 			int have = s.planned[(size_t)step.type];
@@ -2578,7 +2442,7 @@ private:
 			return; // one building per decision
 		}
 		// Gas at every base from the middle game on: the tech tree runs on it.
-		if (f.st.current_frame > 24 * 60 * 6) {
+		if (f.st.current_frame > p.cfg.economy.gas_everywhere_after) {
 			int refineries = s.planned[(size_t)gas_of(p.race)];
 			if (refineries < (int)s.depots.size()) {
 				const unit_type_t* ut = f.get_unit_type(gas_of(p.race));
@@ -2635,8 +2499,8 @@ private:
 			case UnitTypes::Terran_Command_Center:
 				// The main command center keeps its slot for the silo.
 				if (dist2(b->sprite->position, p.home) < 320 * 320 || (silos == 0 && comsats > 0)) {
-					if (s.done[(size_t)UnitTypes::Terran_Covert_Ops] && silos < (f.st.current_frame > 24 * 60 * 30 ? 2 : 1)) jobs.push_back({b, UnitTypes::Terran_Nuclear_Silo, 0});
-				} else if (s.done[(size_t)UnitTypes::Terran_Academy] && comsats < 2) {
+					if (s.done[(size_t)UnitTypes::Terran_Covert_Ops] && silos < (f.st.current_frame > p.cfg.defense.silos_late_after ? p.cfg.defense.silos_late : p.cfg.defense.silos)) jobs.push_back({b, UnitTypes::Terran_Nuclear_Silo, 0});
+				} else if (s.done[(size_t)UnitTypes::Terran_Academy] && comsats < p.cfg.defense.max_comsats) {
 					jobs.push_back({b, UnitTypes::Terran_Comsat_Station, 3});
 				}
 				break;
@@ -2656,7 +2520,7 @@ private:
 			if (want == UnitTypes::Zerg_Spire) return f.unit_is(b, UnitTypes::Zerg_Greater_Spire);
 			return false;
 		};
-		for (auto& r : research_plan2(p.race)) {
+		for (auto& r : research_of(p)) {
 			if (!step_applies(p, r.where) || s.supply_used < r.supply) continue;
 			for (unit_t* b : s.buildings) {
 				if (!fits(b, r.building) || !f.u_completed(b)) continue;
@@ -2720,9 +2584,10 @@ private:
 	void air_defense(action_functions& f, player& p, snapshot& s, int& minerals, int& gas) {
 		int frame = f.st.current_frame;
 		if (frame < p.next_air_defense) return;
-		if (!p.island && p.enemy_air < 300) return;
-		if (p.island && frame < 24 * 60 * 4 && p.enemy_air == 0) return;
-		int want = std::max(p.island ? 2 : 1, std::min(6, p.enemy_air / 500 + 1));
+		auto& c = p.cfg.defense;
+		if (!p.island && p.enemy_air < c.air_trigger) return;
+		if (p.island && frame < c.air_island_after && p.enemy_air == 0) return;
+		int want = std::max(p.island ? c.air_island_min : 1, std::min(c.air_max, p.enemy_air / c.air_per + 1));
 		UnitTypes tech = p.race == race_t::terran ? UnitTypes::Terran_Engineering_Bay
 		                 : p.race == race_t::protoss ? UnitTypes::Protoss_Forge
 		                                             : UnitTypes::Zerg_Evolution_Chamber;
@@ -2886,7 +2751,7 @@ private:
 			}
 		}
 		if (ours >= theirs || air) return;
-		size_t pull = ours == 0 ? 12 : 6;
+		size_t pull = (size_t)(ours == 0 ? p.cfg.defense.militia_all : p.cfg.defense.militia_some);
 		a_vector<unit_t*> militia;
 		for (unit_t* w : s.workers) {
 			if (militia.size() >= pull) break;
@@ -2896,7 +2761,7 @@ private:
 		}
 		if (militia.empty()) return;
 		order_units(f, p, militia, Orders::AttackMove, intruder->sprite->position, nullptr);
-		p.militia_until = f.st.current_frame + 24 * 20;
+		p.militia_until = f.st.current_frame + p.cfg.defense.militia_time;
 	}
 
 	// Where a drop lands: by the target, on its side of the water.
@@ -2925,7 +2790,7 @@ private:
 		if (p.race == race_t::zerg && f.player_has_upgrade(p.owner, UpgradeTypes::Ventral_Sacs)) {
 			int n = 0;
 			for (unit_t* u : ptr(f.st.player_units.at(p.owner))) {
-				if (n >= 3) break;
+				if (n >= p.cfg.drops.overlords) break;
 				if (f.unit_dead(u) || !f.unit_is(u, UnitTypes::Zerg_Overlord) || held_by_human(u, f.st.current_frame)) continue;
 				size_t before = out.size();
 				consider(u);
@@ -2957,10 +2822,10 @@ private:
 			}
 			bool done = false;
 			if (d.phase == 0) {
-				if (loaded > 0 && (waiting.empty() || frame - d.started > 24 * 30)) {
+				if (loaded > 0 && (waiting.empty() || frame - d.started > p.cfg.drops.load_time)) {
 					d.phase = 1;
 					d.last_order = -10000;
-				} else if (loaded == 0 && frame - d.started > 24 * 40) {
+				} else if (loaded == 0 && frame - d.started > p.cfg.drops.give_up) {
 					done = true;
 				} else if (frame - d.last_order > 24 * 4) {
 					for (unit_t* u : waiting) {
@@ -2996,7 +2861,7 @@ private:
 			}
 			++i;
 		}
-		if (!start_new || !target || p.drops.size() >= 4) return;
+		if (!start_new || !target || (int)p.drops.size() >= p.cfg.drops.max) return;
 		xy goal = target->sprite->position;
 		for (unit_t* t : free_transports(f, p, s)) {
 			// Ground units at home that can't walk to the target.
@@ -3022,14 +2887,14 @@ private:
 				d.passengers.push_back(f.get_unit_id(u).raw_value);
 				if (space == 0) break;
 			}
-			if ((int)t->unit_type->space_provided - space < 4) return; // not worth a trip
+			if ((int)t->unit_type->space_provided - space < p.cfg.drops.min_space) return; // not worth a trip
 			d.target = goal;
 			d.landing = landing_spot(f, p, goal);
 			d.started = frame;
 			d.last_order = -10000;
 			p.drops.push_back(d);
 			ai_log(f, p, "drop", (int)d.passengers.size());
-			if (p.drops.size() >= 4) return;
+			if ((int)p.drops.size() >= p.cfg.drops.max) return;
 		}
 	}
 
@@ -3081,7 +2946,12 @@ private:
 		// base to walk to (or a transport to carry them).
 		int ready = (int)air.size() + (ground_target ? (int)ground.size() : can_drop ? (int)ground.size() / 2 : 0);
 		if (!p.attacking) {
-			if (ready >= p.wave_size && any_target) {
+			bool go = ready >= p.wave_size && any_target;
+			if (any_target && ready > 0) {
+				auto r = fire(f, p, &s, botscript::h_wave, {ready});
+				if (r.value) go = r.v != 0;
+			}
+			if (go) {
 				p.attacking = true;
 				p.last_attack_order = -10000;
 				ai_log(f, p, "wave", ready);
@@ -3093,13 +2963,14 @@ private:
 				return;
 			}
 		}
-		if (ready < std::max(2, p.wave_size / 4) && p.drops.empty()) {
+		auto& c = p.cfg.army;
+		if (ready < std::max(c.wave_end_min, p.wave_size / c.wave_end_div) && p.drops.empty()) {
 			p.attacking = false;
-			p.wave_size = std::min(48, p.wave_size + 4);
+			p.wave_size = std::min(c.wave_max, p.wave_size + c.wave_grow);
 			return;
 		}
 		if (!any_target) return;
-		bool refresh = frame - p.last_attack_order > 24 * 20;
+		bool refresh = frame - p.last_attack_order > c.attack_refresh;
 		if (refresh) p.last_attack_order = frame;
 		a_vector<unit_t*> go_air, go_ground, waiting;
 		for (unit_t* u : air) {
@@ -3350,11 +3221,11 @@ private:
 				if (can_cast(f, p, u, TechTypes::Lockdown)) {
 					unit_t* best = nullptr;
 					g.near(at, 288, [&](unit_t* e) {
-						if (f.ut_mechanical(e) && !f.ut_building(e) && value_of(e) >= 200 && !e->lockdown_timer && (!best || value_of(e) > value_of(best))) best = e;
+						if (f.ut_mechanical(e) && !f.ut_building(e) && value_of(e) >= p.cfg.spells.lockdown && !e->lockdown_timer && (!best || value_of(e) > value_of(best))) best = e;
 					});
 					if (best && cast(f, p, u, TechTypes::Lockdown, best->sprite->position, best)) break;
 				}
-				if (nuke_ready && frame - p.last_nuke > 24 * 50 && (is_idle(u) || u->order_type->id == Orders::Move)) {
+				if (nuke_ready && frame - p.last_nuke > p.cfg.spells.nuke_interval && (is_idle(u) || u->order_type->id == Orders::Move)) {
 					// The enemy base with the most buildings the ghost can walk to.
 					unit_t* best = nullptr;
 					int best_v = 0;
@@ -3387,8 +3258,8 @@ private:
 					unit_t* best = nullptr;
 					g.near(at, 320, [&](unit_t* e) {
 						if (f.ut_worker(e)) return;
-						int v = value_of(e) + (is_defense_building(e->unit_type->id) ? 200 : 0);
-						if (v >= 200 && (!best || v > value_of(best))) best = e;
+						int v = value_of(e) + (is_defense_building(e->unit_type->id) ? p.cfg.spells.yamato_defense_bonus : 0);
+						if (v >= p.cfg.spells.yamato && (!best || v > value_of(best))) best = e;
 					});
 					if (best) cast(f, p, u, TechTypes::Yamato_Gun, best->sprite->position, best);
 				}
@@ -3403,7 +3274,7 @@ private:
 						g.near(e->sprite->position, 64, [&](unit_t* n) {
 							if (n != e && f.ut_organic(n) && !f.ut_building(n)) v += value_of(n);
 						});
-						if (v >= 200 && v > best_v) {
+						if (v >= p.cfg.spells.irradiate && v > best_v) {
 							best = e;
 							best_v = v;
 						}
@@ -3412,12 +3283,12 @@ private:
 				}
 				if (can_cast(f, p, u, TechTypes::EMP_Shockwave)) {
 					auto c = best_cluster(g, at, 320, 96, [&](unit_t* e) { return e->unit_type->has_shield && e->shield_points > fp8::integer(20); });
-					if (c.first && c.second >= 500 && cast(f, p, u, TechTypes::EMP_Shockwave, c.first->sprite->position, nullptr)) break;
+					if (c.first && c.second >= p.cfg.spells.emp && cast(f, p, u, TechTypes::EMP_Shockwave, c.first->sprite->position, nullptr)) break;
 				}
 				if (can_cast(f, p, u, TechTypes::Defensive_Matrix)) {
 					for (unit_t* a : s.army) {
 						if (a == u || dist2(a->sprite->position, at) > 256 * 256 || a->defensive_matrix_hp != fp8::zero()) continue;
-						if (value_of(a) < 150 || a->hp * 10 > a->unit_type->hitpoints * 7) continue;
+						if (value_of(a) < p.cfg.spells.matrix || a->hp * 10 > a->unit_type->hitpoints * 7) continue;
 						if (cast(f, p, u, TechTypes::Defensive_Matrix, a->sprite->position, a)) break;
 					}
 				}
@@ -3426,7 +3297,7 @@ private:
 			case UnitTypes::Protoss_High_Templar:
 				if (can_cast(f, p, u, TechTypes::Psionic_Storm)) {
 					auto c = best_cluster(g, at, 320, 48, unit_value_ok);
-					if (c.first && c.second >= 350 && own_value_near(f, p, c.first->sprite->position, 64) * 3 < c.second) {
+					if (c.first && c.second >= p.cfg.spells.storm && own_value_near(f, p, c.first->sprite->position, 64) * 3 < c.second) {
 						cast(f, p, u, TechTypes::Psionic_Storm, c.first->sprite->position, nullptr);
 					}
 				}
@@ -3434,7 +3305,7 @@ private:
 			case UnitTypes::Protoss_Arbiter:
 				if (can_cast(f, p, u, TechTypes::Stasis_Field)) {
 					auto c = best_cluster(g, at, 320, 64, unit_value_ok);
-					if (c.first && c.second >= 700 && own_value_near(f, p, c.first->sprite->position, 96) * 2 < c.second) {
+					if (c.first && c.second >= p.cfg.spells.stasis && own_value_near(f, p, c.first->sprite->position, 96) * 2 < c.second) {
 						cast(f, p, u, TechTypes::Stasis_Field, c.first->sprite->position, nullptr);
 					}
 				}
@@ -3442,7 +3313,7 @@ private:
 			case UnitTypes::Protoss_Corsair:
 				if (can_cast(f, p, u, TechTypes::Disruption_Web)) {
 					auto c = best_cluster(g, at, 288, 64, [&](unit_t* e) { return !f.u_flying(e) && (is_defense_building(e->unit_type->id) || unit_value_ok(e)); });
-					if (c.first && c.second >= 400) cast(f, p, u, TechTypes::Disruption_Web, c.first->sprite->position, nullptr);
+					if (c.first && c.second >= p.cfg.spells.web) cast(f, p, u, TechTypes::Disruption_Web, c.first->sprite->position, nullptr);
 				}
 				break;
 			case UnitTypes::Protoss_Carrier:
@@ -3465,7 +3336,7 @@ private:
 				}
 				if (can_cast(f, p, u, TechTypes::Plague)) {
 					auto c = best_cluster(g, at, 320, 64, [&](unit_t* e) { return !f.ut_worker(e); });
-					if (c.first && c.second >= 600 && own_value_near(f, p, c.first->sprite->position, 64) * 3 < c.second) {
+					if (c.first && c.second >= p.cfg.spells.plague && own_value_near(f, p, c.first->sprite->position, 64) * 3 < c.second) {
 						if (cast(f, p, u, TechTypes::Plague, c.first->sprite->position, nullptr)) break;
 					}
 				}
@@ -3474,7 +3345,7 @@ private:
 					for (unit_t* a : s.army) {
 						if (f.u_flying(a) || dist2(a->sprite->position, at) > 320 * 320) continue;
 						if (!enemy_near(a->sprite->position, 224, false)) continue;
-						if (own_value_near(f, p, a->sprite->position, 96) < 300) continue;
+						if (own_value_near(f, p, a->sprite->position, 96) < p.cfg.spells.swarm) continue;
 						if (cast(f, p, u, TechTypes::Dark_Swarm, a->sprite->position, nullptr)) break;
 					}
 				}
@@ -3485,13 +3356,13 @@ private:
 					unit_t* best = nullptr;
 					g.near(at, 288, [&](unit_t* e) {
 						if (f.u_flying(e) || f.ut_building(e) || f.ut_robotic(e) || f.ut_worker(e)) return;
-						if (value_of(e) >= 150 && (!best || value_of(e) > value_of(best))) best = e;
+						if (value_of(e) >= p.cfg.spells.broodlings && (!best || value_of(e) > value_of(best))) best = e;
 					});
 					if (best && cast(f, p, u, TechTypes::Spawn_Broodlings, best->sprite->position, best)) break;
 				}
 				if (can_cast(f, p, u, TechTypes::Ensnare)) {
 					auto c = best_cluster(g, at, 288, 64, [&](unit_t* e) { return !f.ut_building(e) && !f.ut_worker(e); });
-					if (c.first && c.second >= 400) cast(f, p, u, TechTypes::Ensnare, c.first->sprite->position, nullptr);
+					if (c.first && c.second >= p.cfg.spells.ensnare) cast(f, p, u, TechTypes::Ensnare, c.first->sprite->position, nullptr);
 				}
 				break;
 			}
@@ -3544,7 +3415,9 @@ private:
 
 	void maybe_expand2(action_functions& f, player& p, snapshot& s, int& minerals, int& gas) {
 		int frame = f.st.current_frame;
-		int wanted_bases = 1 + (frame > 24 * 60 * 6 ? 1 : 0) + (frame > 24 * 60 * 12 ? 1 : 0) + (frame > 24 * 60 * 18 ? 1 : 0) + (frame > 24 * 60 * 26 ? 1 : 0);
+		auto& c = p.cfg.expansion;
+		int wanted_bases = 1;
+		for (int t : c.base_times) wanted_bases += frame > t ? 1 : 0;
 		UnitTypes depot_type = depot_of(p.race);
 		const unit_type_t* ut = f.get_unit_type(depot_type);
 		int owned_sites = 0;
@@ -3556,17 +3429,17 @@ private:
 				}
 			}
 		}
-		if (p.human && p.modes != mode_all && frame > 24 * 60 * 3) {
+		if (p.human && p.modes != mode_all && frame > c.colonize_after) {
 			// Colonizing picked for a human: a new base when the current ones
 			// are well worked, money piles up, or every couple of minutes
 			// (zerg drones turn into colonies, so workers stay few).
-			bool saturated = (int)s.workers.size() >= std::max(1, owned_sites) * 14;
+			bool saturated = (int)s.workers.size() >= std::max(1, owned_sites) * c.colonize_workers_per_base;
 			bool due = frame >= p.next_base;
 			for (unit_t* d : s.depots) {
-				colony_count c = count_colony(f, p, s, d);
-				if (c.ground + c.air + c.tanks < 4) due = false; // dig in first
+				colony_count cc = count_colony(f, p, s, d);
+				if (cc.ground + cc.air + cc.tanks < c.colonize_dig_in) due = false; // dig in first
 			}
-			wanted_bases = std::min(6, owned_sites + (saturated || due || s.minerals >= 500 ? 1 : 0));
+			wanted_bases = std::min(c.colonize_max_bases, owned_sites + (saturated || due || s.minerals >= c.colonize_minerals ? 1 : 0));
 		}
 		if (owned_sites >= wanted_bases) return;
 		for (unit_t* w : s.workers) {
@@ -3670,34 +3543,240 @@ private:
 		if (f.action_build(p.owner, build_order_for(f, builder), ut, tile)) {
 			minerals -= ut->mineral_cost;
 			p.expander = 0;
-			p.next_base = frame + 24 * 150;
+			p.next_base = frame + c.next_base_delay;
 		}
 	}
 
 	// Minerals piling up (gas is what runs short): more production for units
 	// that cost none, a hatchery for more larvae.
 	void spend_surplus(action_functions& f, player& p, snapshot& s, int& minerals, int& gas) {
-		if (minerals < 900 || s.workers.empty()) return;
+		auto& c = p.cfg.economy;
+		if (minerals < c.surplus_minerals || s.workers.empty()) return;
 		UnitTypes extra = p.race == race_t::terran ? UnitTypes::Terran_Barracks
 		                  : p.race == race_t::protoss ? UnitTypes::Protoss_Gateway
 		                                              : UnitTypes::Zerg_Hatchery;
 		// A big surplus also digs in: defences at every base.
-		if (minerals >= 1500) fortify(f, p, s, minerals, gas);
+		if (minerals >= c.surplus_fortify) fortify(f, p, s, minerals, gas);
 		// On an island more barracks or gateways only make walkers that
 		// wait at home (and take the room depots need).
 		if (p.island && p.race != race_t::zerg) return;
-		if (s.planned[(size_t)extra] >= 8) return;
+		if (s.planned[(size_t)extra] >= c.max_extra_production) return;
 		if (s.planned[(size_t)extra] > s.done[(size_t)extra]) return; // one at a time
 		const unit_type_t* ut = f.get_unit_type(extra);
 		if (!f.unit_can_build(s.workers.front(), ut)) return;
 		if (place(f, p, s, extra)) {
 			minerals -= ut->mineral_cost;
 			gas -= ut->gas_cost;
-		} else if (p.race == race_t::protoss && s.planned[(size_t)UnitTypes::Protoss_Pylon] < 40 &&
+		} else if (p.race == race_t::protoss && s.planned[(size_t)UnitTypes::Protoss_Pylon] < c.max_pylons &&
 		           s.planned[(size_t)UnitTypes::Protoss_Pylon] == s.done[(size_t)UnitTypes::Protoss_Pylon]) {
 			// No powered room left: another pylon makes some.
 			if (place(f, p, s, UnitTypes::Protoss_Pylon)) minerals -= 100;
 		}
+	}
+
+	// --- bot profiles: tables and scripts (botscript.h) --------------------------
+
+	static const ai_tables& default_tables() {
+		static const ai_tables t;
+		return t;
+	}
+
+	// A table of the profile's variant in use, else of its unnamed variant,
+	// else the standard one.
+	template<typename H, typename T>
+	const T& table_of(const player& p, int variant, H has, T ai_tables::*field) const {
+		size_t r = (size_t)p.race;
+		if (auto* pr = profile_of(p)) {
+			for (int v : {variant, 0}) {
+				if (v < 0 || (size_t)v >= pr->tables.size()) continue;
+				auto& t = pr->tables[(size_t)v];
+				if ((t.*has)[r]) return (t.t.*field);
+			}
+		}
+		return default_tables().*field;
+	}
+	const a_vector<plan_step>& plan_of(const player& p) const {
+		return table_of(p, p.plan_variant, &botscript::profile::variant_tables::plan, &ai_tables::plan)[(size_t)p.race];
+	}
+	const a_vector<research2_step>& research_of(const player& p) const {
+		return table_of(p, p.research_variant, &botscript::profile::variant_tables::research, &ai_tables::research)[(size_t)p.race];
+	}
+	const a_vector<mix_row>& mix_of(const player& p) const {
+		if (p.island) return table_of(p, p.mix_variant, &botscript::profile::variant_tables::mix_island, &ai_tables::mix_island)[(size_t)p.race];
+		return table_of(p, p.mix_variant, &botscript::profile::variant_tables::mix_ground, &ai_tables::mix_ground)[(size_t)p.race];
+	}
+
+	// What a script sees and does, for one player. `f` is null at the start
+	// of the game (the profile's set statements), when only a few facts mean
+	// anything.
+	struct script_host : botscript::host {
+		ai_system& ai;
+		action_functions* f;
+		player& p;
+		snapshot* s;
+		snapshot own;
+		bool have_snapshot = false;
+		assessment a;
+		bool have_assessment = false;
+
+		script_host(ai_system& ai, action_functions* f, player& p, snapshot* s) : ai(ai), f(f), p(p), s(s) {}
+
+		int32_t* globals() override { return p.vars.data(); }
+		ai_tunables& tunables() override { return p.cfg; }
+		void warn(const char* message) override {
+			auto* pr = ai.profile_of(p);
+			std::string text = std::string("bot profile ") + (pr ? pr->name : "?") + ", player " + std::to_string(p.owner) + ": " + message;
+			if (FILE* out = log_file()) std::fprintf(out, "ai %d script %s\n", p.owner, text.c_str());
+			static int shown = 0;
+			if (shown < 20) {
+				++shown;
+				std::fprintf(stderr, "%s\n", text.c_str());
+			}
+		}
+
+		snapshot& snap() {
+			if (s) return *s;
+			if (!have_snapshot) {
+				own = ai.take_snapshot(*f, p);
+				have_snapshot = true;
+			}
+			return own;
+		}
+		const assessment* assessed() {
+			if (!f || !ai.allies) return nullptr;
+			if (!have_assessment) {
+				a = ai.assess(*f, p);
+				have_assessment = true;
+			}
+			return &a;
+		}
+		static bool valid(int32_t q) { return q >= 0 && q < 8; }
+
+		int32_t builtin(int id, const int32_t* x, int n) override {
+			(void)n;
+			using namespace botscript;
+			// Facts that need no game (also at the start).
+			switch (id) {
+			case b_me: return p.owner;
+			case b_race: return (int)p.race;
+			case b_trust: return p.trust;
+			case b_random: {
+				int64_t lo = std::min(x[0], x[1]), hi = std::max(x[0], x[1]);
+				uint32_t span = (uint32_t)(hi - lo + 1);
+				uint32_t r = (p.next() << 15) | p.next();
+				return span == 0 ? (int32_t)r : (int32_t)(lo + (int64_t)(r % span));
+			}
+			case b_min: return std::min(x[0], x[1]);
+			case b_max: return std::max(x[0], x[1]);
+			case b_abs: return x[0] < 0 ? botscript::wrap(-(int64_t)x[0]) : x[0];
+			case b_clamp: return std::max(x[1], std::min(x[2], x[0]));
+			case b_use_plan: p.plan_variant = x[0]; return 0;
+			case b_use_research: p.research_variant = x[0]; return 0;
+			case b_use_mix: p.mix_variant = x[0]; return 0;
+			case b_print:
+				if (FILE* out = log_file()) std::fprintf(out, "ai %d f%d print %d\n", p.owner, f ? f->st.current_frame : 0, x[0]);
+				return 0;
+			default: break;
+			}
+			if (!f) return 0;
+			state& st = f->st;
+			auto* al = ai.allies;
+			switch (id) {
+			case b_time: return st.current_frame / 24;
+			case b_frame: return st.current_frame;
+			case b_minerals: return st.current_minerals[p.owner];
+			case b_gas: return st.current_gas[p.owner];
+			case b_supply: return snap().supply_used;
+			case b_supply_max: return snap().supply_max;
+			case b_workers: return (int32_t)snap().workers.size();
+			case b_bases: return (int32_t)snap().depots.size();
+			case b_army: return (int32_t)snap().army.size();
+			case b_army_value: {
+				int v = 0;
+				for (unit_t* u : snap().army) v += value_of(u);
+				return v;
+			}
+			case b_wave_size: return p.wave_size;
+			case b_attacking: return p.attacking;
+			case b_losing: return p.losing;
+			case b_attacker: return p.attacker;
+			case b_island: return p.island;
+			case b_some_island: return p.some_island;
+			case b_enemy_air: return p.enemy_air;
+			case b_enemy_cloaked: return p.enemy_cloaked;
+			case b_defensive: return p.fortifying;
+			case b_count: return x[0] >= 0 && x[0] < (int32_t)UnitTypes::None ? ai.army_count(snap(), (UnitTypes)x[0]) : 0;
+			case b_done: return x[0] >= 0 && x[0] < (int32_t)UnitTypes::None ? snap().done[(size_t)x[0]] : 0;
+			case b_researched: return x[0] >= 0 && x[0] < (int32_t)TechTypes::None && f->player_has_researched(p.owner, (TechTypes)x[0]);
+			case b_upgrade_level: return x[0] >= 0 && x[0] < (int32_t)UpgradeTypes::None ? f->player_upgrade_level(p.owner, (UpgradeTypes)x[0]) : 0;
+			case b_alive:
+				if (!valid(x[0])) return 0;
+				return al ? al->active(st, x[0]) : st.players[(size_t)x[0]].controller == player_t::controller_occupied && st.players[(size_t)x[0]].victory_state == 0;
+			case b_human: return valid(x[0]) && al && al->human[(size_t)x[0]];
+			case b_ally:
+				if (!valid(x[0]) || x[0] == p.owner) return 0;
+				return al ? al->same_group(x[0], p.owner) : st.alliances[p.owner][(size_t)x[0]] == 2;
+			case b_enemy: return valid(x[0]) && ai.is_enemy(*f, p.owner, x[0]);
+			case b_race_of: return valid(x[0]) ? (int)st.players[(size_t)x[0]].race : -1;
+			case b_army_of: return valid(x[0]) && assessed() ? assessed()->army[(size_t)x[0]] : 0;
+			case b_economy_of: return valid(x[0]) && assessed() ? assessed()->economy[(size_t)x[0]] : 0;
+			case b_strength: return valid(x[0]) && assessed() ? ai.strength(*assessed(), al->members(al->group[(size_t)x[0]])) : 0;
+			case b_utility:
+				if (!valid(x[0]) || !assessed() || x[0] == p.owner || al->same_group(x[0], p.owner)) return 0;
+				return ai.alliance_utility(*f, p, *assessed(), al->members(al->group[(size_t)x[0]]));
+			case b_distance:
+				if (!valid(x[0]) || !assessed()) return 0;
+				return f->xy_length(assessed()->base[(size_t)x[0]] - assessed()->base[(size_t)p.owner]);
+			case b_mining: return valid(x[0]) && al ? al->mineral_rate[(size_t)x[0]] + al->gas_rate[(size_t)x[0]] : 0;
+			case b_lost_to: return valid(x[0]) ? p.pressure[(size_t)x[0]] : 0;
+			case b_group_size: return valid(x[0]) && al ? (int32_t)al->members(al->group[(size_t)x[0]]).size() : 0;
+			case b_vassal: return valid(x[0]) && al && al->vassal(x[0]);
+			case b_lord: return valid(x[0]) && al ? al->lord[(size_t)x[0]] : -1;
+			// Actions.
+			case b_attack:
+				if (!p.attacking && !snap().army.empty()) {
+					p.attacking = true;
+					p.last_attack_order = -10000;
+				}
+				return 0;
+			case b_retreat: p.attacking = false; return 0;
+			case b_set_wave: p.wave_size = std::max(1, x[0]); return 0;
+			case b_focus: p.focus = valid(x[0]) && x[0] != p.owner ? x[0] : -1; return 0;
+			default: break;
+			}
+			// Diplomacy: computer players only (auto-play doesn't negotiate).
+			if (!al || p.human || !al->active(st, p.owner) || al->vassal(p.owner)) return 0;
+			switch (id) {
+			case b_invite:
+				if (valid(x[0]) && x[0] != p.owner && al->merge_allowed(st, p.owner, x[0]) && al->invite(st, p.owner, x[0])) {
+					p.asked_at[(size_t)x[0]] = st.current_frame + 1;
+					return 1;
+				}
+				return 0;
+			case b_leave: return al->leave(st, p.owner);
+			case b_surrender_to:
+				return valid(x[0]) && al->surrender_allowed(st, p.owner, x[0]) && al->surrender_frame[(size_t)x[0]][(size_t)p.owner] < 0 &&
+				       al->offer_surrender(st, p.owner, x[0]);
+			case b_set_open: al->set_open(st, p.owner, x[0] != 0); return 0;
+			default: return 0;
+			}
+		}
+	};
+
+	// Runs a profile's function for player p (nothing without a profile).
+	botscript::result run_script(action_functions* f, player& p, snapshot* s, int fn, const int32_t* args, int argc) {
+		auto* pr = profile_of(p);
+		if (!pr || fn < 0) return {};
+		script_host h(*this, f, p, s);
+		return botscript::run(*pr, fn, args, argc, h);
+	}
+
+	// Fires an event; the result has a value when the script decided.
+	botscript::result fire(action_functions& f, player& p, snapshot* s, botscript::handler_id id, std::initializer_list<int32_t> args = {}) {
+		auto* pr = profile_of(p);
+		if (!pr || !pr->has(id)) return {};
+		a_vector<int32_t> a(args);
+		return run_script(&f, p, s, pr->handler[(size_t)id], a.data(), (int)a.size());
 	}
 
 	// --- version 2's turn ----------------------------------------------------------
@@ -3707,6 +3786,7 @@ private:
 		if (s.depots.empty() && s.workers.empty() && s.army.empty()) return;
 		if (!s.depots.empty() && p.rally == p.home) p.rally = rally_point(f, p);
 		update_intel(f, p);
+		fire(f, p, &s, botscript::h_think);
 
 		bool resources = p.modes & mode_resources, building = p.modes & mode_building;
 		bool attacking = p.modes & mode_attacking, colonizing = p.modes & mode_colonizing;
@@ -3718,7 +3798,7 @@ private:
 		}
 		p.fortifying = fortifying;
 		unit_t* intruder = p.human ? find_intruder(f, p, s) : nullptr;
-		if (intruder || (p.human && find_intruder(f, p, s, 1100))) p.threat_until = f.st.current_frame + 24 * 90;
+		if (intruder || (p.human && find_intruder(f, p, s, p.cfg.defense.warning_range))) p.threat_until = f.st.current_frame + p.cfg.defense.threat_hold;
 		bool threatened = f.st.current_frame < p.threat_until;
 		if (resources || f.st.current_frame < p.militia_until + 24 * 30) manage_workers(f, p, s);
 		if (resources) balance_workers(f, p, s);
@@ -3750,7 +3830,7 @@ private:
 			colony_defense(f, p, s, minerals, gas);
 		}
 		// Allies guarding (defensive mode) keep an army before the tech.
-		if (fortifying && (int)s.army.size() < 8) train_army2(f, p, s, minerals, gas);
+		if (fortifying && (int)s.army.size() < p.cfg.army.defensive_army) train_army2(f, p, s, minerals, gas);
 		if (!p.human || building) air_defense(f, p, s, minerals, gas);
 		if (building && !supply_ordered) follow_plan(f, p, s, minerals, gas);
 		if (building) manage_addons(f, p, s, minerals, gas);

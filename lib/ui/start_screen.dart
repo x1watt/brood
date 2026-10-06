@@ -15,6 +15,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
+import '../engine/models.dart';
+import '../game/bot_profiles.dart';
 import '../game/game_data.dart';
 import '../game/game_setup.dart';
 import '../game/play_stats.dart';
@@ -63,6 +65,10 @@ class _StartScreenState extends State<StartScreen> {
   // Setup being edited: index 0 is you, the rest computer opponents.
   int _myRace = 1;
   List<int> _opponentRaces = [randomRace];
+  // Each opponent's bot profile (folder; empty: the standard player).
+  List<String> _opponentBots = [''];
+  BotLibrary _bots = const BotLibrary({});
+  final Map<String, BotProfileReport> _botChecks = {};
   AllianceMode _alliances = AllianceMode.freeForAll;
 
   int _seconds(GameMap m) => _stats.maps[m.key]?.seconds ?? 0;
@@ -88,7 +94,28 @@ class _StartScreenState extends State<StartScreen> {
       if (mounted && c != null) setState(() => _mp = c);
     });
     _restoreLastSetup();
+    BotLibrary.load().then((bots) {
+      if (!mounted) return;
+      setState(() {
+        _bots = bots;
+        // A profile that is gone plays as the standard player.
+        _opponentBots = [for (final b in _opponentBots) bots.byFolder(b) != null ? b : ''];
+      });
+      for (final b in _opponentBots.toSet()) {
+        _checkBot(b);
+      }
+    });
   }
+
+  /// Compiles a chosen profile once, so a broken one shows its error.
+  void _checkBot(String folder) {
+    if (folder.isEmpty || _botChecks.containsKey(folder)) return;
+    _bots.check(folder).then((r) {
+      if (mounted) setState(() => _botChecks[folder] = r);
+    });
+  }
+
+  bool get _botsOk => _opponentBots.take(_playerCount - 1).every((b) => b.isEmpty || _botChecks[b]?.ok == true);
 
   void _listMaps() {
     final maps = GameMap.list();
@@ -134,7 +161,14 @@ class _StartScreenState extends State<StartScreen> {
         for (final p in s.players)
           if (!p.human) p.race,
       ];
-      if (_opponentRaces.isEmpty) _opponentRaces = [randomRace];
+      _opponentBots = [
+        for (final p in s.players)
+          if (!p.human) p.bot,
+      ];
+      if (_opponentRaces.isEmpty) {
+        _opponentRaces = [randomRace];
+        _opponentBots = [''];
+      }
       _alliances = s.alliances;
     } catch (_) {
       // Ignore a setup from an older version.
@@ -148,17 +182,22 @@ class _StartScreenState extends State<StartScreen> {
     n = n.clamp(2, _maxPlayers);
     setState(() {
       final races = [..._opponentRaces];
+      final bots = [..._opponentBots];
       while (races.length < n - 1) {
         races.add(randomRace);
       }
+      while (bots.length < races.length) {
+        bots.add('');
+      }
       _opponentRaces = races.sublist(0, n - 1);
+      _opponentBots = bots.sublist(0, n - 1);
     });
   }
 
   GameSetup _setup() => GameSetup(
     players: [
       PlayerSetup(human: true, race: _myRace),
-      for (final r in _opponentRaces.take(_playerCount - 1)) PlayerSetup(human: false, race: r),
+      for (int i = 0; i < _playerCount - 1; ++i) PlayerSetup(human: false, race: _opponentRaces[i], bot: _opponentBots[i]),
     ],
     alliances: _alliances,
     seed: GameSetup.newSeed(),
@@ -171,7 +210,8 @@ class _StartScreenState extends State<StartScreen> {
     _settings
       ..lastSetup = setup.toJson()
       ..save();
-    _open(GameLaunch(mapFile: map.path, mapKey: map.key, mapName: map.name, setup: setup.resolved()));
+    // The game keeps the text of the profiles it plays with.
+    _open(GameLaunch(mapFile: map.path, mapKey: map.key, mapName: map.name, setup: _bots.bundle(setup).resolved()));
   }
 
   void _open(GameLaunch launch) {
@@ -563,24 +603,7 @@ class _StartScreenState extends State<StartScreen> {
                     ),
                   ),
                   _heading('Opponents'),
-                  for (int i = 0; i < n - 1; ++i)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.smart_toy_outlined, size: 18, color: _dim),
-                          const SizedBox(width: 10),
-                          Expanded(child: Text('Computer ${i + 1}')),
-                          DropdownButton<int>(
-                            value: _opponentRaces[i],
-                            underline: const SizedBox.shrink(),
-                            style: const TextStyle(fontSize: 14, color: Color(0xFFE8E8E8)),
-                            items: [for (final r in _raceChoices) DropdownMenuItem(value: r, child: Text(raceName(r)))],
-                            onChanged: (r) => setState(() => _opponentRaces = [..._opponentRaces]..[i] = r!),
-                          ),
-                        ],
-                      ),
-                    ),
+                  for (int i = 0; i < n - 1; ++i) _opponentRow(i),
                 ],
               ),
             ),
@@ -591,7 +614,7 @@ class _StartScreenState extends State<StartScreen> {
               onEnter: (_) => _hover(),
               child: FilledButton(
                 style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(44)),
-                onPressed: map == null
+                onPressed: map == null || !_botsOk
                     ? null
                     : () {
                         _click();
@@ -601,6 +624,71 @@ class _StartScreenState extends State<StartScreen> {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  // One computer opponent: its profile and race, and what the profile is
+  // (or what is wrong with it).
+  Widget _opponentRow(int i) {
+    final bot = _opponentBots[i];
+    final profile = _bots.byFolder(bot);
+    final check = _botChecks[bot];
+    const style = TextStyle(fontSize: 14, color: Color(0xFFE8E8E8));
+    final note = bot.isEmpty
+        ? ''
+        : check == null
+        ? 'Checking the profile...'
+        : check.ok
+        ? check.description
+        : check.error;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.smart_toy_outlined, size: 18, color: _dim),
+              const SizedBox(width: 10),
+              Expanded(child: Text('Computer ${i + 1}', overflow: TextOverflow.ellipsis)),
+              if (_bots.profiles.length > 1)
+                Flexible(
+                  child: Tooltip(
+                    message: 'How this computer plays (bot profile)',
+                    child: DropdownButton<String>(
+                      value: profile == null ? '' : bot,
+                      isExpanded: true,
+                      underline: const SizedBox.shrink(),
+                      style: style,
+                      items: [
+                        const DropdownMenuItem(value: '', child: Text('Standard', overflow: TextOverflow.ellipsis)),
+                        for (final p in _bots.profiles)
+                          if (p.folder != BotLibrary.standard) DropdownMenuItem(value: p.folder, child: Text(p.name, overflow: TextOverflow.ellipsis)),
+                      ],
+                      onChanged: (b) {
+                        setState(() => _opponentBots = [..._opponentBots]..[i] = b!);
+                        _checkBot(b!);
+                      },
+                    ),
+                  ),
+                ),
+              const SizedBox(width: 12),
+              DropdownButton<int>(
+                value: _opponentRaces[i],
+                underline: const SizedBox.shrink(),
+                style: style,
+                items: [for (final r in _raceChoices) DropdownMenuItem(value: r, child: Text(raceName(r)))],
+                onChanged: (r) => setState(() => _opponentRaces = [..._opponentRaces]..[i] = r!),
+              ),
+            ],
+          ),
+          if (note.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 28, bottom: 4),
+              child: Text(note, style: TextStyle(fontSize: 11, color: check != null && !check.ok ? const Color(0xFFE57373) : _faint)),
+            ),
         ],
       ),
     );

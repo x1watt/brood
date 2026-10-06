@@ -52,6 +52,23 @@ class _FolderGameFiles extends GameFiles {
   }
 
   @override
+  Future<Map<String, String>> botFiles() async {
+    final dir = Directory('$dataDir/bots');
+    if (!dir.existsSync()) return const {};
+    final out = <String, String>{};
+    for (final f in dir.listSync(recursive: true, followLinks: true).whereType<File>()) {
+      if (!f.path.endsWith('.bot')) continue;
+      final rel = f.path.substring(dir.path.length + 1).replaceAll('\\', '/');
+      try {
+        out[rel] = await f.readAsString();
+      } catch (_) {
+        // Not text: skipped.
+      }
+    }
+    return out;
+  }
+
+  @override
   bool exists(String path) => File(path).existsSync();
 
   @override

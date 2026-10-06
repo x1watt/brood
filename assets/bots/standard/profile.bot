@@ -1,0 +1,17 @@
+// assets/bots/standard/profile.bot
+//
+// The standard computer player, as the game plays without a profile. Every
+// number and table is spelled out here, so a new profile can start as a
+// copy of this folder, or extend it and change only what it needs:
+//
+//   profile "Mine" { extends "standard"; }
+//   set army.wave_first = 12;
+
+profile "Standard" {
+	description "The usual computer player: climbs the whole tech tree, attacks in growing waves, makes friends when it needs them.";
+}
+
+include "numbers.bot";
+include "terran.bot";
+include "protoss.bot";
+include "zerg.bot";

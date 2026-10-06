@@ -1,0 +1,86 @@
+// assets/bots/rusher/profile.bot
+//
+// Early pressure: a quick opening with more production and cheap units,
+// small attack waves from about the fourth minute against the weakest
+// enemy, fewer workers and later expansions. After the rush it plays like
+// the standard player, a little more aggressive.
+
+profile "Rusher" {
+	extends "standard";
+	description "Early pressure: small, quick waves against the weakest enemy; expands late and rarely makes friends.";
+}
+
+include "lib/common.bot";
+
+const RUSH_ENDS = 8 * MINUTE;
+
+set personality.trust_min = 0;
+set personality.trust_span = 40;
+set diplomacy.open_trust = 60;
+set army.wave_first = 6;
+set army.wave_grow = 3;
+set army.wave_max = 36;
+set army.attack_refresh = 12;
+set economy.max_workers = 44;
+set economy.workers_per_base = 14;
+set expansion.base1 = 9 * MINUTE;
+set expansion.base2 = 16 * MINUTE;
+set expansion.base3 = 24 * MINUTE;
+set expansion.base4 = 32 * MINUTE;
+
+// The rush opening: production first, then the standard plan carries on
+// (it counts what is already there).
+plan terran "rush" {
+	build terran_barracks 1 at 9;
+	build terran_barracks 2 at 10;
+	build terran_barracks 3 at 14;
+	build terran_refinery 1 at 18;
+}
+plan protoss "rush" {
+	build protoss_gateway 1 at 9;
+	build protoss_gateway 2 at 10;
+	build protoss_gateway 3 at 14;
+	build protoss_assimilator 1 at 18;
+	build protoss_cybernetics_core 1 at 20;
+}
+plan zerg "rush" {
+	build zerg_spawning_pool 1 at 9;
+	build zerg_hatchery 2 at 11 ground;
+	build zerg_extractor 1 at 16;
+}
+
+mix terran ground "rush" {
+	terran_marine share 10;
+	terran_firebat share 1 cap 4;
+	terran_medic share 1 cap 4;
+}
+mix protoss ground "rush" {
+	protoss_zealot share 10;
+	protoss_dragoon share 3;
+}
+mix zerg ground "rush" {
+	zerg_zergling share 10;
+	zerg_hydralisk share 2;
+}
+
+var rushing = true;
+
+// At the start: the rush plan and mix.
+use_plan("rush");
+use_mix("rush");
+
+on think {
+	if (rushing && (time > RUSH_ENDS || island)) {
+		rushing = false;
+		use_plan("");
+		use_mix("");
+		set_wave(max(wave_size, 14));
+	}
+	// The weakest enemy's buildings come first.
+	if (!attacking) focus(weakest_enemy());
+}
+
+// While rushing, any five units go.
+on wave(ready) {
+	if (rushing && ready >= 5) return true;
+}

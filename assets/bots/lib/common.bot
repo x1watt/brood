@@ -1,0 +1,43 @@
+// assets/bots/lib/common.bot
+//
+// Helpers for profiles: include "lib/common.bot";
+// Players are numbered 0 to 7; -1 means none.
+
+// The enemy with the weakest army and economy.
+int weakest_enemy() {
+	int best = -1;
+	for (int q = 0; q < 8; q++) {
+		if (!enemy(q)) continue;
+		if (best < 0 || strength(q) < strength(best)) best = q;
+	}
+	return best;
+}
+
+// The enemy with the strongest army and economy.
+int strongest_enemy() {
+	int best = -1;
+	for (int q = 0; q < 8; q++) {
+		if (!enemy(q)) continue;
+		if (best < 0 || strength(q) > strength(best)) best = q;
+	}
+	return best;
+}
+
+// The enemy whose main base is closest to ours.
+int nearest_enemy() {
+	int best = -1;
+	for (int q = 0; q < 8; q++) {
+		if (!enemy(q)) continue;
+		if (best < 0 || distance(q) < distance(best)) best = q;
+	}
+	return best;
+}
+
+// How many enemies are still playing.
+int enemies() {
+	int n = 0;
+	for (int q = 0; q < 8; q++) {
+		if (enemy(q)) n++;
+	}
+	return n;
+}

@@ -672,6 +672,37 @@ class BwEngine {
   /// the earlier player). Logged.
   void setAiVersion(int version) => _r.bw_bridge_set_ai_version(_h, version);
 
+  // --- bot profiles (docs/bot_profiles.md) ---
+
+  /// The files of a bots folder ([files]: path relative to it, then the
+  /// text) as the bridge takes them.
+  static String botBundle(Map<String, String> files) {
+    final keys = files.keys.toList()..sort();
+    return [for (final k in keys) '$k\x1F${files[k]}\x1E'].join();
+  }
+
+  /// Compiles profile [profile] (a folder name) of [files].
+  BotProfileReport compileBot(Map<String, String> files, String profile) {
+    const cap = 1 << 16;
+    final out = _r.malloc(cap);
+    try {
+      _withString(botBundle(files), (b) => _withString(profile, (p) => _r.bw_bridge_bot_compile(_h, b, p, out, cap)));
+      final bytes = _r.bytes(out, cap);
+      final end = bytes.indexOf(0);
+      return BotProfileReport.parse(utf8.decode(bytes.sublist(0, end < 0 ? cap : end), allowMalformed: true));
+    } finally {
+      _r.free(out);
+    }
+  }
+
+  /// The profile the computer player at [playerIndex] (its place in the
+  /// setup) plays with in the games started after this; null or empty: the
+  /// standard player. False when it doesn't compile.
+  bool setBotProfile(int playerIndex, Map<String, String> files, String? profile) {
+    if (profile == null || profile.isEmpty) return _ok(_r.bw_bridge_set_bot_profile(_h, playerIndex, 0, 0));
+    return _withString(botBundle(files), (b) => _withString(profile, (p) => _ok(_r.bw_bridge_set_bot_profile(_h, playerIndex, b, p))));
+  }
+
   /// What a transport or bunker carries (unit ids).
   List<int> loadedUnits(int unitId) => _ids(_r.bw_bridge_get_loaded_units(_h, unitId, _idBuf, _maxIds));
 

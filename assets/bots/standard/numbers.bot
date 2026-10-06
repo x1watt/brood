@@ -1,0 +1,143 @@
+// assets/bots/standard/numbers.bot
+//
+// Every number the computer player plays by, at its standard value. Times
+// are in seconds (MINUTE is 60). A profile changes the ones it needs:
+//   set army.wave_first = 6;
+
+// personality
+set personality.trust_min = 0; set personality.trust_span = 100; // trust is trust_min + random(trust_span)
+
+// economy
+set economy.workers_per_base = 16;
+set economy.workers_per_refinery = 3;
+set economy.max_workers = 60;
+set economy.miners_per_patch = 2; // spread across bases above this
+set economy.balance_interval = 10;
+set economy.zerg_drones_first = 12; // drones before the army competes for larvae
+set economy.zerg_drone_lead = 10; // then drones may lead army * 2 by this much
+set economy.supply_margin = 2; // free supply kept ahead of use...
+set economy.supply_margin_per_producer = 3; // ...plus this per production building
+set economy.supply_double_margin = 12; // two supply buildings at once above this margin
+set economy.gas_everywhere_after = 6 * MINUTE; // a refinery at every base
+set economy.surplus_minerals = 900; // more production buildings from here
+set economy.surplus_fortify = 1500; // and defences at every base
+set economy.max_extra_production = 8;
+set economy.max_pylons = 40;
+
+// expansion
+// Bases wanted from these times on (one more each).
+set expansion.base1 = 6 * MINUTE;
+set expansion.base2 = 12 * MINUTE;
+set expansion.base3 = 18 * MINUTE;
+set expansion.base4 = 26 * MINUTE;
+// Auto-play colonizing for a human: a new base when the bases have
+// this many workers each, money piles up, or after next_base_delay.
+set expansion.colonize_after = 3 * MINUTE;
+set expansion.colonize_workers_per_base = 14;
+set expansion.colonize_minerals = 500;
+set expansion.colonize_max_bases = 6;
+set expansion.colonize_dig_in = 4; // defences a colony has before the next one
+set expansion.next_base_delay = 150;
+
+// army
+set army.wave_first = 8; // units in the first attack wave
+set army.wave_grow = 4; // added after each wave
+set army.wave_max = 48;
+set army.wave_end_div = 4; // a wave ends below wave_size / this...
+set army.wave_end_min = 2; // ...or this many units
+set army.attack_refresh = 20; // orders the whole wave again
+set army.rally_distance = 288; // from the main base toward the map center
+set army.defensive_army = 8; // allies guarding keep this many before the tech
+set army.min_minerals = 25; // no unit training below this
+set army.late_game = 14 * MINUTE; // mix rows switch to `late`
+set army.aa_per = 200; set army.aa_max = 24; // aa = min(aa_max, enemy air / aa_per)
+set army.starved_gas = 75; set army.starved_minerals = 400; // short of gas, minerals piling up:
+set army.starved_factor = 3; // units without gas count this much more
+set army.morph_min = 2; // lurkers etc. without a cap: half the source, at least this
+set army.archon_energy = 50; // high templar below this merge
+
+// defense
+set defense.intruder_range = 512; // an enemy this close to a building is an attack
+set defense.warning_range = 1100; // an armed force this close warns auto-play
+set defense.threat_hold = 90;
+set defense.militia_all = 12; // workers that fight with no army...
+set defense.militia_some = 6; // ...or with too small a one
+set defense.militia_time = 20;
+set defense.expansion_defenses = 2; // when colonizing with attacking on
+set defense.fortify_main_ground = 4; set defense.fortify_main_air = 3; // defensive mode
+set defense.fortify_ground = 2; set defense.fortify_air = 2;
+set defense.colony_ground = 8; set defense.colony_air = 3; // colonizing without attacking
+set defense.colony_rich = 400; // minerals that double colony_ground
+set defense.colony_mobile = 6; // mobile units guarding colonies (not Terran)
+set defense.colony_tanks = 3; // siege tanks per Terran colony
+set defense.marines_per_bunker = 4; set defense.colony_marines = 4;
+set defense.air_trigger = 300; // enemy air value that calls for anti-air
+set defense.air_island_after = 4 * MINUTE;
+set defense.air_per = 500; set defense.air_max = 6; set defense.air_island_min = 2; // anti-air per base
+set defense.max_comsats = 2;
+set defense.silos = 1; set defense.silos_late = 2; set defense.silos_late_after = 30 * MINUTE;
+
+// help
+// defensive mode: helping allies under attack
+set help.range = 448; // an armed enemy this close to an ally's building
+set help.fresh = 4; // how long a sighting counts
+set help.whole_army = 6; // armies up to this size go whole, bigger ones half
+set help.refresh = 3;
+set help.guard_radius = 224;
+
+// drops
+set drops.max = 4;
+set drops.min_space = 4; // a transport goes with at least this much aboard
+set drops.load_time = 30; // leaves with what is aboard after this
+set drops.give_up = 40; // nobody boarded
+set drops.overlords = 3; // overlords used as transports
+
+// spells
+// the least value a spell must hit (or protect)
+set spells.lockdown = 200;
+set spells.nuke_interval = 50;
+set spells.yamato = 200; set spells.yamato_defense_bonus = 200;
+set spells.irradiate = 200;
+set spells.emp = 500;
+set spells.matrix = 150;
+set spells.storm = 350;
+set spells.stasis = 700;
+set spells.web = 400;
+set spells.plague = 600;
+set spells.swarm = 300; // our own army under the swarm
+set spells.broodlings = 150;
+set spells.ensnare = 400;
+
+// diplomacy
+set diplomacy.open_trust = 30; // at least this trusting: open to invitations
+set diplomacy.closed_trust = 60; // dominant and below this: keep to yourself
+set diplomacy.first_invite = 3 * MINUTE; set diplomacy.first_invite_spread = 1 * MINUTE;
+set diplomacy.open_check = 1 * MINUTE;
+// Utility of an alliance with a group (alliance_utility).
+set diplomacy.trust_center = 50; set diplomacy.trust_div = 2;
+set diplomacy.closeness_div = 4;
+set diplomacy.peace = 55; // with whoever is beating us at home
+set diplomacy.helper = 40; // a group strong enough to help us
+set diplomacy.dominant_pct = 160; set diplomacy.dominant = 35; // we are this much stronger than anyone: need no one
+set diplomacy.dead_weight_ratio = 3; set diplomacy.dead_weight = 15;
+set diplomacy.beating_value = 400; set diplomacy.beating = 20; // winning a fight against them
+set diplomacy.common_enemy_pct = 130; set diplomacy.common_enemy = 25;
+set diplomacy.mining_max = 25; set diplomacy.mining_scale = 20;
+set diplomacy.strong_ally = 10; // they are more than twice as strong
+// Losing at home: invaders' value, how much stronger than the
+// defenders (percent), recent losses.
+set diplomacy.losing_threat = 300; set diplomacy.losing_pct = 130; set diplomacy.losing_losses = 150;
+set diplomacy.outmatched_pct = 130; // someone this much stronger: look for friends
+set diplomacy.accept_open = 35; set diplomacy.accept_closed = 55; set diplomacy.accept_noise = 20;
+// Surrenders offered to us: tribute vs the score for conquest.
+set diplomacy.tribute_rate = 5; set diplomacy.tribute_army_div = 2; set diplomacy.tribute_trust = 20; set diplomacy.conquest_pct = 60;
+// Offering to surrender.
+set diplomacy.refused_window = 2 * MINUTE; set diplomacy.hopeless_after = 75; set diplomacy.surrender_retry = 1 * MINUTE;
+// Turning on a weaker ally once no meaningful enemy is left.
+set diplomacy.betray_after = 8 * MINUTE; set diplomacy.betray_check = 1 * MINUTE;
+set diplomacy.betray_edge = 140; // percent stronger, plus trust
+set diplomacy.betray_outside = 4; // everyone outside times this is weaker than us
+// Invitations.
+set diplomacy.invite_losing = 15; set diplomacy.invite_interval = 45; set diplomacy.invite_spread = 45; // seconds
+set diplomacy.no_pester = 1 * MINUTE;
+set diplomacy.invite_utility = 40;

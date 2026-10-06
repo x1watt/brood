@@ -229,6 +229,12 @@ class GameController {
       final e = await BwEngine.open();
       e.loadAssets(dataDir);
       final setup = launch.setup;
+      // Computer players' bot profiles, from the text kept with the game.
+      for (int i = 0; i < setup.players.length; ++i) {
+        final p = setup.players[i];
+        if (p.human || p.bot.isEmpty || e.setBotProfile(i, setup.botFiles, p.bot)) continue;
+        throw StateError('bot profile "${p.bot}": ${e.compileBot(setup.botFiles, p.bot).error}');
+      }
       List<int> newGame() => e.newGame(launch.mapFile, [for (final p in setup.players) (human: p.human, race: p.race, team: p.team)], setup.seed);
       final slots = newGame();
       var computers = 0;
@@ -237,7 +243,10 @@ class GameController {
         final p = setup.players[i];
         if (!p.human) ++computers;
         if (slots[i] < 0) continue;
-        placed.add(GamePlayer(slot: slots[i], race: p.race, team: p.team, human: p.human, name: p.human ? 'You' : 'Computer $computers'));
+        // A computer with a bot profile goes by the profile's name.
+        final bot = p.human || p.bot.isEmpty ? '' : e.compileBot(setup.botFiles, p.bot).name;
+        final name = p.human ? 'You' : (bot.isEmpty ? 'Computer $computers' : '$bot $computers');
+        placed.add(GamePlayer(slot: slots[i], race: p.race, team: p.team, human: p.human, name: name));
       }
       final join = launch.join;
       final me = join != null ? placed.where((p) => p.slot == join.slot).firstOrNull : placed.where((p) => p.human).firstOrNull;

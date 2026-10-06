@@ -79,6 +79,16 @@ flutter:
         - asset: assets/fonts/NotoSans-Bold.ttf
           weight: 700
 
+  # Bot profiles shipped with the game (docs/bot_profiles.md); a folder
+  # each, so each is listed.
+  assets:
+    - assets/bots/standard/
+    - assets/bots/lib/
+    - assets/bots/rusher/
+    - assets/bots/turtle/
+    - assets/bots/loyal/
+    - assets/bots/opportunist/
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

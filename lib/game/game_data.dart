@@ -28,6 +28,10 @@ abstract class GameFiles {
 
   List<GameMap> maps();
 
+  /// The player's own bot profiles (lib/game/bot_profiles.dart): every .bot
+  /// file under bots/, by path relative to it.
+  Future<Map<String, String>> botFiles() async => const {};
+
   bool exists(String path);
 
   /// Writes a map (the map editor's save), creating or replacing it.

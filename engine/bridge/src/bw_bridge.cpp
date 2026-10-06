@@ -141,6 +141,8 @@ struct bw_bridge {
 	int psi_owner = -1;
 	int viewer = -1;
 	bw_ai::ai_system ai;
+	// Bot profiles by player index of the next game's setup.
+	std::array<std::shared_ptr<const botscript::profile>, BW_MAX_PLAYERS> bot_profiles;
 	bw_alliances::alliance_system alliances;
 	bool alliances_on = false; // games from bw_bridge_new_game
 	// Control groups kept here rather than in OpenBW's action_state, which
@@ -521,6 +523,7 @@ bw_status bw_bridge_new_game(bw_bridge_t* bridge, const char* map_file, const bw
 			out_slots[k] = slot_of[(size_t)k];
 			if (slot_of[(size_t)k] < 0 || setup->controller[k] != BW_PLAYER_COMPUTER) continue;
 			int slot = slot_of[(size_t)k];
+			b->ai.slot_profile[(size_t)slot] = b->bot_profiles[(size_t)k];
 			b->ai.add(slot, static_cast<race_t>(setup->race[k]), setup->seed, st.game->start_locations[(size_t)slot]);
 		}
 		std::array<int, bw_alliances::max_players> team_of_slot{};
@@ -764,6 +767,8 @@ uint32_t bw_bridge_state_hash(bw_bridge_t* bridge) {
 		mix((int)u->unit_type->id);
 		mix(u->owner);
 	}
+	// Bot profiles' script variables, when there are any.
+	if (uint32_t s = b->ai.script_hash()) mix(s);
 	return h;
 }
 
@@ -2175,6 +2180,48 @@ bw_status bw_bridge_load_snapshot(bw_bridge_t* bridge, const uint8_t* data, int 
 		b->game_started = false;
 		return BW_ERR_UNKNOWN;
 	}
+}
+
+static bool write_report(char* out, int out_cap, const std::string& text) {
+	if (!out || out_cap <= 0) return false;
+	size_t n = std::min(text.size(), (size_t)out_cap - 1);
+	std::memcpy(out, text.data(), n);
+	out[n] = '\0';
+	return true;
+}
+
+bw_status bw_bridge_bot_compile(bw_bridge_t* bridge, const char* bundle, const char* profile, char* out, int out_cap) {
+	if (!bridge || !bundle || !profile) return BW_ERR_INVALID_ARGUMENT;
+	std::string message;
+	auto p = botscript::compile(botscript::parse_bundle(bundle), profile, message);
+	if (!p) {
+		write_report(out, out_cap, "ERROR\n" + message);
+		return BW_ERR_INVALID_ARGUMENT;
+	}
+	auto one_line = [](std::string s) {
+		for (char& c : s) {
+			if (c == '\n' || c == '\r') c = ' ';
+		}
+		return s;
+	};
+	std::string report = "OK\n" + one_line(p->name) + "\n" + one_line(p->description) + "\n";
+	for (auto& f : p->files) report += f + "\n";
+	write_report(out, out_cap, report);
+	return BW_OK;
+}
+
+bw_status bw_bridge_set_bot_profile(bw_bridge_t* bridge, int player_index, const char* bundle, const char* profile) {
+	if (!bridge || player_index < 0 || player_index >= BW_MAX_PLAYERS) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	auto& slot = b->bot_profiles[(size_t)player_index];
+	if (!profile || !*profile) {
+		slot.reset();
+		return BW_OK;
+	}
+	std::string message;
+	slot = botscript::compile(botscript::parse_bundle(bundle), profile, message);
+	if (!slot) std::fprintf(stderr, "bot profile %s: %s\n", profile, message.c_str());
+	return slot ? BW_OK : BW_ERR_INVALID_ARGUMENT;
 }
 
 bw_status bw_bridge_set_ai_version(bw_bridge_t* bridge, int version) {

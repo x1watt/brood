@@ -3,6 +3,7 @@
 // game folder) and written into the engine's in-memory file system under
 // /data at every start, where OpenBW opens them as on desktop.
 
+import 'dart:convert';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
@@ -22,6 +23,7 @@ class WebGameFiles extends GameFiles {
   static WebGameFiles get current => GameFiles.instance as WebGameFiles;
 
   final List<String> _files = []; // relative paths mounted under /data
+  final Map<String, String> _bots = {}; // bot profile files, by path under bots/
   bool _ready = false;
 
   @override
@@ -35,6 +37,12 @@ class WebGameFiles extends GameFiles {
 
   @override
   List<GameMap> maps() => [for (final f in _files) if (GameMap.isMeleeMap('/$f')) GameMap('/data/$f')];
+
+  @override
+  Future<Map<String, String>> botFiles() async => Map.of(_bots);
+
+  /// Whether a game folder's file is a bot profile file ("bots/x/profile.bot").
+  static bool isBotFile(String relativePath) => relativePath.startsWith('bots/') && relativePath.endsWith('.bot');
 
   @override
   bool exists(String path) => path.startsWith('/data/') && _files.contains(path.substring(6));
@@ -66,10 +74,15 @@ class WebGameFiles extends GameFiles {
     final bridge = await BridgeRawWeb.open();
     final fs = bridge.fs;
     _files.clear();
+    _bots.clear();
     for (final key in keys) {
       final value = await db.get(BroodDb.files, key);
       if (value == null) continue;
       final bytes = (value as JSArrayBuffer).toDart.asUint8List();
+      if (isBotFile(key)) {
+        _bots[key.substring(5)] = utf8.decode(bytes, allowMalformed: true);
+        continue;
+      }
       _mkdirs(fs, '/data/$key');
       fs.callMethodVarArgs('writeFile'.toJS, ['/data/$key'.toJS, bytes.toJS]);
       _files.add(key);
@@ -116,8 +129,8 @@ class WebGameFiles extends GameFiles {
   Future<String?> pickAndImport(void Function(int done, int total) progress, {bool folder = true}) async {
     final picked = await _pick(folder);
     if (picked.isEmpty) return 'No files were chosen.';
-    // What to keep: the three archives (by name, anywhere) and melee maps
-    // under a maps/ folder.
+    // What to keep: the three archives (by name, anywhere), melee maps
+    // under a maps/ folder and bot profiles under a bots/ folder.
     final keep = <String, web.File>{};
     for (final f in picked) {
       final rel = f.webkitRelativePath.isNotEmpty ? f.webkitRelativePath : f.name;
@@ -126,6 +139,11 @@ class WebGameFiles extends GameFiles {
       final archive = requiredArchives.where((a) => a.toLowerCase() == base.toLowerCase()).firstOrNull;
       if (archive != null) {
         keep[archive] = f;
+        continue;
+      }
+      final botsAt = parts.indexWhere((p) => p == 'bots');
+      if (botsAt >= 0 && base.endsWith('.bot')) {
+        keep[(['bots', ...parts.sublist(botsAt + 1)]).join('/')] = f;
         continue;
       }
       final mapsAt = parts.indexWhere((p) => p.toLowerCase() == 'maps');

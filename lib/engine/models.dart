@@ -344,3 +344,31 @@ class PlayerStats {
 
   int get totalScore => unitsScore + structuresScore + resourcesScore;
 }
+
+/// A bot profile compiled by the engine (bw_bridge_bot_compile).
+class BotProfileReport {
+  final bool ok;
+  final String name;
+  final String description;
+
+  /// The files it is made of (paths relative to the bots folder).
+  final List<String> files;
+
+  /// What is wrong, as file:line:col: message.
+  final String error;
+
+  const BotProfileReport({required this.ok, this.name = '', this.description = '', this.files = const [], this.error = ''});
+
+  /// The bridge's report: "OK", name, description, files (one per line), or
+  /// "ERROR" and the message.
+  static BotProfileReport parse(String text) {
+    final lines = text.split('\n');
+    if (lines.first != 'OK') return BotProfileReport(ok: false, error: lines.skip(1).join('\n').trim());
+    return BotProfileReport(
+      ok: true,
+      name: lines.length > 1 ? lines[1] : '',
+      description: lines.length > 2 ? lines[2] : '',
+      files: [for (final f in lines.skip(3)) if (f.isNotEmpty) f],
+    );
+  }
+}

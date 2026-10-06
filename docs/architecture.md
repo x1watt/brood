@@ -112,7 +112,26 @@ spellcasters never lead an attack. Auto-play never trains fighting units
 without the attacking mode, and leaves alone units the human told to follow
 one of their own units. test/probe/ai_probe.dart (run with flutter test) plays computer-only
 games and prints what each side fields; BROOD_AI_LOG=<file> logs spells,
-nukes, drops and expansions there.
+nukes, drops and expansions there. Every number that shapes how the
+computer plays (build and research plans, the army's mix, attack waves,
+defences, expansions, drops, spell thresholds, diplomacy weights and the
+trust range) is in engine/bridge/src/bw_ai_params.h: the numbers
+(ai_tunables) per player in its plain data, so saved games keep them, and
+the tables (ai_tables). The defaults are the standard player. Version 1's
+own build order, waves and expansions keep their numbers in bw_ai.h.
+Geometry that makes placement work stays in code.
+
+Bot profiles (docs/bot_profiles.md) change them: folders of BotScript
+files (assets/bots, and bots/ in the game data) compiled by the bridge
+(engine/bridge/src/botscript.h: a compiler and a small stack machine,
+integers only, a step budget per run) into tables, numbers and event
+handlers that bw_ai.h calls at its decisions (think, attack waves,
+invitations, surrenders, betrayal, helping allies). A profile is set per
+computer player before bw_bridge_new_game (bw_bridge_set_bot_profile); the
+game's setup carries the text of the files it uses (GameSetup.botFiles),
+so saves and multiplayer games compile exactly the same profiles, and
+profiles' script variables count in bw_bridge_state_hash. Without a
+profile, or with "standard", the computer plays exactly as before.
 
 In-game alliances (engine/bridge/src/bw_alliances.h, lib/ui/alliance_panel.dart,
 F9 or the top bar button): players invite each other and accept or decline;

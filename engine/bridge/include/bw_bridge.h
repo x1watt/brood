@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 26
+#define BW_BRIDGE_ABI_VERSION 27
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -572,6 +572,26 @@ bw_status bw_bridge_load_snapshot(bw_bridge_t* bridge, const uint8_t* data, int 
 // the whole tech tree, spells, nukes, drops and air play on island maps; 1
 // is the earlier, simpler player, for saved games made with it (logged).
 bw_status bw_bridge_set_ai_version(bw_bridge_t* bridge, int version);
+
+// --- Bot profiles (docs/bot_profiles.md) -----------------------------------------
+// A profile is a folder of BotScript files (profile.bot first) that sets how
+// a computer player plays. `bundle` holds the files of a bots folder: for
+// each one its path relative to that folder ("standard/profile.bot"), the
+// byte 0x1F, its text, and the byte 0x1E.
+
+// Compiles profile `profile` (a folder name) of `bundle` and writes a
+// report to out (UTF-8, NUL-terminated, cut at out_cap): on success "OK",
+// then the profile's name, its description and every file it was made
+// from, one per line; on failure "ERROR" and the message (file:line:col).
+// Returns BW_OK or BW_ERR_INVALID_ARGUMENT. Needs no game.
+bw_status bw_bridge_bot_compile(bw_bridge_t* bridge, const char* bundle, const char* profile, char* out, int out_cap);
+
+// The profile the computer player at `player_index` (its place in
+// bw_game_setup) plays with in the games started after this; a NULL or
+// empty profile is the standard player. Kept until changed: set it before
+// bw_bridge_new_game, also when that game is a saved one to load or
+// replay. BW_ERR_INVALID_ARGUMENT when it doesn't compile.
+bw_status bw_bridge_set_bot_profile(bw_bridge_t* bridge, int player_index, const char* bundle, const char* profile);
 
 // Sets the selected building's rally point to a position or a unit.
 bw_status bw_bridge_set_rally(bw_bridge_t* bridge, int owner, int x, int y, int32_t target_unit_id);

@@ -1,0 +1,88 @@
+// assets/bots/standard/terran.bot
+//
+// The standard Terran player: its build plan, research and army mix.
+// Rows apply in order; "ground" rows only when enemy bases can be walked
+// to, "island" rows only when they can't.
+
+// build <type> <how many in all> at <supply in use> [ground|island];
+plan terran {
+	build terran_barracks 1 at 10;
+	build terran_refinery 1 at 12;
+	build terran_factory 1 at 14 island;
+	build terran_starport 1 at 17 island;
+	build terran_barracks 2 at 15 ground;
+	build terran_academy 1 at 18 ground;
+	build terran_engineering_bay 1 at 20 island;
+	build terran_factory 1 at 22 ground;
+	build terran_starport 2 at 26 island;
+	build terran_engineering_bay 1 at 26 ground;
+	build terran_barracks 3 at 30 ground;
+	build terran_armory 1 at 32 island;
+	build terran_refinery 2 at 34;
+	build terran_starport 1 at 38 ground;
+	build terran_science_facility 1 at 40 island;
+	build terran_armory 1 at 44 ground;
+	build terran_academy 1 at 44 island;
+	build terran_factory 2 at 48 ground;
+	build terran_starport 3 at 50 island;
+	build terran_science_facility 1 at 56 ground;
+	build terran_barracks 4 at 64 ground;
+	build terran_starport 4 at 70 island;
+	build terran_starport 2 at 80 ground;
+	build terran_science_facility 2 at 84;
+	build terran_factory 3 at 90 ground;
+	build terran_barracks 5 at 110 ground;
+	build terran_starport 5 at 120 island;
+}
+
+// tech|upgrade <name> by <building> at <supply in use> [ground|island];
+research terran {
+	tech stim_packs by terran_academy at 20 ground;
+	tech tank_siege_mode by terran_machine_shop at 24;
+	upgrade u_238_shells by terran_academy at 26 ground;
+	tech cloaking_field by terran_control_tower at 30 island;
+	tech spider_mines by terran_machine_shop at 30 ground;
+	upgrade terran_infantry_weapons by terran_engineering_bay at 34 ground;
+	upgrade terran_ship_weapons by terran_armory at 36 island;
+	upgrade terran_vehicle_weapons by terran_armory at 50 ground;
+	tech yamato_gun by terran_physics_lab at 50;
+	tech irradiate by terran_science_facility at 56;
+	upgrade terran_ship_plating by terran_armory at 56 island;
+	upgrade terran_infantry_armor by terran_engineering_bay at 60 ground;
+	upgrade charon_boosters by terran_machine_shop at 64;
+	tech personnel_cloaking by terran_covert_ops at 70;
+	tech lockdown by terran_covert_ops at 76;
+	tech emp_shockwave by terran_science_facility at 80;
+	upgrade terran_vehicle_plating by terran_armory at 90 ground;
+	tech cloaking_field by terran_control_tower at 90 ground;
+	upgrade terran_ship_weapons by terran_armory at 100 ground;
+}
+
+// <type> share <part of the army> [cap <at most>] [aa <n>/<d>] [late <share>] [cloak <share>] [some_island];
+mix terran ground {
+	terran_marine share 30;
+	terran_medic share 5 cap 12;
+	terran_firebat share 4 cap 10;
+	terran_vulture share 8 cap 16;
+	terran_siege_tank_tank_mode share 14;
+	terran_goliath share 4 cap 30 aa 1;
+	terran_science_vessel share 3 cap 4;
+	terran_battlecruiser share 2 late 8;
+	terran_ghost share 2 cap 3;
+	terran_wraith share 2 cap 6;
+	terran_valkyrie share 0 cap 8 aa 1/2;
+	terran_dropship share 2 cap 2 some_island;
+}
+
+// <type> share <part of the army> [cap <at most>] [aa <n>/<d>] [late <share>] [cloak <share>] [some_island];
+mix terran island {
+	terran_wraith share 10;
+	terran_battlecruiser share 16;
+	terran_valkyrie share 2 cap 12 aa 1;
+	terran_science_vessel share 2 cap 3;
+	terran_dropship share 3 cap 3;
+	terran_marine share 8 cap 16;
+	terran_siege_tank_tank_mode share 4 cap 6;
+	terran_goliath share 3 cap 16 aa 1/2;
+	terran_ghost share 1 cap 2;
+}

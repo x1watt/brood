@@ -1,0 +1,38 @@
+// assets/bots/turtle/profile.bot
+//
+// Digs in: early expansions with heavy defences, anti-air at every base,
+// money left over turned into more defences, and no attack before the
+// fourteenth minute, then only with a big army.
+
+profile "Turtle" {
+	extends "standard";
+	description "Digs in behind heavy defences, expands early, attacks late with a big army.";
+}
+
+set army.wave_first = 30;
+set army.wave_grow = 8;
+set army.wave_max = 80;
+set defense.expansion_defenses = 4;
+set defense.air_trigger = 150;
+set defense.air_max = 8;
+set defense.air_island_min = 3;
+set economy.surplus_fortify = 700;
+set economy.surplus_minerals = 600;
+set expansion.base1 = 5 * MINUTE;
+set expansion.base2 = 10 * MINUTE;
+set expansion.base3 = 16 * MINUTE;
+set expansion.base4 = 22 * MINUTE;
+set personality.trust_min = 30;
+set personality.trust_span = 50;
+
+const FIRST_ATTACK = 14 * MINUTE;
+
+on wave(ready) {
+	if (time < FIRST_ATTACK) return false;
+}
+
+on think {
+	// A wave losing at home turns back to defend (the default already
+	// defends against intruders; this keeps the army home while losing).
+	if (losing && attacking) retreat();
+}

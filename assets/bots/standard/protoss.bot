@@ -1,0 +1,83 @@
+// assets/bots/standard/protoss.bot
+//
+// The standard Protoss player: its build plan, research and army mix.
+// Rows apply in order; "ground" rows only when enemy bases can be walked
+// to, "island" rows only when they can't.
+
+// build <type> <how many in all> at <supply in use> [ground|island];
+plan protoss {
+	build protoss_gateway 1 at 10;
+	build protoss_assimilator 1 at 12;
+	build protoss_cybernetics_core 1 at 14;
+	build protoss_stargate 1 at 18 island;
+	build protoss_gateway 2 at 16 ground;
+	build protoss_forge 1 at 20 island;
+	build protoss_robotics_facility 1 at 22 ground;
+	build protoss_forge 1 at 26 ground;
+	build protoss_stargate 2 at 26 island;
+	build protoss_gateway 3 at 28 ground;
+	build protoss_assimilator 2 at 32;
+	build protoss_fleet_beacon 1 at 34 island;
+	build protoss_citadel_of_adun 1 at 34 ground;
+	build protoss_robotics_support_bay 1 at 38 ground;
+	build protoss_robotics_facility 1 at 40 island;
+	build protoss_observatory 1 at 42;
+	build protoss_templar_archives 1 at 46 ground;
+	build protoss_stargate 3 at 50 island;
+	build protoss_gateway 4 at 50 ground;
+	build protoss_citadel_of_adun 1 at 56 island;
+	build protoss_stargate 1 at 60 ground;
+	build protoss_templar_archives 1 at 60 island;
+	build protoss_gateway 5 at 66 ground;
+	build protoss_arbiter_tribunal 1 at 70 island;
+	build protoss_fleet_beacon 1 at 76 ground;
+	build protoss_stargate 4 at 80 island;
+	build protoss_arbiter_tribunal 1 at 90 ground;
+	build protoss_stargate 2 at 100 ground;
+	build protoss_gateway 6 at 110 ground;
+}
+
+// tech|upgrade <name> by <building> at <supply in use> [ground|island];
+research protoss {
+	upgrade singularity_charge by protoss_cybernetics_core at 20 ground;
+	upgrade protoss_air_weapons by protoss_cybernetics_core at 26 island;
+	upgrade protoss_ground_weapons by protoss_forge at 30 ground;
+	upgrade carrier_capacity by protoss_fleet_beacon at 36;
+	upgrade leg_enhancements by protoss_citadel_of_adun at 38 ground;
+	upgrade reaver_capacity by protoss_robotics_support_bay at 42;
+	upgrade gravitic_drive by protoss_robotics_support_bay at 46 island;
+	tech psionic_storm by protoss_templar_archives at 48;
+	upgrade protoss_air_armor by protoss_cybernetics_core at 56 island;
+	upgrade protoss_ground_armor by protoss_forge at 60 ground;
+	tech stasis_field by protoss_arbiter_tribunal at 72;
+	upgrade protoss_air_weapons by protoss_cybernetics_core at 80 ground;
+	upgrade protoss_plasma_shields by protoss_forge at 100;
+}
+
+// <type> share <part of the army> [cap <at most>] [aa <n>/<d>] [late <share>] [cloak <share>] [some_island];
+mix protoss ground {
+	protoss_zealot share 16;
+	protoss_dragoon share 18 aa 1;
+	protoss_high_templar share 4 cap 6;
+	protoss_dark_templar share 3 cap 4;
+	protoss_reaver share 3 cap 4;
+	protoss_observer share 2 cap 3 cloak 3;
+	protoss_shuttle share 2 cap 2;
+	protoss_carrier share 2 late 8;
+	protoss_arbiter share 1 cap 1;
+	protoss_corsair share 1 cap 12 aa 1;
+}
+
+// <type> share <part of the army> [cap <at most>] [aa <n>/<d>] [late <share>] [cloak <share>] [some_island];
+mix protoss island {
+	protoss_scout share 4 cap 8;
+	protoss_corsair share 4 cap 16 aa 1;
+	protoss_carrier share 18;
+	protoss_arbiter share 1 cap 2;
+	protoss_shuttle share 3 cap 3;
+	protoss_reaver share 2 cap 3;
+	protoss_zealot share 5 cap 10;
+	protoss_dragoon share 5 cap 10;
+	protoss_observer share 1 cap 2 cloak 2;
+	protoss_high_templar share 1 cap 2;
+}
