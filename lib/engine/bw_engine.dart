@@ -724,6 +724,49 @@ class BwEngine {
     }
   }
 
+  String _report(int Function(int out, int cap) call) {
+    const cap = 1 << 15;
+    final out = _r.malloc(cap);
+    try {
+      if (call(out, cap) != 0) return '';
+      final bytes = _r.bytes(out, cap);
+      final end = bytes.indexOf(0);
+      return utf8.decode(bytes.sublist(0, end < 0 ? cap : end), allowMalformed: true);
+    } finally {
+      _r.free(out);
+    }
+  }
+
+  /// The strategies the computer player of [slot] can be steered to, and
+  /// the one in use (bw_bridge_bot_strategies).
+  BotStrategies botStrategies(int slot) {
+    final lines = _report((o, c) => _r.bw_bridge_bot_strategies(_h, slot, o, c)).split('\n');
+    var current = '';
+    var target = -1;
+    final list = <BotStrategy>[];
+    for (final l in lines) {
+      final f = l.split('\t');
+      if (f.length >= 3 && f[0] == 'current') {
+        current = f[1] == '-' ? '' : f[1];
+        target = int.tryParse(f[2]) ?? -1;
+      } else if (f.length >= 4) {
+        list.add(BotStrategy(int.parse(f[0]), f[1], int.parse(f[2]) > 0, f.sublist(3).join('\t')));
+      }
+    }
+    return BotStrategies(list, current, target);
+  }
+
+  /// How the computer player of [slot] sees every other player still in
+  /// the game (bw_bridge_bot_diplomacy).
+  List<BotRelation> botDiplomacy(int slot) => [
+    for (final l in _report((o, c) => _r.bw_bridge_bot_diplomacy(_h, slot, o, c)).split('\n'))
+      if (l.split(' ').length == 6)
+        () {
+          final f = [for (final x in l.split(' ')) int.parse(x)];
+          return BotRelation(f[0], f[1], f[2], f[3], f[4], f[5]);
+        }(),
+  ];
+
   /// Brackets an assistant's commands for [owner]: on keeps the player's
   /// selection, off puts it back (same frame). Logged.
   void keepSelection(int owner, bool on) => _r.bw_bridge_keep_selection(_h, owner, on ? 1 : 0);

@@ -6,7 +6,7 @@
 
 import 'dart:typed_data';
 
-const int BW_BRIDGE_ABI_VERSION = 31;
+const int BW_BRIDGE_ABI_VERSION = 32;
 const int BW_MAX_PLAYERS = 8;
 const int BW_PLAYER_HUMAN = 1;
 const int BW_PLAYER_COMPUTER = 2;
@@ -72,6 +72,8 @@ const int BW_STEER_HOLD = 2;
 const int BW_STEER_FOCUS = 3;
 const int BW_STEER_NUMBER = 4;
 const int BW_STEER_WAVE = 5;
+const int BW_STEER_STRATEGY = 6;
+const int BW_STEER_FAVOR = 7;
 
 abstract class BridgeRaw {
   /// Engine memory: allocate, free, and view bytes (little-endian).
@@ -172,6 +174,8 @@ abstract class BridgeRaw {
   int bw_bridge_set_bot_profile(int bridge, int player_index, int bundle, int profile);
   int bw_bridge_bot_steer(int bridge, int player_slot, int what, int a, int b);
   int bw_bridge_keep_selection(int bridge, int owner, int on);
+  int bw_bridge_bot_strategies(int bridge, int player_slot, int out, int out_cap);
+  int bw_bridge_bot_diplomacy(int bridge, int player_slot, int out, int out_cap);
   int bw_bridge_bot_numbers(int bridge, int bundle, int profile, int out, int out_cap);
   int bw_bridge_set_rally(int bridge, int owner, int x, int y, int target_unit_id);
   int bw_bridge_grp_load(int bridge, int path);

@@ -2292,7 +2292,28 @@ bw_status bw_bridge_bot_steer(bw_bridge_t* bridge, int player_slot, int what, in
 	bw_bridge* bb = B(bridge);
 	if (!bb->in_game()) return BW_ERR_NO_GAME;
 	if (!bb->log(bw_bridge::op_bot_steer, {player_slot, what, a, b})) return BW_OK;
-	return bb->ai.steer(player_slot, what, a, b, bb->player->st().current_frame) ? BW_OK : BW_ERR_INVALID_ARGUMENT;
+	return bb->ai.steer(bb->player->st(), bb->action_st, player_slot, what, a, b) ? BW_OK : BW_ERR_INVALID_ARGUMENT;
+}
+
+bw_status bw_bridge_bot_strategies(bw_bridge_t* bridge, int player_slot, char* out, int out_cap) {
+	if (!bridge || player_slot < 0 || player_slot > 7) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	std::string r = b->ai.strategies_report(player_slot);
+	write_report(out, out_cap, r);
+	return r.empty() ? BW_ERR_INVALID_ARGUMENT : BW_OK;
+}
+
+bw_status bw_bridge_bot_diplomacy(bw_bridge_t* bridge, int player_slot, char* out, int out_cap) {
+	if (!bridge || player_slot < 0 || player_slot > 7) return BW_ERR_INVALID_ARGUMENT;
+	bw_bridge* b = B(bridge);
+	if (!b->in_game()) return BW_ERR_NO_GAME;
+	try {
+		write_report(out, out_cap, b->ai.diplomacy_report(b->player->st(), b->action_st, player_slot));
+	} catch (...) {
+		return BW_ERR_UNKNOWN;
+	}
+	return BW_OK;
 }
 
 bw_status bw_bridge_keep_selection(bw_bridge_t* bridge, int owner, int on) {

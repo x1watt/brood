@@ -147,6 +147,9 @@ static void shipped_profiles() {
 		int a = bw_ai::tunable_at(h.t, n.offset), b = bw_ai::tunable_at(defaults, n.offset);
 		CHECK(a == b, "standard sets %s = %d, the default is %d", n.name, a, b);
 	}
+	int declared = 0;
+	for (auto& st : p->strategies) declared += st.fn >= 0;
+	CHECK(declared == 7, "standard declares %d strategies", declared);
 	ai_tables d;
 	auto& t = p->tables[0];
 	for (int r = 0; r != 3; ++r) {
@@ -287,6 +290,33 @@ int main() {
 			CHECK(r.ok && h.calls.back() == "use_plan 1", "variant name argument: %s", h.calls.back().c_str());
 		}
 	}
+	// Strategies: declared with a description and at most one parameter,
+	// named before they are declared (strategy_is), redefined by a child.
+	{
+		auto p = build({{"x/profile.bot", R"(
+			on wave(ready) { if (strategy_is("calm")) return false; }
+			strategy calm "Stay home." { hold(60); }
+			strategy hit "Hit them." (target) { focus(target); attack(); }
+			strategy calm { set_wave(9); }
+		)"}}, "x");
+		CHECK(p, "compiles");
+		if (p) {
+			CHECK(p->strategies.size() == 2 && p->strategies[0].name == "calm" && p->strategies[0].description == "Stay home.", "strategies");
+			CHECK(p->strategies[1].params == 1 && p->strategies[1].fn >= 0, "a strategy with a target");
+			test_host h;
+			int32_t target = 3;
+			run(*p, p->strategies[1].fn, &target, 1, h);
+			CHECK(h.calls.size() == 2 && h.calls[0] == "focus 3" && h.calls[1] == "attack", "strategy body");
+			h.calls.clear();
+			run(*p, p->strategies[0].fn, nullptr, 0, h);
+			CHECK(h.calls.size() == 1 && h.calls[0] == "set_wave 9", "redefined: %s", h.calls.empty() ? "" : h.calls[0].c_str());
+			int32_t ready = 5;
+			run(*p, p->handler[h_wave], &ready, 1, h);
+			CHECK(h.calls.back() == "strategy_is 0", "strategy_is by index: %s", h.calls.back().c_str());
+		}
+	}
+	expect_error("strategy two (a, b) { }", "at most one parameter");
+
 	// Errors name the place.
 	expect_error("int f() { return 1 }", "profile.bot:1:20: expected ';'");
 	expect_error("on think { x = 1; }", "unknown name 'x'");

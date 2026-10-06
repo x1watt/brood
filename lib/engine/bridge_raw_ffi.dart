@@ -405,6 +405,14 @@ class BridgeRawFfi extends BridgeRaw {
   @override
   int bw_bridge_keep_selection(int bridge, int owner, int on) => _bw_bridge_keep_selection(bridge, owner, on);
 
+  late final _bw_bridge_bot_strategies = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.IntPtr, ffi.Int32), int Function(int, int, int, int)>('bw_bridge_bot_strategies');
+  @override
+  int bw_bridge_bot_strategies(int bridge, int player_slot, int out, int out_cap) => _bw_bridge_bot_strategies(bridge, player_slot, out, out_cap);
+
+  late final _bw_bridge_bot_diplomacy = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.Int32, ffi.IntPtr, ffi.Int32), int Function(int, int, int, int)>('bw_bridge_bot_diplomacy');
+  @override
+  int bw_bridge_bot_diplomacy(int bridge, int player_slot, int out, int out_cap) => _bw_bridge_bot_diplomacy(bridge, player_slot, out, out_cap);
+
   late final _bw_bridge_bot_numbers = _lib.lookupFunction<ffi.Int32 Function(ffi.IntPtr, ffi.IntPtr, ffi.IntPtr, ffi.IntPtr, ffi.Int32), int Function(int, int, int, int, int)>('bw_bridge_bot_numbers');
   @override
   int bw_bridge_bot_numbers(int bridge, int bundle, int profile, int out, int out_cap) => _bw_bridge_bot_numbers(bridge, bundle, profile, out, out_cap);

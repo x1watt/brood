@@ -18,6 +18,12 @@
 // steer their auto-play or command their units). --host starts a new game
 // with the agent in the human's seat; people join it from the lobby.
 //
+// --strategist has Claude revise this player's strategy, numbers and
+// alliances every --every seconds (30), with --model (claude-opus-5-5),
+// --effort (medium) and an optional --goal "..." in the player's words.
+// It needs ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN, or `ant auth login`)
+// and costs a request or a few each round.
+//
 // Other options: --server ws://127.0.0.1:9191/ws, --data <game folder>
 // (BROOD_DATA), --http <port> (9292; 0: none), --mcp, --fog (see only what
 // the player sees; the game itself has fog of war off for now). The engine
@@ -86,6 +92,15 @@ Future<void> main(List<String> args) async {
   }
   final port = int.tryParse(arg('http') ?? '9292') ?? 9292;
   if (port > 0) await HttpApi(agent).serve(port);
+  if (flag('strategist')) {
+    Strategist(
+      agent,
+      every: (int.tryParse(arg('every') ?? '') ?? 30).clamp(10, 3600),
+      model: arg('model') ?? 'claude-opus-5-5',
+      effort: arg('effort') ?? 'medium',
+      goal: arg('goal') ?? '',
+    ).start();
+  }
   if (mcpMode) await Mcp(agent).serve();
 }
 
@@ -501,6 +516,72 @@ class Agent {
     if (p.fighting != 0) 'fighting': [for (int i = 0; i < 8; ++i) if (p.fighting & (1 << i) != 0) i],
   };
 
+  /// The strategies this player can be switched to, and the one in use.
+  Map<String, Object?> strategies() {
+    final s = e.botStrategies(slot);
+    return {
+      'current': s.current.isEmpty ? 'none (the profile\'s own way)' : s.current,
+      if (s.current.isNotEmpty && s.target >= 0) 'target': s.target,
+      'strategies': [
+        for (final x in s.list) {'name': x.name, 'target': x.takesTarget ? 'a player slot' : 'none', 'description': x.description},
+      ],
+      'note': s.list.isEmpty
+          ? 'This player has no bot profile with strategies (a human\'s auto-play, or the plain standard player): steer its numbers instead.'
+          : 'A strategy starts from the profile\'s own numbers; numbers steered before are reset. "none" goes back to the profile.',
+    };
+  }
+
+  /// Every player as this one's diplomacy sees them: alliances, strength,
+  /// how much it wants them as allies, the favor steered for them.
+  Map<String, Object?> alliances() {
+    final al = e.alliances();
+    final me = al.length > slot ? al[slot] : null;
+    final rel = {for (final r in e.botDiplomacy(slot)) r.slot: r};
+    final groups = <int, List<int>>{};
+    for (final a in al) {
+      if (a.active) groups.putIfAbsent(a.group, () => []).add(a.slot);
+    }
+    return {
+      'me': slot,
+      'my_alliance': me == null ? [] : groups[me.group] ?? [slot],
+      'open_to_invitations': me?.open,
+      'rules': 'An alliance holds at most 3 members, and never every player left. Allies share resources (if switched on), techs and mining '
+          'score; a vassal (surrendered) pays half its mining to its lord. Once a human is in an alliance, only humans let players in.',
+      'alliances': [
+        for (final g in groups.entries)
+          {'members': [for (final m in g.value) '${playerName(m)} (slot $m)'], if (g.value.contains(slot)) 'mine': true},
+      ],
+      'players': [
+        for (final a in al)
+          if (a.active && a.slot != slot)
+            {
+              'slot': a.slot,
+              'name': playerName(a.slot),
+              'race': raceNames[a.race.clamp(0, 2)],
+              'human': humans.containsKey(a.slot),
+              'relation': me != null && a.group == me.group ? 'ally' : 'enemy',
+              if (a.lord >= 0) 'vassal_of': a.lord,
+              'open': a.open,
+              'army_value': a.armyValue,
+              'mining_per_minute': a.mineralRate + a.gasRate,
+              if (rel[a.slot] case final r?) ...{
+                'alliance_strength': r.strength,
+                'utility': r.utility,
+                'favor': r.favor,
+                'we_lost_to_them_lately': r.lost,
+                'distance': r.distance,
+              },
+              if (me != null && me.fighting & (1 << a.slot) != 0) 'fighting_us': true,
+              if (me != null && me.invitedBy & (1 << a.slot) != 0) 'invites_us': true,
+              if (me != null && me.surrenderFrom & (1 << a.slot) != 0) 'offers_to_surrender': true,
+            },
+      ],
+      'how_to_read': 'utility: how much this player\'s own diplomacy wants that alliance (it invites and accepts above about 40). '
+          'favor (-100 never ... 100 always) is added to utility; at 100 it always accepts their invitation, at -100 never; '
+          'negative favor toward an ally makes turning on them easier. Set it with set_relations.',
+    };
+  }
+
   List<Map<String, Object?>> units({String owner = 'me', String? type}) {
     final al = e.alliances();
     final myGroup = al.length > slot ? al[slot].group : -1;
@@ -563,6 +644,15 @@ class Agent {
       b.writeln('  slot ${m['slot']} ${m['name']} (${m['race']}${m['human'] == true ? ', human' : ''}): $rel, '
           '${m['active'] == true ? '' : 'OUT, '}army ${m['army_value']}, ${m['workers']} workers, mining ${m['mining_per_minute']}/min, score ${m['score']}'
           '${m['invited_by'] != null ? ', invited by ${m['invited_by']}' : ''}');
+    }
+    final st = e.botStrategies(slot);
+    if (st.list.isNotEmpty) {
+      b.writeln('Strategy: ${st.current.isEmpty ? 'none (the profile\'s own way)' : st.current}${st.current.isNotEmpty && st.target >= 0 ? ' against slot ${st.target}' : ''}. '
+          'Available: ${[for (final x in st.list) x.takesTarget ? '${x.name}(target)' : x.name].join(', ')}.');
+    }
+    final rel = e.botDiplomacy(slot);
+    if (rel.isNotEmpty) {
+      b.writeln('Diplomacy (utility / favor): ${[for (final r in rel) 'slot ${r.slot} ${r.utility}/${r.favor}'].join(', ')}.');
     }
     final seen = s['enemy_units_seen'] as Map;
     for (final x in seen.entries) {
@@ -677,6 +767,36 @@ class Agent {
         }
         if (done.isEmpty) throw ArgumentError('nothing to steer: attack, hold_seconds, focus_player, wave_size or numbers');
         return {'ok': true, 'sent': done};
+      case 'set_strategy':
+        _need('steer');
+        final name = '${a['name'] ?? ''}'.trim();
+        if (name.isEmpty || name == 'none') {
+          e.botSteer(me, 6, -1);
+          return {'ok': true, 'strategy': 'none'};
+        }
+        final list = e.botStrategies(me).list;
+        final st = list.where((x) => x.name == name).firstOrNull;
+        if (st == null) throw ArgumentError('no strategy "$name" (${list.map((x) => x.name).join(', ')}, none)');
+        var target = -1;
+        if (st.takesTarget) {
+          target = _int(a, 'target');
+          if (target == me || target < 0 || target > 7) throw ArgumentError('target: another player\'s slot');
+        }
+        e.botSteer(me, 6, st.index, target);
+        return {'ok': true, 'strategy': st.name, if (target >= 0) 'target': target};
+      case 'set_relations':
+        _need('steer');
+        final favor = a['favor'];
+        if (favor is! Map || favor.isEmpty) throw ArgumentError('"favor": {"<slot>": -100..100, ...}');
+        final done = <String, int>{};
+        for (final x in favor.entries) {
+          final q = int.tryParse('${x.key}');
+          if (q == null || q < 0 || q > 7 || q == me) throw ArgumentError('not another player\'s slot: ${x.key}');
+          final v = (x.value as num).toInt().clamp(-100, 100);
+          e.botSteer(me, 7, q, v);
+          done['$q'] = v;
+        }
+        return {'ok': true, 'favor': done};
       case 'set_autoplay':
         _need('steer');
         final modes = a['modes'];
@@ -805,7 +925,7 @@ class Agent {
         _send({'t': 'allow', 'level': _int(a, 'level').clamp(0, 2)});
         return {'ok': true};
       default:
-        throw ArgumentError('no action "${a['action']}" (advise, steer, set_autoplay, command_units, train, build, research, diplomacy, pause, allow)');
+        throw ArgumentError('no action "${a['action']}" (advise, steer, set_strategy, set_relations, set_autoplay, command_units, train, build, research, diplomacy, pause, allow)');
     }
   }
 
@@ -858,9 +978,11 @@ GET  /state             resources, units by type, players, alliances
 GET  /units?owner=me|enemies|allies|all|resources|<slot>&type=<name>
 GET  /map               size, your base, mineral fields and geysers
 GET  /events?after=<seq>  alliance events, advice, permissions, errors
+GET  /strategies        the strategies set_strategy can switch to, and the one in use
+GET  /alliances         alliances, and how this player's diplomacy sees every other player
 GET  /numbers           the names steer can set (army.wave_first, ...)
 GET  /names             unit, tech and upgrade names
-POST /act {"action": ...}  advise | steer | set_autoplay | command_units | train | build | research | diplomacy | pause | allow
+POST /act {"action": ...}  advise | steer | set_strategy | set_relations | set_autoplay | command_units | train | build | research | diplomacy | pause | allow
 ''';
 
   Future<void> serve(int port) async {
@@ -885,6 +1007,10 @@ POST /act {"action": ...}  advise | steer | set_autoplay | command_units | train
           case ('GET', '/events'):
             final after = int.tryParse(q['after'] ?? '') ?? 0;
             out = [for (final ev in agent.events) if ((ev['seq'] as int) > after) ev];
+          case ('GET', '/strategies'):
+            out = agent.strategies();
+          case ('GET', '/alliances'):
+            out = agent.alliances();
           case ('GET', '/numbers'):
             out = agent.numberNames;
           case ('GET', '/names'):
@@ -968,6 +1094,26 @@ class Mcp {
       }),
     },
     {'name': 'get_numbers', 'description': 'The names of the numbers steer can set.', 'inputSchema': _obj({})},
+    {
+      'name': 'get_strategies',
+      'description': 'The strategies this player can switch to (defend, economy, expand, build_up, attack, massive_attack, all_in, and whatever its profile adds), with what each does, and the one in use.',
+      'inputSchema': _obj({}),
+    },
+    {
+      'name': 'set_strategy',
+      'description': 'Switches the built-in AI to a strategy (see get_strategies); "none" goes back to the profile\'s own way. Attack strategies take a target player slot. The AI keeps playing it until you change it: re-evaluate every half minute or so.',
+      'inputSchema': _obj({'name': _str, 'target': _int}, ['name']),
+    },
+    {
+      'name': 'get_alliances',
+      'description': 'Alliances, and how this player\'s diplomacy sees every other player: alliance strength, utility (how much it wants them), favor, losses to them, distance, invitations and surrender offers.',
+      'inputSchema': _obj({}),
+    },
+    {
+      'name': 'set_relations',
+      'description': 'How much this player wants each other player as an ally, from -100 (never: refuses their invitations, turns on them sooner) to 100 (always accepts them, seeks them out). Its own diplomacy then invites, accepts, leaves and betrays by it. E.g. {"favor": {"2": 100, "5": -60}}.',
+      'inputSchema': _obj({'favor': {'type': 'object', 'description': 'player slot -> -100..100'}}, ['favor']),
+    },
     {
       'name': 'set_autoplay',
       'description': 'A human player\'s auto-play modes: resources, building, attacking, colonizing, all, or off.',
@@ -1064,6 +1210,10 @@ class Mcp {
         return (json([for (final ev in agent.events) if ((ev['seq'] as int) > after) ev]), false);
       case 'get_numbers':
         return (json(agent.numberNames), false);
+      case 'get_strategies':
+        return (json(agent.strategies()), false);
+      case 'get_alliances':
+        return (json(agent.alliances()), false);
       case 'wait':
         final s = ((a['seconds'] as num?) ?? 5).clamp(1, 120);
         await Future<void>.delayed(Duration(milliseconds: (s * 1000).round()));
@@ -1076,5 +1226,209 @@ class Mcp {
 
   void _reply(Object? id, {Object? result, Object? error}) {
     stdout.writeln(jsonEncode({'jsonrpc': '2.0', 'id': id, if (error != null) 'error': error else 'result': result}));
+  }
+}
+
+// --- the strategist: an LLM revising the strategy every half minute ------------------------
+
+/// Asks Claude (Anthropic's Messages API) every [every] seconds what this
+/// player should do, with the game described, its strategies and its
+/// alliances, and carries out what it decides: a strategy, the AI's
+/// numbers, relations with each player, alliance moves, advice. It keeps a
+/// short journal of its decisions between rounds. Needs ANTHROPIC_API_KEY
+/// (or ANTHROPIC_AUTH_TOKEN, or a profile from `ant auth login`).
+class Strategist {
+  final Agent agent;
+  final int every;
+  final String model;
+  final String effort;
+  final String goal;
+  Strategist(this.agent, {required this.every, required this.model, required this.effort, required this.goal});
+
+  final List<String> _journal = [];
+  bool _busy = false;
+  int _round = 0;
+  ({String header, String value})? _auth;
+
+  static const _decisionTools = {'set_strategy', 'steer', 'set_relations', 'diplomacy', 'advise'};
+
+  List<Map<String, Object?>> _tools() {
+    final can = agent.can;
+    final out = <Map<String, Object?>>[];
+    for (final t in Mcp(agent).tools) {
+      final name = t['name'] as String;
+      if (!_decisionTools.contains(name)) continue;
+      if (name == 'advise' && !can['advise']!) continue;
+      if (name != 'advise' && !can['steer']!) continue;
+      if (name == 'diplomacy' && !can['command']!) continue;
+      out.add({'name': name, 'description': t['description'], 'input_schema': t['inputSchema']});
+    }
+    out.add({
+      'name': 'remember',
+      'description': 'Notes your plan and why, for your next rounds (you see your last notes each round).',
+      'input_schema': {
+        'type': 'object',
+        'properties': {'note': {'type': 'string'}},
+        'required': ['note'],
+      },
+    });
+    return out;
+  }
+
+  String get _system => '''You are the strategist of one player in a real-time game of StarCraft: Brood War (four or more players, free for all or alliances).
+A built-in AI plays the units: it gathers, builds, trains, defends and attacks by itself. You decide how it plays, as a commander
+would: every $every seconds you get the situation and choose what, if anything, to change. You are slow next to the game, so think
+in phases of a few minutes, not single fights.
+
+Your levers:
+- set_strategy: switch the AI's way of playing (defend, economy, expand, build_up, attack, massive_attack, all_in, or what its
+  profile adds; "none" is its own way). A strategy holds until you change it. Changing strategy resets steered numbers.
+- steer: fine-tune it (attack now, hold attacks for some seconds, attack a player first, the next wave's size, any of its numbers).
+- set_relations: how much it wants each player as an ally (-100..100). Its own diplomacy invites, accepts, leaves and betrays by it.
+- diplomacy: invite, accept, decline, leave, surrender, accept or refuse a surrender, open or close to invitations, right now.
+- advise: tell the human you assist what to do (when you assist a human).
+- remember: keep a note of your plan for the next rounds.
+
+Good play: expand and grow the economy while nobody threatens you; defend when an enemy army is near or you are losing at home;
+gather a big army before a decisive attack on the weakest or nearest enemy; ally with neighbours against a stronger common enemy
+(an alliance holds at most three, and never everyone left); turn on a weak ally only when no strong enemy remains; accept a
+surrender when the tribute is worth more than finishing them; offer yours only when the game is lost. Score counts mining,
+production and destruction; winning counts most.
+
+Each round: read the situation, then either change nothing (say why in one line) or make a few decisive changes and remember the plan.
+Do not repeat a change that is already in effect.${goal.isEmpty ? '' : '\nThe player\'s goal: $goal'}''';
+
+  String _situation() {
+    final b = StringBuffer()
+      ..writeln('Round ${++_round}.')
+      ..writeln(agent.describe())
+      ..writeln('Strategies: ${jsonEncode(agent.strategies())}')
+      ..writeln('Alliances: ${jsonEncode(agent.alliances())}');
+    if (_journal.isNotEmpty) {
+      b.writeln('Your notes and decisions so far (newest last):');
+      for (final j in _journal) {
+        b.writeln('- $j');
+      }
+    }
+    return b.toString();
+  }
+
+  Future<({String header, String value})> _credentials() async {
+    if (_auth case final a?) return a;
+    final env = Platform.environment;
+    if ((env['ANTHROPIC_API_KEY'] ?? '').isNotEmpty) return _auth = (header: 'x-api-key', value: env['ANTHROPIC_API_KEY']!);
+    var token = env['ANTHROPIC_AUTH_TOKEN'] ?? '';
+    if (token.isEmpty) {
+      // A profile from `ant auth login`: a short-lived access token.
+      try {
+        final r = await Process.run('ant', ['auth', 'print-credentials', '--access-token']);
+        if (r.exitCode == 0) token = '${r.stdout}'.trim();
+      } catch (_) {}
+    }
+    if (token.isEmpty) throw StateError('no credentials: set ANTHROPIC_API_KEY, or run `ant auth login`');
+    return (header: 'authorization', value: 'Bearer $token');
+  }
+
+  Future<Map<String, dynamic>> _post(Map<String, Object?> body) async {
+    final auth = await _credentials();
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 30);
+    try {
+      final base = Platform.environment['ANTHROPIC_BASE_URL'] ?? 'https://api.anthropic.com';
+      final req = await client.postUrl(Uri.parse('${base.replaceAll(RegExp(r'/+$'), '')}/v1/messages'));
+      req.headers.contentType = ContentType.json;
+      req.headers.set('anthropic-version', '2023-06-01');
+      req.headers.set(auth.header, auth.value);
+      // Server-side fallback for declined requests; OAuth tokens need their own beta.
+      req.headers.set('anthropic-beta', ['server-side-fallback-2026-07-01', if (auth.header == 'authorization') 'oauth-2025-04-20'].join(','));
+      final bytes = utf8.encode(jsonEncode(body));
+      req.contentLength = bytes.length;
+      req.add(bytes);
+      final res = await req.close().timeout(const Duration(minutes: 5));
+      final text = await utf8.decoder.bind(res).join();
+      if (res.statusCode != 200) throw StateError('Claude API ${res.statusCode}: $text');
+      return jsonDecode(text) as Map<String, dynamic>;
+    } finally {
+      client.close();
+    }
+  }
+
+  void start() {
+    log('strategist: $model every $every s');
+    Timer.periodic(Duration(seconds: every), (_) => _round_());
+    _round_();
+  }
+
+  Future<void> _round_() async {
+    if (_busy || agent.paused || !agent.ready) return;
+    _busy = true;
+    try {
+      await _decide();
+    } catch (err) {
+      log('strategist: $err');
+      agent.event('strategist_error', {'error': '$err'});
+    } finally {
+      _busy = false;
+    }
+  }
+
+  Future<void> _decide() async {
+    final tools = _tools();
+    final messages = <Map<String, Object?>>[
+      {'role': 'user', 'content': _situation()},
+    ];
+    final decisions = <String>[];
+    // A few tool rounds at most; each answer is carried out at once.
+    for (int turn = 0; turn < 6; ++turn) {
+      final r = await _post({
+        'model': model,
+        'max_tokens': 16000,
+        'system': _system,
+        'tools': tools,
+        'messages': messages,
+        'output_config': {'effort': effort},
+        'fallbacks': 'default',
+        'cache_control': {'type': 'ephemeral'},
+      });
+      final stop = r['stop_reason'];
+      if (stop == 'refusal') {
+        log('strategist: the request was declined (${r['stop_details']})');
+        break;
+      }
+      final content = [for (final c in r['content'] as List) Map<String, Object?>.from(c as Map)];
+      // The whole answer goes back as it came (thinking blocks included).
+      messages.add({'role': 'assistant', 'content': content});
+      for (final c in content.where((c) => c['type'] == 'text')) {
+        final t = '${c['text']}'.trim();
+        if (t.isNotEmpty) {
+          log('strategist: $t');
+          decisions.add(t.length > 300 ? '${t.substring(0, 300)}...' : t);
+        }
+      }
+      final calls = content.where((c) => c['type'] == 'tool_use').toList();
+      if (stop != 'tool_use' || calls.isEmpty) break;
+      final results = <Map<String, Object?>>[];
+      for (final c in calls) {
+        final name = c['name'] as String;
+        final input = Map<String, dynamic>.from(c['input'] as Map? ?? const {});
+        Map<String, Object?> out;
+        if (name == 'remember') {
+          final note = '${input['note'] ?? ''}'.trim();
+          if (note.isNotEmpty) _journal.add('${Agent.clock(agent.e.currentFrame)} note: $note');
+          out = {'ok': true};
+        } else {
+          out = agent.act({...input, 'action': name});
+          decisions.add('$name ${jsonEncode(input)}${out['ok'] == true ? '' : ' (failed: ${out['error']})'}');
+        }
+        log('strategist: $name ${jsonEncode(input)} -> ${jsonEncode(out)}');
+        results.add({'type': 'tool_result', 'tool_use_id': c['id'], 'content': jsonEncode(out), if (out['ok'] != true) 'is_error': true});
+      }
+      messages.add({'role': 'user', 'content': results});
+    }
+    final at = Agent.clock(agent.e.currentFrame);
+    agent.event('strategist', {'round': _round, 'decisions': decisions});
+    if (decisions.isNotEmpty) _journal.add('$at ${decisions.join('; ')}');
+    while (_journal.length > 12) {
+      _journal.removeAt(0);
+    }
   }
 }

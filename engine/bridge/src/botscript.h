@@ -48,6 +48,7 @@ enum : int {
 	f_bare = 2,   // may be written without parentheses
 	f_init = 4,   // meaningful at the start (in set and var initializers)
 	f_name = 8,   // its argument is a plan or mix name (a string)
+	f_strategy = 16, // its argument is a strategy's name (a string)
 };
 
 #define BOTSCRIPT_BUILTINS(X)                                                                                                      \
@@ -73,6 +74,9 @@ enum : int {
 	X(enemy_air, 0, f_value | f_bare)                                                                                             \
 	X(enemy_cloaked, 0, f_value | f_bare)                                                                                         \
 	X(defensive, 0, f_value | f_bare)                                                                                             \
+	X(strategy_target, 0, f_value | f_bare)                                                                                      \
+	X(strategy_is, 1, f_value | f_strategy)                                                                                      \
+	X(favor, 1, f_value)                                                                                                         \
 	X(count, 1, f_value)                                                                                                          \
 	X(done, 1, f_value)                                                                                                           \
 	X(researched, 1, f_value)                                                                                                     \
@@ -100,6 +104,8 @@ enum : int {
 	X(attack, 0, 0)                                                                                                               \
 	X(retreat, 0, 0)                                                                                                              \
 	X(set_wave, 1, 0)                                                                                                        \
+	X(hold, 1, 0)                                                                                                                \
+	X(set_favor, 2, 0)                                                                                                           \
 	X(focus, 1, 0)                                                                                                                \
 	X(invite, 1, 0)                                                                                                               \
 	X(leave, 0, 0)                                                                                                                \
@@ -186,8 +192,17 @@ struct function {
 	std::string first_use; // where it was first called, for "never defined"
 };
 
+// A strategy: a way of playing an agent or LLM switches the player to
+// (bw_bridge_bot_steer), declared: strategy name "what it does" (target) { ... }
+struct strategy_def {
+	std::string name, description;
+	int params = 0; // 0, or 1 (a player)
+	int fn = -1;    // -1: only named (strategy_is), never declared
+};
+
 struct profile {
 	std::string name, description, author;
+	a_vector<strategy_def> strategies;
 	a_vector<std::string> files; // every file it was compiled from
 
 	// Plan, research and mix tables by variant (0: the unnamed one) and
@@ -687,8 +702,10 @@ private:
 			research_table();
 		} else if (accept_word("mix")) {
 			mix_table();
+		} else if (accept_word("strategy")) {
+			strategy_decl();
 		} else {
-			fail("expected a declaration (profile, extends, include, const, var, set, on, a function, plan, research or mix)" + found());
+			fail("expected a declaration (profile, extends, include, const, var, set, on, a function, plan, research, mix or strategy)" + found());
 		}
 	}
 
@@ -929,6 +946,37 @@ private:
 		block();
 		end_function(fn, entry);
 		out->handler[(size_t)h] = fn;
+	}
+
+	// A strategy's index by name (a new one when it isn't known yet).
+	int strategy_index(const std::string& name) {
+		auto& v = out->strategies;
+		for (size_t i = 0; i != v.size(); ++i) {
+			if (v[i].name == name) return (int)i;
+		}
+		v.emplace_back();
+		v.back().name = name;
+		return (int)v.size() - 1;
+	}
+
+	void strategy_decl() {
+		token at = tok;
+		std::string name = ident("a strategy name");
+		int index = strategy_index(name);
+		std::string description = tok.k == t_string ? string_lit("a description") : out->strategies[(size_t)index].description;
+		a_vector<std::string> params;
+		a_vector<token> param_at;
+		if (is("(")) param_at = param_list(params);
+		if (params.size() > 1) fail_at(at, "a strategy takes at most one parameter (a player)");
+		int fn = begin_function(at, "strategy " + name, (int)params.size(), false);
+		for (size_t i = 0; i != params.size(); ++i) declare_local(param_at[i], params[i]);
+		int entry = here();
+		block();
+		end_function(fn, entry);
+		auto& st = out->strategies[(size_t)index];
+		st.description = description;
+		st.params = (int)params.size();
+		st.fn = fn;
 	}
 
 	// --- tables ---
@@ -1281,6 +1329,8 @@ private:
 				do {
 					if (b >= 0 && (builtins()[b].flags & f_name) && tok.k == t_string) {
 						emit(op_push, variant(string_lit("a name")));
+					} else if (b >= 0 && (builtins()[b].flags & f_strategy) && tok.k == t_string) {
+						emit(op_push, strategy_index(string_lit("a strategy name")));
 					} else {
 						expr();
 					}

@@ -66,6 +66,7 @@ set defense.militia_time = 20;
 set defense.expansion_defenses = 2; // when colonizing with attacking on
 set defense.fortify_main_ground = 4; set defense.fortify_main_air = 3; // defensive mode
 set defense.fortify_ground = 2; set defense.fortify_air = 2;
+set defense.fortify = 0; // 1: fortify every base as in defensive mode (a strategy's choice)
 set defense.colony_ground = 8; set defense.colony_air = 3; // colonizing without attacking
 set defense.colony_rich = 400; // minerals that double colony_ground
 set defense.colony_mobile = 6; // mobile units guarding colonies (not Terran)

@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 // Bumped whenever a function signature or struct layout below changes.
-#define BW_BRIDGE_ABI_VERSION 31
+#define BW_BRIDGE_ABI_VERSION 32
 
 typedef struct bw_bridge bw_bridge_t; // opaque
 
@@ -605,6 +605,9 @@ bw_status bw_bridge_set_bot_profile(bw_bridge_t* bridge, int player_index, const
 #define BW_STEER_FOCUS 3  // attack player `a`'s buildings first (-1: the nearest)
 #define BW_STEER_NUMBER 4 // number `a` (its place in bw_bridge_bot_numbers' list) = `b`
 #define BW_STEER_WAVE 5   // the next wave waits for `a` units
+#define BW_STEER_STRATEGY 6 // play strategy `a` (its index in bw_bridge_bot_strategies; -1: the
+                            // profile's own way), aimed at player `b` when it takes one
+#define BW_STEER_FAVOR 7  // how much it wants player `a` as an ally: `b` from -100 (never) to 100 (always)
 // BW_ERR_INVALID_ARGUMENT when that slot has no computer player.
 bw_status bw_bridge_bot_steer(bw_bridge_t* bridge, int player_slot, int what, int a, int b);
 
@@ -612,6 +615,19 @@ bw_status bw_bridge_bot_steer(bw_bridge_t* bridge, int player_slot, int what, in
 // they order; on = 1 before them keeps the player's own selection, and
 // on = 0 after them puts it back, in the same frame. Logged.
 bw_status bw_bridge_keep_selection(bw_bridge_t* bridge, int owner, int on);
+
+// The strategies the computer player of `player_slot` can be steered to
+// (its profile's), as text: "current<TAB>name or -<TAB>target", then one
+// "index<TAB>name<TAB>parameters (0 or 1)<TAB>description" line each (the
+// index is what BW_STEER_STRATEGY takes). Pure query.
+bw_status bw_bridge_bot_strategies(bw_bridge_t* bridge, int player_slot, char* out, int out_cap);
+
+// How the computer player of `player_slot` sees each other player still in
+// the game, one "slot utility strength favor lost distance" line each: the
+// alliance utility it acts on (invitations, answers), the strength of that
+// player's alliance, the favor steered for it, value lost to it lately,
+// distance between main bases. Pure query.
+bw_status bw_bridge_bot_diplomacy(bw_bridge_t* bridge, int player_slot, char* out, int out_cap);
 
 // The numbers a player of profile `profile` starts the game with (after its
 // set statements), in the script's units (seconds for times): one

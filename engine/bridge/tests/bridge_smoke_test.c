@@ -758,6 +758,29 @@ static void test_bot_profiles(const char* dd, const char* mf) {
 	CHECK(bw_bridge_bot_steer(a, slots[3], BW_STEER_HOLD, 60, 0) == BW_OK, "bots: steer hold");
 	CHECK(bw_bridge_bot_steer(a, slots[0], BW_STEER_WAVE, 5, 0) == BW_OK, "bots: steer the human's auto-play");
 	CHECK(bw_bridge_bot_steer(a, 7, BW_STEER_ATTACK, 0, 0) != BW_OK, "bots: steer nobody");
+	/* Strategies and alliance preferences (LLM strategists). */
+	{
+		char report[4096];
+		CHECK(bw_bridge_bot_strategies(a, slots[1], report, sizeof(report)) == BW_OK && strncmp(report, "current\t-\t-1\n", 13) == 0, "bots: strategies: %s", report);
+		CHECK(strstr(report, "\tmassive_attack\t1\t"), "bots: massive_attack offered: %s", report);
+		/* Each line: index, name, parameters, description. */
+		int defend = -1, massive = -1;
+		for (const char* l = report; *l; l = strchr(l, '\n') + 1) {
+			const char* tab = strchr(l, '\t');
+			if (tab && !strncmp(tab, "\tdefend\t", 8)) defend = atoi(l);
+			if (tab && !strncmp(tab, "\tmassive_attack\t", 16)) massive = atoi(l);
+			if (!strchr(l, '\n')) break;
+		}
+		CHECK(defend >= 0 && massive >= 0, "bots: strategy indices");
+		CHECK(bw_bridge_bot_steer(a, slots[1], BW_STEER_STRATEGY, massive, slots[3]) == BW_OK, "bots: steer massive attack");
+		CHECK(bw_bridge_bot_steer(a, slots[3], BW_STEER_STRATEGY, defend, 0) == BW_OK, "bots: steer defend");
+		CHECK(bw_bridge_bot_steer(a, slots[3], BW_STEER_STRATEGY, 999, 0) != BW_OK, "bots: no such strategy");
+		CHECK(bw_bridge_bot_strategies(a, slots[1], report, sizeof(report)) == BW_OK && strstr(report, "current\tmassive_attack\t"), "bots: current strategy: %s", report);
+		CHECK(bw_bridge_bot_steer(a, slots[2], BW_STEER_FAVOR, slots[3], 100) == BW_OK, "bots: favor");
+		CHECK(bw_bridge_bot_steer(a, slots[2], BW_STEER_FAVOR, slots[1], -100) == BW_OK, "bots: disfavor");
+		CHECK(bw_bridge_bot_diplomacy(a, slots[2], report, sizeof(report)) == BW_OK && strlen(report) > 10, "bots: diplomacy: %s", report);
+		printf("bridge_smoke_test: bots: diplomacy of %d:\n%s", slots[2], report);
+	}
 	bw_bridge_step(a, 24 * 60 * 2);
 	for (int i = 1; i != 4; ++i) {
 		int w, bl, ar;

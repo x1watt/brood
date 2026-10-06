@@ -1,0 +1,67 @@
+// assets/bots/standard/strategies.bot
+//
+// Ways of playing an agent or an LLM switches the computer player to during
+// the game (docs/agent_api.md: set_strategy). Each starts from the
+// profile's own numbers, and choosing none goes back to them. A profile may
+// redefine any of these or add its own; events can ask which one is in use
+// with strategy_is("defend") and strategy_target.
+
+// The next bases are taken now, one more a minute.
+void expand_soon() {
+	set expansion.base1 = min(expansion.base1, time);
+	set expansion.base2 = min(expansion.base2, time + MINUTE);
+	set expansion.base3 = min(expansion.base3, time + 2 * MINUTE);
+	set expansion.base4 = min(expansion.base4, time + 3 * MINUTE);
+}
+
+strategy defend "Dig in: defences against ground and air at every base, the army stays home." {
+	hold(10 * MINUTE);
+	set defense.fortify = 1;
+	set defense.fortify_main_ground = 6;
+	set defense.fortify_main_air = 4;
+	set defense.fortify_ground = 4;
+	set defense.fortify_air = 3;
+	set defense.air_trigger = 100;
+	set defense.expansion_defenses = 4;
+}
+
+strategy economy "Grow the economy: more workers and earlier bases, no attack for three minutes." {
+	hold(3 * MINUTE);
+	set economy.max_workers = 80;
+	set economy.workers_per_base = 20;
+	expand_soon();
+}
+
+strategy expand "Colonize: take the free bases now, each with defences; the army keeps attacking." {
+	expand_soon();
+	set defense.expansion_defenses = 3;
+}
+
+strategy build_up "Build up production and money for a few minutes before fighting again." {
+	hold(4 * MINUTE);
+	set economy.surplus_minerals = 500;
+	set economy.max_extra_production = 14;
+}
+
+strategy attack "Attack this player now with the army there is, then keep sending waves at it." (target) {
+	focus(target);
+	set_wave(max(4, army / 2));
+	attack();
+}
+
+strategy massive_attack "Gather a big army, then hit this player with all of it and fight on." (target) {
+	focus(target);
+	set army.wave_max = 120;
+	set army.wave_end_div = 8;
+	set_wave(max(40, army + 10));
+}
+
+strategy all_in "Everything attacks this player now and every new unit follows." (target) {
+	focus(target);
+	set army.wave_end_div = 100;
+	set army.wave_end_min = 1;
+	set army.wave_max = 4;
+	set army.attack_refresh = 10;
+	set_wave(1);
+	attack();
+}

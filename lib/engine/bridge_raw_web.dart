@@ -326,6 +326,12 @@ class BridgeRawWeb extends BridgeRaw {
   int bw_bridge_keep_selection(int bridge, int owner, int on) => _call('_bw_bridge_keep_selection', [bridge, owner, on]);
 
   @override
+  int bw_bridge_bot_strategies(int bridge, int player_slot, int out, int out_cap) => _call('_bw_bridge_bot_strategies', [bridge, player_slot, out, out_cap]);
+
+  @override
+  int bw_bridge_bot_diplomacy(int bridge, int player_slot, int out, int out_cap) => _call('_bw_bridge_bot_diplomacy', [bridge, player_slot, out, out_cap]);
+
+  @override
   int bw_bridge_bot_numbers(int bridge, int bundle, int profile, int out, int out_cap) => _call('_bw_bridge_bot_numbers', [bridge, bundle, profile, out, out_cap]);
 
   @override

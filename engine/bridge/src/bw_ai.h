@@ -130,6 +130,12 @@ struct player_state {
 	std::array<int32_t, botscript::max_globals> vars{};
 	int plan_variant = 0, research_variant = 0, mix_variant = 0;
 	int hold_until = -1; // no attack wave before this frame (steered from outside)
+	// Steered from outside (agents, LLMs): the strategy in use (-1 none) and
+	// its target, the numbers it started from (the profile's), and how much
+	// it wants each player as an ally (-100 never ... 100 always).
+	int strategy = -1, strategy_target = -1;
+	ai_tunables base_cfg;
+	std::array<int, 8> favor{};
 
 	uint32_t next() {
 		rng = rng * 1103515245u + 12345u;
@@ -249,6 +255,7 @@ struct ai_system {
 		if (auto* pr = profile_of(p)) {
 			for (int fn : pr->init) run_script(nullptr, p, nullptr, fn, nullptr, 0);
 		}
+		p.base_cfg = p.cfg;
 		p.trust = p.cfg.personality.trust_min + (int)(p.next() % (uint32_t)p.cfg.personality.trust_span);
 		p.next_invite = p.cfg.diplomacy.first_invite + (int)(p.next() % (uint32_t)p.cfg.diplomacy.first_invite_spread);
 		p.wave_size = p.cfg.army.wave_first;
@@ -267,11 +274,35 @@ struct ai_system {
 
 	// Steering from outside (bw_bridge_bot_steer, logged): an agent or a
 	// person directing this computer player, or a human's auto-play.
-	enum steer_t : int { steer_attack = 1, steer_hold = 2, steer_focus = 3, steer_number = 4, steer_wave = 5 };
-	bool steer(int owner, int what, int a, int b, int frame) {
+	enum steer_t : int { steer_attack = 1, steer_hold = 2, steer_focus = 3, steer_number = 4, steer_wave = 5, steer_strategy = 6, steer_favor = 7 };
+	bool steer(state& st, action_state& action_st, int owner, int what, int a, int b) {
+		int frame = st.current_frame;
 		for (auto& p : players) {
 			if (p.owner != owner) continue;
 			switch (what) {
+			case steer_strategy: { // -1: back to the profile's own way
+				auto* pr = profile_of(p);
+				p.cfg = p.base_cfg;
+				p.hold_until = -1;
+				p.focus = -1;
+				p.strategy = -1;
+				p.strategy_target = -1;
+				if (a < 0) return true;
+				if (!pr || (size_t)a >= pr->strategies.size() || pr->strategies[(size_t)a].fn < 0) return false;
+				auto& s = pr->strategies[(size_t)a];
+				p.strategy = a;
+				p.strategy_target = s.params ? b : -1;
+				action_functions f(st, action_st);
+				auto selection = action_st.selection.at((size_t)owner);
+				int32_t arg = b;
+				run_script(&f, p, nullptr, s.fn, &arg, s.params);
+				action_st.selection.at((size_t)owner) = selection;
+				return true;
+			}
+			case steer_favor:
+				if (a < 0 || a >= 8 || a == owner) return false;
+				p.favor[(size_t)a] = std::max(-100, std::min(100, b));
+				return true;
 			case steer_attack: // the next wave goes now
 				p.hold_until = -1;
 				p.attacking = true;
@@ -298,6 +329,50 @@ struct ai_system {
 			}
 		}
 		return false;
+	}
+
+	// For agents (bw_bridge_bot_strategies): the strategy in use, then each
+	// one the player's profile offers.
+	std::string strategies_report(int owner) const {
+		for (auto& p : players) {
+			if (p.owner != owner) continue;
+			auto* pr = profile_of(p);
+			std::string out = "current\t";
+			out += pr && p.strategy >= 0 && (size_t)p.strategy < pr->strategies.size() ? pr->strategies[(size_t)p.strategy].name : "-";
+			out += "\t" + std::to_string(p.strategy_target) + "\n";
+			if (pr) {
+				for (size_t i = 0; i != pr->strategies.size(); ++i) {
+					auto& s = pr->strategies[i];
+					if (s.fn >= 0) out += std::to_string(i) + "\t" + s.name + "\t" + std::to_string(s.params) + "\t" + s.description + "\n";
+				}
+			}
+			return out;
+		}
+		return "";
+	}
+
+	// For agents (bw_bridge_bot_diplomacy): how this player sees every other
+	// one still playing: "slot utility strength favor lost distance" (the
+	// alliance utility it would act on, the strength of that player's
+	// alliance, its favor, what it lost to them lately, base distance).
+	std::string diplomacy_report(state& st, action_state& action_st, int owner) {
+		if (!allies) return "";
+		for (auto& p : players) {
+			if (p.owner != owner) continue;
+			action_functions f(st, action_st);
+			assessment a = assess(f, p);
+			auto& al = *allies;
+			std::string out;
+			for (int q = 0; q != 8; ++q) {
+				if (q == owner || !al.active(st, q)) continue;
+				a_vector<int> g = al.members(al.group[q]);
+				int u = al.same_group(q, owner) ? 0 : alliance_utility(f, p, a, g);
+				out += std::to_string(q) + " " + std::to_string(u) + " " + std::to_string(strength(a, g)) + " " + std::to_string(p.favor[(size_t)q]) + " " +
+				       std::to_string(p.pressure[(size_t)q]) + " " + std::to_string(f.xy_length(a.base[(size_t)q] - a.base[(size_t)owner])) + "\n";
+			}
+			return out;
+		}
+		return "";
 	}
 
 	const botscript::profile* profile_of(const player_state& p) const {
@@ -859,6 +934,10 @@ private:
 		}
 		if (their_rate > 0) u += std::min(c.mining_max, their_rate * c.mining_scale / std::max(1, my_rate));
 		if (theirs > mine * 2 && !p.losing) u += c.strong_ally;                   // safety with the strong
+		// Steered from outside: how much it wants these players as allies.
+		int favor = 0;
+		for (int m : g) favor += p.favor[(size_t)m];
+		u += favor / std::max(1, (int)g.size());
 		return u;
 	}
 
@@ -926,6 +1005,8 @@ private:
 			if (al.merge_allowed(st, from, p.owner)) {
 				int u = alliance_utility(f, p, a, al.members(al.group[from])) + (int)(p.next() % (uint32_t)c.accept_noise);
 				yes = u >= (al.open[p.owner] ? c.accept_open : c.accept_closed);
+				if (p.favor[(size_t)from] >= 100) yes = true; // steered: always
+				if (p.favor[(size_t)from] <= -100) yes = false; // steered: never
 				auto r = fire(f, p, nullptr, botscript::h_invite, {from});
 				if (r.value) yes = r.v != 0;
 			}
@@ -998,7 +1079,7 @@ private:
 					weakest_strength = sm;
 				}
 			}
-			int edge = c.betray_edge + p.trust; // percent
+			int edge = c.betray_edge + p.trust + (weakest >= 0 ? p.favor[(size_t)weakest] : 0); // percent
 			bool betray = weakest >= 0 && !p.losing && outside * c.betray_outside < mine && me_strength * 100 > weakest_strength * edge;
 			if (weakest >= 0) {
 				auto r = fire(f, p, nullptr, botscript::h_betray, {weakest});
@@ -3710,6 +3791,12 @@ private:
 			case b_use_plan: p.plan_variant = x[0]; return 0;
 			case b_use_research: p.research_variant = x[0]; return 0;
 			case b_use_mix: p.mix_variant = x[0]; return 0;
+			case b_strategy_is: return p.strategy == x[0];
+			case b_strategy_target: return p.strategy_target;
+			case b_favor: return valid(x[0]) ? p.favor[(size_t)x[0]] : 0;
+			case b_set_favor:
+				if (valid(x[0]) && x[0] != p.owner) p.favor[(size_t)x[0]] = std::max(-100, std::min(100, x[1]));
+				return 0;
 			case b_print:
 				if (FILE* out = log_file()) std::fprintf(out, "ai %d f%d print %d\n", p.owner, f ? f->st.current_frame : 0, x[0]);
 				return 0;
@@ -3778,6 +3865,10 @@ private:
 				return 0;
 			case b_retreat: p.attacking = false; return 0;
 			case b_set_wave: p.wave_size = std::max(1, x[0]); return 0;
+			case b_hold:
+				p.attacking = false;
+				p.hold_until = st.current_frame + std::max(0, x[0]) * 24;
+				return 0;
 			case b_focus: p.focus = valid(x[0]) && x[0] != p.owner ? x[0] : -1; return 0;
 			default: break;
 			}
@@ -3874,7 +3965,7 @@ private:
 		if (colonizing && !p.colony_mode) maybe_expand2(f, p, s, minerals, gas);
 		if (building) research2(f, p, s, minerals, gas);
 		if (building && (!p.human || attacking)) spend_surplus(f, p, s, minerals, gas);
-		if (fortifying) fortify(f, p, s, minerals, gas);
+		if (fortifying || p.cfg.defense.fortify) fortify(f, p, s, minerals, gas);
 		if (attacking || fortifying) {
 			arm_silos(f, p, s, minerals, gas);
 			morph_units(f, p, s, minerals, gas);

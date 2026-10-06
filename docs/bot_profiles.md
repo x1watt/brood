@@ -163,6 +163,35 @@ Tables may have names: `plan terran "rush" { ... }`. `use_plan("rush")`,
 an event), and `use_plan("")` goes back. A race without a table of that
 name uses the unnamed one.
 
+## Strategies
+
+A strategy is a way of playing that an agent or an LLM switches the
+player to during the game (docs/agent_api.md, `set_strategy`). It is a
+block of statements run when the switch happens, after the player's
+numbers go back to the profile's own:
+
+```c
+strategy defend "Dig in: defences at every base, the army stays home." {
+	hold(10 * MINUTE);
+	set defense.fortify = 1;
+	set defense.fortify_ground = 4;
+}
+
+strategy massive_attack "Gather a big army, then hit this player with all of it." (target) {
+	focus(target);
+	set army.wave_max = 120;
+	set_wave(max(40, army + 10));
+}
+```
+
+The description is what the agent reads, so say what the strategy does.
+A strategy takes no parameter, or one (the player it is aimed at). The
+standard profile (`standard/strategies.bot`) offers `defend`, `economy`,
+`expand`, `build_up`, `attack(target)`, `massive_attack(target)` and
+`all_in(target)`. A profile that extends it can redefine any of them or add
+its own. Events can ask which strategy is in use with
+`strategy_is("defend")` and `strategy_target`.
+
 ## Events
 
 An event that returns a value makes the decision; one that returns nothing
@@ -196,12 +225,17 @@ army and economy), `utility(q)` (how much we want its alliance),
 `lost_to(q)` (what we lost to it lately), `group_size(q)`, `vassal(q)`,
 `lord(q)`.
 
+`strategy_is("name")`, `strategy_target`, `favor(q)` (how much it wants
+player `q` as an ally, -100 to 100, as steered from outside or set by the
+script).
+
 `random(a, b)` (from the player's own seeded numbers), `min`, `max`, `abs`,
 `clamp(x, lo, hi)`.
 
 ## Actions
 
-`attack()` (the next wave goes now), `retreat()`, `set_wave(n)`,
+`attack()` (the next wave goes now), `retreat()`, `hold(seconds)` (no
+wave for that long; the army stays home), `set_favor(q, v)`, `set_wave(n)`,
 `focus(q)` (its buildings first; -1: the nearest), `invite(q)`, `leave()`,
 `surrender_to(q)`, `set_open(bool)`, `use_plan(name)`,
 `use_research(name)`, `use_mix(name)`, `print(x)` (to `BROOD_AI_LOG`).
@@ -209,8 +243,15 @@ Diplomacy actions do nothing for auto-play, a vassal or a player out of
 the game.
 
 Agents and assistants (docs/agent_api.md) can steer a profile's player
-from outside during the game: start or hold attack waves, pick a target,
-or set any of its numbers.
+from outside during the game: switch its strategy, set how much it wants
+each player as an ally, start or hold attack waves, pick a target, or set
+any of its numbers.
+
+Favor (-100 to 100) is added to the alliance utility the player's
+diplomacy acts on, so it invites and accepts the players it favors. At 100
+it always accepts their invitation, and at -100 never. Favor toward the
+weakest ally also changes how readily it turns on them. The number
+`defense.fortify` (1) makes it fortify every base, as in defensive mode.
 
 ## Engine side
 

@@ -126,6 +126,7 @@ struct ai_tunables {
 		int expansion_defenses = 2; // when colonizing with attacking on
 		int fortify_main_ground = 4, fortify_main_air = 3; // defensive mode
 		int fortify_ground = 2, fortify_air = 2;
+		int fortify = 0; // 1: fortify every base as in defensive mode (a strategy's choice)
 		int colony_ground = 8, colony_air = 3; // colonizing without attacking
 		int colony_rich = 400;     // minerals that double colony_ground
 		int colony_mobile = 6;     // mobile units guarding colonies (not Terran)
@@ -549,6 +550,7 @@ inline const a_vector<tunable_name>& tunable_names() {
 		{"defense.fortify_main_air", offsetof(ai_tunables, defense) + offsetof(ai_tunables::defense_t, fortify_main_air), 1},
 		{"defense.fortify_ground", offsetof(ai_tunables, defense) + offsetof(ai_tunables::defense_t, fortify_ground), 1},
 		{"defense.fortify_air", offsetof(ai_tunables, defense) + offsetof(ai_tunables::defense_t, fortify_air), 1},
+		{"defense.fortify", offsetof(ai_tunables, defense) + offsetof(ai_tunables::defense_t, fortify), 1},
 		{"defense.colony_ground", offsetof(ai_tunables, defense) + offsetof(ai_tunables::defense_t, colony_ground), 1},
 		{"defense.colony_air", offsetof(ai_tunables, defense) + offsetof(ai_tunables::defense_t, colony_air), 1},
 		{"defense.colony_rich", offsetof(ai_tunables, defense) + offsetof(ai_tunables::defense_t, colony_rich), 1},

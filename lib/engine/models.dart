@@ -384,3 +384,30 @@ class BotNumbers {
   final String error;
   const BotNumbers(this.values, {this.random = false, this.error = ''});
 }
+
+/// A way of playing a computer player can be steered to (BW_STEER_STRATEGY).
+class BotStrategy {
+  final int index;
+  final String name;
+  final bool takesTarget; // aimed at a player
+  final String description;
+  const BotStrategy(this.index, this.name, this.takesTarget, this.description);
+}
+
+class BotStrategies {
+  final List<BotStrategy> list;
+  final String current; // empty: the profile's own way
+  final int target;
+  const BotStrategies(this.list, this.current, this.target);
+}
+
+/// How a computer player sees another player (bw_bridge_bot_diplomacy).
+class BotRelation {
+  final int slot;
+  final int utility; // how much it wants that player's alliance (0 when allied already)
+  final int strength; // that player's alliance: army plus economy
+  final int favor; // steered: -100 never ... 100 always
+  final int lost; // what it lost to them lately
+  final int distance; // between main bases, pixels
+  const BotRelation(this.slot, this.utility, this.strength, this.favor, this.lost, this.distance);
+}

@@ -143,7 +143,13 @@ on 127.0.0.1 and MCP on stdin/stdout for LLM tools. They assist a player
 that person allows in the game menu (advice, steering their auto-play, or
 everything); or they host a game in the human's seat. Steering the
 built-in AI is a logged engine command (bw_bridge_bot_steer), so it stays
-in sync and replays.
+in sync and replays: attack, hold, target, wave size, any number, a
+strategy (BotScript "strategy" blocks the profile declares, run on the
+switch from the profile's own numbers), and favor per player (added to the
+alliance utility its diplomacy acts on). bw_bridge_bot_strategies and
+bw_bridge_bot_diplomacy report them for agents. --strategist has the agent
+ask Claude (Messages API over HTTP) every half minute and carry out its
+decisions.
 
 In-game alliances (engine/bridge/src/bw_alliances.h, lib/ui/alliance_panel.dart,
 F9 or the top bar button): players invite each other and accept or decline;

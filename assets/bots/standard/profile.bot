@@ -15,3 +15,4 @@ include "numbers.bot";
 include "terran.bot";
 include "protoss.bot";
 include "zerg.bot";
+include "strategies.bot";

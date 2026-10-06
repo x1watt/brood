@@ -89,6 +89,62 @@ Names are the bot profile names in lower case: `terran_marine`,
 `zerg_spawning_pool`, `stim_packs`, `u_238_shells`. Positions are in pixels
 (32 per tile). Buildings are placed by tile.
 
+## Strategy and alliances (for LLMs)
+
+LLMs are slow next to a real-time game, and the built-in AI is quick. So
+the API lets the LLM act as the commander and leave the units to the AI.
+Every half minute or so it reads the situation and changes how the AI
+plays:
+
+- **`set_strategy`** switches the AI to a way of playing its bot profile
+  offers. The standard ones are `defend` (defences at every base, the army
+  at home), `economy` (more workers, earlier bases, no attack for three
+  minutes), `expand` (take the free bases now, with defences), `build_up`
+  (production and money), `attack` (this player, now), `massive_attack`
+  (gather a big army, then all of it at this player) and `all_in`
+  (everything at this player, and every new unit follows). Profiles add
+  their own (docs/bot_profiles.md). A strategy holds until changed, and
+  `none` returns to the profile's own way.
+- **`set_relations`** says how much the AI wants each player as an ally,
+  from -100 to 100. Its own diplomacy then invites, accepts, leaves and
+  betrays by it: at 100 it always accepts that player, at -100 never.
+  `diplomacy` acts at once (invite, leave, surrender...).
+- **`GET /alliances`** (MCP `get_alliances`) shows the alliances and, for
+  every other player, the alliance utility the AI acts on, the strength of
+  that player's alliance, the favor, recent losses to them, distance,
+  invitations and surrender offers. **`GET /strategies`** (MCP
+  `get_strategies`) shows the strategies and the one in use.
+
+Both are logged engine commands (`BW_STEER_STRATEGY`, `BW_STEER_FAVOR`), so
+they stay in sync and replay. For a human's player they need the
+Auto-play permission, and they steer that person's auto-play.
+
+### The built-in strategist
+
+`--strategist` makes the agent itself ask Claude every `--every` seconds
+(30) what to do. Each round it sends the game described, the strategies
+and the alliances, with its notes from earlier rounds. Claude answers with
+the tools above (`set_strategy`, `steer`, `set_relations`, `diplomacy`,
+`advise` for a human, `remember` for its plan) and the agent carries them
+out at once.
+
+```sh
+dart run tool/brood_agent.dart --game 1 --slot 2 --strategist \
+    --goal "Win with allies; never betray the human"
+```
+
+| Option | Meaning |
+|---|---|
+| `--model` | `claude-opus-5-5` by default |
+| `--effort` | `medium` by default |
+| `--goal` | the player's wishes, in words |
+
+It needs `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or a profile from
+`ant auth login`. `ANTHROPIC_BASE_URL` points it elsewhere. Each round is
+one request or a few, with server-side fallback on declined requests. A
+round that is still thinking when the next is due is skipped. Its rounds
+show in `/events` (`strategist`).
+
 ## Actions
 
 Each action is a `POST /act` body. An MCP tool takes the same fields
@@ -104,6 +160,8 @@ under the same name.
 {"action": "steer", "wave_size": 20}                     // the next wave waits for 20 units
 {"action": "steer", "numbers": {"army.wave_max": 30, "diplomacy.betray_after": 600}}
 {"action": "set_autoplay", "modes": "resources,building"}   // or "all", "off"
+{"action": "set_strategy", "name": "massive_attack", "target": 3}   // "none": the profile's own way
+{"action": "set_relations", "favor": {"2": 100, "5": -60}}  // -100 never ... 100 always
 
 // Units (needs Command for a human's player):
 {"action": "command_units", "units": [75416, 75417], "order": "attack", "x": 1000, "y": 1000}

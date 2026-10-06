@@ -164,7 +164,7 @@ void editing() {
 
   test('every number has a description', () {
     final info = BotLibrary(_shipped()).numberInfo();
-    expect(info.length, 139);
+    expect(info.length, 140);
     expect(info.map((i) => i.group).toSet(), {'personality', 'economy', 'expansion', 'army', 'defense', 'help', 'drops', 'spells', 'diplomacy'});
     final wave = info.firstWhere((i) => i.name == 'army.wave_first');
     expect(wave.help, contains('first attack wave'));
