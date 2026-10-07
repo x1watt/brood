@@ -1,3 +1,0 @@
-[submodule "engine/vendor/openbw"]
-	path = engine/vendor/openbw
-	url = https://github.com/OpenBW/openbw.git

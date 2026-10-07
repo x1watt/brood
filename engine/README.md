@@ -7,7 +7,8 @@ full design.
 
 ## Layout
 
-- `vendor/openbw` — OpenBW, as a pinned git submodule. Not yet added (Phase 1).
+- `vendor/openbw` — OpenBW, committed directly into this repository (no longer a
+  git submodule). See `vendor/README.md` for upstream provenance and licensing.
 - `bridge/` — the `extern "C"` bridge API and its implementation. Builds with
   CMake for Linux desktop and Android (NDK); see `web/` for the WASM build.
   **v0 proven working** (lifecycle + stepping + scalar queries only — no
