@@ -139,3 +139,38 @@ if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
   install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+
+# The game files (the three MPQs and the maps) go into the bundle's
+# data/BROOD, where lib/game/game_files_io.dart finds them, when the folder
+# they are taken from has them: BROOD_DATA, default ~/box/media/games/BROOD.
+# The game asks the player at start whether they own a copy.
+if(DEFINED ENV{BROOD_DATA})
+  set(BROOD_GAME_FILES "$ENV{BROOD_DATA}")
+else()
+  set(BROOD_GAME_FILES "$ENV{HOME}/box/media/games/BROOD")
+endif()
+if(EXISTS "${BROOD_GAME_FILES}/StarDat.mpq")
+  install(FILES
+    "${BROOD_GAME_FILES}/StarDat.mpq"
+    "${BROOD_GAME_FILES}/BrooDat.mpq"
+    "${BROOD_GAME_FILES}/Patch_rt.mpq"
+    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/BROOD" COMPONENT Runtime)
+  # The original game's own saved games stay out.
+  install(DIRECTORY "${BROOD_GAME_FILES}/maps"
+    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/BROOD" COMPONENT Runtime
+    PATTERN "save" EXCLUDE)
+else()
+  message(WARNING "No game files in ${BROOD_GAME_FILES}: the bundle will not include them.")
+endif()
+
+# The browser version (build/web, from tool/build_web.sh) goes into the
+# bundle's data/web, for sharing the game on the network
+# (lib/net/lan_host.dart). Its own copy of the game files stays out: the
+# server hands out the ones above.
+set(BROOD_WEB_BUILD "${CMAKE_CURRENT_SOURCE_DIR}/../build/web")
+if(EXISTS "${BROOD_WEB_BUILD}/index.html")
+  install(DIRECTORY "${BROOD_WEB_BUILD}/" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/web"
+    COMPONENT Runtime PATTERN "gamedata" EXCLUDE)
+else()
+  message(WARNING "No browser version in ${BROOD_WEB_BUILD} (tool/build_web.sh): the bundle can't share the game on the network.")
+endif()

@@ -1,6 +1,6 @@
 // lib/ui/lobby_panel.dart
 //
-// The start screen's Multiplayer tab: the games running on the home server
+// The start screen's LAN party tab: the games running on the home server
 // (tool/brood_server.dart), each with its players by alliance. Any player
 // the computer plays can be taken over: you join the game in its place,
 // with its alliance. Every game started from a page of the home server is
@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import '../game/game_controller.dart';
 import '../game/game_setup.dart';
 import '../net/multiplayer.dart';
+import 'share_link.dart';
 
 const _green = Color(0xFF32D25A);
 const _yellow = Color(0xFFFCE45C);
@@ -72,12 +73,19 @@ class _LobbyPanelState extends State<LobbyPanel> {
               Expanded(
                 child: ValueListenableBuilder<List<String>>(
                   valueListenable: widget.client.urls,
-                  builder: (_, urls, _) => Text(
-                    urls.isEmpty
-                        ? 'Others at home join from this computer\'s network address, port ${Uri.base.port}.'
-                        : 'Others at home open ${urls.join('  or  ')} in their browser.',
-                    style: const TextStyle(fontSize: 12, color: _dim),
-                  ),
+                  builder: (_, urls, _) => urls.isEmpty
+                      ? Text(
+                          'Others at home join from this computer\'s network address, port ${Uri.base.port}.',
+                          style: const TextStyle(fontSize: 12, color: _dim),
+                        )
+                      : Wrap(
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 8,
+                          children: [
+                            const Text('Others at home open', style: TextStyle(fontSize: 12, color: _dim)),
+                            for (final url in urls) ShareLink(url: url),
+                          ],
+                        ),
                 ),
               ),
             ],

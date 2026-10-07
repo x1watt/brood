@@ -2,7 +2,9 @@
 //
 // Per-map play time, games started and last played date ('play_stats.json'
 // in the app storage, lib/platform/storage.dart), so the start screen can
-// list the most played maps first.
+// list the most played maps first. A page from a home server adds the
+// server's own (the app that shares the LAN party, lib/net/home_server.dart),
+// so its most played maps come first there too.
 
 import 'dart:convert';
 
@@ -33,10 +35,12 @@ class PlayStats {
 
   PlayStats._(this.maps);
 
-  static PlayStats load() {
+  static PlayStats load() => parse(AppStorage.instance.read(key));
+
+  /// The stats of a play_stats.json text; none when it is missing or damaged.
+  static PlayStats parse(String? text) {
     final maps = <String, MapStats>{};
     try {
-      final text = AppStorage.instance.read(key);
       if (text != null) {
         final json = jsonDecode(text) as Map<String, dynamic>;
         final m = json['maps'] as Map<String, dynamic>? ?? const {};
@@ -46,6 +50,19 @@ class PlayStats {
       // A damaged file just starts the stats over.
     }
     return PlayStats._(maps);
+  }
+
+  /// These stats and [other]'s added up, for showing (never saved).
+  PlayStats plus(PlayStats other) {
+    final out = <String, MapStats>{};
+    for (final e in [...maps.entries, ...other.maps.entries]) {
+      final s = out.putIfAbsent(e.key, MapStats.new);
+      s.seconds += e.value.seconds;
+      s.games += e.value.games;
+      final last = e.value.lastPlayed;
+      if (last != null && (s.lastPlayed == null || last.isAfter(s.lastPlayed!))) s.lastPlayed = last;
+    }
+    return PlayStats._(out);
   }
 
   MapStats of(String mapKey) => maps.putIfAbsent(mapKey, MapStats.new);

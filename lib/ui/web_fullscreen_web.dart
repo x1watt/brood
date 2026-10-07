@@ -15,3 +15,19 @@ Future<bool> webSetFullscreen(bool on) async {
 }
 
 Future<bool> webToggleFullscreen() => webSetFullscreen(!_isFullscreen);
+
+/// A tab can't close itself: the page goes blank instead.
+void webLeave() => web.window.location.replace('about:blank');
+
+/// Goes full screen on the page's first click or key press (a browser allows
+/// it only then).
+void webFullscreenOnFirstInput() {
+  late final JSFunction listener;
+  listener = ((web.Event _) {
+    web.document.removeEventListener('pointerup', listener);
+    web.document.removeEventListener('keydown', listener);
+    webSetFullscreen(true);
+  }).toJS;
+  web.document.addEventListener('pointerup', listener);
+  web.document.addEventListener('keydown', listener);
+}

@@ -1,7 +1,9 @@
-// Game data on disk: on desktop a folder (BROOD_DATA, default
-// ~/box/media/games/BROOD); on Android the app's own storage
-// (Android/data/dev.x1watt.brood/files/BROOD), filled by importing the
-// player's folder or by copying the files there over USB.
+// Game data on disk: on desktop a folder (BROOD_DATA, else the copy bundled
+// next to the executable in data/BROOD, else ~/box/media/games/BROOD); on
+// Android the app's own storage
+// (Android/data/dev.x1watt.brood/files/BROOD), filled from the copy in the
+// APK at first start, by importing the player's folder or by copying the
+// files there over USB.
 
 import 'dart:io';
 import 'dart:typed_data';
@@ -15,9 +17,19 @@ class _FolderGameFiles extends GameFiles {
   @override
   String get dataDir {
     if (Platform.isAndroid) return '${AndroidFiles.externalDir}/BROOD';
+    final env = Platform.environment['BROOD_DATA'];
+    if (env != null) return env;
+    final bundled = _bundled;
+    if (bundled != null) return bundled;
     final home = Platform.environment['HOME'] ?? '';
-    return Platform.environment['BROOD_DATA'] ?? '$home/box/media/games/BROOD';
+    return '$home/box/media/games/BROOD';
   }
+
+  // The game files bundled with the Linux build (linux/CMakeLists.txt).
+  static final String? _bundled = () {
+    final dir = '${File(Platform.resolvedExecutable).parent.path}/data/BROOD';
+    return File('$dir/StarDat.mpq').existsSync() ? dir : null;
+  }();
 
   @override
   bool get ready => File('$dataDir/StarDat.mpq').existsSync();
@@ -26,6 +38,16 @@ class _FolderGameFiles extends GameFiles {
   Future<bool> init() async {
     if (Platform.isAndroid) await AndroidFiles.load();
     return ready;
+  }
+
+  @override
+  Future<bool> hasBundled() async => Platform.isAndroid && await AndroidFiles.hasBundledFiles();
+
+  @override
+  Future<String?> importBundled(void Function(int done, int total) progress) async {
+    final error = await AndroidFiles.installBundledFiles(progress);
+    if (error != null) return error;
+    return ready ? null : 'The game files could not be found after copying.';
   }
 
   @override

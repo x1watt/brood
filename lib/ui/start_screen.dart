@@ -22,13 +22,16 @@ import '../game/game_setup.dart';
 import '../game/play_stats.dart';
 import '../game/saved_games.dart';
 import '../game/settings.dart';
+import '../net/lan_host.dart';
 import '../net/multiplayer.dart';
+import '../net/ws.dart' show fetchFromHome;
 import 'bot_editor.dart';
 import 'game_screen.dart';
 import 'lobby_panel.dart';
 import 'map_editor/map_editor_screen.dart';
 import 'menu_art.dart';
 import 'saved_games_list.dart';
+import 'share_link.dart';
 import 'window_control.dart';
 
 const _line = Color(0xFF2A2A2A);
@@ -50,12 +53,17 @@ class StartScreen extends StatefulWidget {
 
 class _StartScreenState extends State<StartScreen> {
   final PlayStats _stats = PlayStats.load();
+  // What the map list shows: these, plus the home server's on its pages.
+  late PlayStats _shownStats = _stats;
   final Settings _settings = Settings.load();
   List<GameMap> _maps = const [];
   GameMap? _map;
   List<SaveSession> _saves = const [];
   _StartTab _tab = _StartTab.newGame;
-  MpClient? _mp; // the home server, when this page came from one
+  MpClient? _mp; // the home server, when this page came from one or the app shares
+  LanHost? _lan = LanHost.current; // the app's own home server, while it shares
+  bool _lanBusy = false;
+  String? _lanError;
   MenuArt? _art;
   // The title screen shows once per run, when the app starts.
   static bool _titleShown = false;
@@ -72,7 +80,7 @@ class _StartScreenState extends State<StartScreen> {
   final Map<String, BotProfileReport> _botChecks = {};
   AllianceMode _alliances = AllianceMode.freeForAll;
 
-  int _seconds(GameMap m) => _stats.maps[m.key]?.seconds ?? 0;
+  int _seconds(GameMap m) => _shownStats.maps[m.key]?.seconds ?? 0;
 
   @override
   void initState() {
@@ -89,11 +97,16 @@ class _StartScreenState extends State<StartScreen> {
       });
     }
     _listMaps();
-    _map = (_maps.isNotEmpty && _seconds(_maps.first) > 0 ? _maps.first : null) ?? _maps.where((m) => m.name == '(4)Lost Temple').firstOrNull ?? _maps.firstOrNull;
+    _map = _defaultMap();
+    if (kIsWeb) _addHomeStats();
     _saves = SaveSession.list();
-    MpClient.connect(_settings.playerName).then((c) {
-      if (mounted && c != null) setState(() => _mp = c);
-    });
+    if (LanHost.supported && _settings.shareOnNetwork) {
+      _startSharing();
+    } else {
+      MpClient.connect(_settings.playerName).then((c) {
+        if (mounted && c != null) setState(() => _mp = c);
+      });
+    }
     _restoreLastSetup();
     BotLibrary.load().then((bots) {
       if (!mounted) return;
@@ -133,6 +146,27 @@ class _StartScreenState extends State<StartScreen> {
   }
 
   bool get _botsOk => _opponentBots.take(_playerCount - 1).every((b) => b.isEmpty || _botChecks[b]?.ok == true);
+
+  GameMap? _defaultMap() =>
+      (_maps.isNotEmpty && _seconds(_maps.first) > 0 ? _maps.first : null) ?? _maps.where((m) => m.name == '(4)Lost Temple').firstOrNull ?? _maps.firstOrNull;
+
+  // A page from a home server lists the maps played most there first too.
+  Future<void> _addHomeStats() async {
+    final text = await fetchFromHome('playstats.json');
+    if (text == null || !mounted) return;
+    final home = PlayStats.parse(text);
+    if (home.maps.isEmpty) return;
+    setState(() {
+      // The map chosen by default follows; one the player picked stays.
+      final picked = _map != _defaultMap();
+      _shownStats = _stats.plus(home);
+      _listMaps();
+      if (!picked) {
+        _map = _defaultMap();
+        _setPlayerCount(_playerCount);
+      }
+    });
+  }
 
   void _listMaps() {
     final maps = GameMap.list();
@@ -356,6 +390,14 @@ class _StartScreenState extends State<StartScreen> {
                               ),
                             ),
                           ),
+                          if (LanHost.supported) ...[
+                            IconButton(
+                              tooltip: _lan == null ? 'Start a LAN party (others at home play in their browser)' : 'End the LAN party',
+                              onPressed: _lanBusy ? null : _toggleSharing,
+                              icon: Icon(_lan == null ? Icons.wifi_tethering_off : Icons.wifi_tethering, color: _lan == null ? null : _scGreen),
+                            ),
+                            const SizedBox(width: 4),
+                          ],
                           if (!kIsWeb) ...[
                             IconButton(
                               tooltip: 'Quit Brood',
@@ -379,7 +421,7 @@ class _StartScreenState extends State<StartScreen> {
                                     value: _StartTab.multiplayer,
                                     label: ValueListenableBuilder<List<LobbyGame>>(
                                       valueListenable: _mp!.games,
-                                      builder: (_, games, _) => Text('Multiplayer (${games.length})'),
+                                      builder: (_, games, _) => Text('LAN party (${games.length})'),
                                     ),
                                   ),
                               ],
@@ -392,6 +434,7 @@ class _StartScreenState extends State<StartScreen> {
                           ),
                         ],
                       ),
+                      if (_lanBusy || _lan != null || _lanError != null) _sharingLine(),
                       SizedBox(height: _short ? 10 : 20),
                       Expanded(
                         child: switch (_tab) {
@@ -485,7 +528,7 @@ class _StartScreenState extends State<StartScreen> {
   }
 
   Widget _mapTile(GameMap m) {
-    final st = _stats.maps[m.key];
+    final st = _shownStats.maps[m.key];
     final played = st != null && st.seconds > 0;
     return MouseRegion(
       onEnter: (_) => _hover(),
@@ -718,6 +761,82 @@ class _StartScreenState extends State<StartScreen> {
               padding: const EdgeInsets.only(left: 28, bottom: 4),
               child: Text(note, style: TextStyle(fontSize: 11, color: check != null && !check.ok ? const Color(0xFFE57373) : _faint)),
             ),
+        ],
+      ),
+    );
+  }
+
+  // --- sharing on the network ---
+
+  Future<void> _toggleSharing() async {
+    _click();
+    _settings
+      ..shareOnNetwork = _lan == null
+      ..save();
+    if (_lan == null) {
+      await _startSharing();
+    } else {
+      await _stopSharing();
+    }
+  }
+
+  /// Serves the browser version and multiplayer to others at home, and plays
+  /// through that server too, so they see this app's games.
+  Future<void> _startSharing() async {
+    setState(() {
+      _lanBusy = true;
+      _lanError = null;
+    });
+    try {
+      final lan = await LanHost.start(dataDir: gameDataDir);
+      final mp = await MpClient.connect(_settings.playerName, url: Uri.parse('ws://127.0.0.1:${lan.port}/ws'));
+      if (!mounted) return;
+      setState(() {
+        _lan = lan;
+        _mp = mp;
+      });
+    } catch (e) {
+      if (mounted) setState(() => _lanError = e is StateError ? e.message : '$e');
+    } finally {
+      if (mounted) setState(() => _lanBusy = false);
+    }
+  }
+
+  Future<void> _stopSharing() async {
+    final lan = _lan;
+    setState(() {
+      _lan = null;
+      _mp = null;
+      _lanError = null;
+      if (_tab == _StartTab.multiplayer) _tab = _StartTab.newGame;
+    });
+    await lan?.stop();
+  }
+
+  Widget _sharingLine() {
+    final lan = _lan;
+    final String text;
+    var color = _dim;
+    if (_lanBusy) {
+      text = 'Starting to share on the network...';
+    } else if (_lanError != null) {
+      text = 'Could not share on the network: $_lanError';
+      color = const Color(0xFFFF6B5E);
+    } else if (lan!.urls.isEmpty) {
+      text = 'Shared on port ${lan.port}, but this device is on no network.';
+    } else {
+      text = 'LAN party: others at home open this in their browser to play together.';
+    }
+    final urls = _lanBusy || _lanError != null ? const <String>[] : lan!.urls;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(text, style: TextStyle(fontSize: 13, color: color)),
+          // The first address with a QR code for phones; others (a second
+          // network) as links.
+          for (final (i, url) in urls.indexed) ShareLink(url: url, qrSize: i > 0 ? 0 : (_short ? 72 : 110)),
         ],
       ),
     );

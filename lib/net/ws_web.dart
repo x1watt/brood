@@ -10,6 +10,20 @@ Uri? defaultServer() {
   return Uri(scheme: base.scheme == 'https' ? 'wss' : 'ws', host: base.host, port: base.port, path: '/ws');
 }
 
+/// Whether the page came from a home server (lib/net/home_server.dart),
+/// which answers home.json.
+Future<bool> fromHomeServer() async => await fetchFromHome('home.json') != null;
+
+/// A text the page's home server answers at [path], or null.
+Future<String?> fetchFromHome(String path) async {
+  try {
+    final r = await web.window.fetch(path.toJS).toDart;
+    return r.ok ? (await r.text().toDart).toDart : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 class TextSocket {
   final web.WebSocket _ws;
   final _messages = StreamController<String>.broadcast();

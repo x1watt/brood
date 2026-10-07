@@ -105,6 +105,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       });
     }
     _c.hud.addListener(_onHud);
+    _c.repaint.addListener(_panelAwayFromEdge);
     _c.start(dataDir: gameDataDir, launch: widget.launch).then((_) {
       if (!mounted) return;
       final s = _c.sound;
@@ -143,6 +144,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
   @override
   void dispose() {
     _c.hud.removeListener(_onHud);
+    _c.repaint.removeListener(_panelAwayFromEdge);
     SchedulerBinding.instance.removeTimingsCallback(_onTimings);
     _perfLogTimer?.cancel();
     _statsTimer?.cancel();
@@ -247,11 +249,29 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
 
   // The panel can sit on either side, so it doesn't hide your base.
   void _togglePanelSide() {
+    _setPanelLeft(!_panelLeft);
+    _focus.requestFocus();
+  }
+
+  void _setPanelLeft(bool left) {
     widget.settings
-      ..alliancePanelLeft = !widget.settings.alliancePanelLeft
+      ..alliancePanelLeft = left
       ..save();
     setState(() {});
-    _focus.requestFocus();
+  }
+
+  // While the panel is open, scrolling to the map's left or right edge (where
+  // a base usually is) moves the panel to the other side, so it doesn't hide
+  // what is there. It stays put until the other edge is reached.
+  void _panelAwayFromEdge() {
+    if (!_alliancesOpen || !mounted) return;
+    final maxX = _c.mapSize.width - _c.viewport.width;
+    if (maxX <= 0) return;
+    if (_c.camX <= 0 && _panelLeft) {
+      _setPanelLeft(false);
+    } else if (_c.camX >= maxX && !_panelLeft) {
+      _setPanelLeft(true);
+    }
   }
 
   void _toggleAutoplay() {
@@ -266,6 +286,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       _alliancesOpen = !_alliancesOpen;
       if (_alliancesOpen) _allianceShown = true;
     });
+    _panelAwayFromEdge();
     _focus.requestFocus();
   }
 

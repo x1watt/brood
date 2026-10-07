@@ -8,6 +8,11 @@ Uri? defaultServer() {
   return s == null || s.isEmpty ? null : Uri.tryParse(s);
 }
 
+/// Only a page can come from a home server.
+Future<bool> fromHomeServer() async => false;
+
+Future<String?> fetchFromHome(String path) async => null;
+
 class TextSocket {
   final WebSocket _ws;
   final _messages = StreamController<String>.broadcast();

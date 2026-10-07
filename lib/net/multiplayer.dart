@@ -1,6 +1,6 @@
 // lib/net/multiplayer.dart
 //
-// The client side of multiplayer (the server is tool/brood_server.dart):
+// The client side of multiplayer (the server is lib/net/home_server.dart):
 // the lobby of games running on the home server, and the session of the
 // game being played. The game itself stays in GameController: in a
 // multiplayer game the engine's commands are deferred (sent here instead
@@ -75,14 +75,16 @@ class MpClient {
   static Future<MpClient?>? _connecting;
 
   /// The connection to the home server, when there is one (the page was
-  /// opened from tool/brood_server.dart; elsewhere BROOD_SERVER).
+  /// opened from one; the app's own when it shares the game on the network,
+  /// lib/net/lan_host.dart; elsewhere BROOD_SERVER).
   static MpClient? get current => _instance;
 
-  static Future<MpClient?> connect(String name) {
+  /// Connects to [url], by default the page's own server or BROOD_SERVER.
+  static Future<MpClient?> connect(String name, {Uri? url}) {
     if (_instance != null && !_instance!.closed) return Future.value(_instance);
     return _connecting ??= () async {
-      final url = defaultServer();
-      final socket = url == null ? null : await TextSocket.connect(url);
+      final to = url ?? defaultServer();
+      final socket = to == null ? null : await TextSocket.connect(to);
       _connecting = null;
       if (socket == null) return null;
       final c = MpClient._(socket, name.trim().isEmpty ? 'Player' : name.trim());

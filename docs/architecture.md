@@ -59,8 +59,9 @@ settings.json): volume (top bar slider), mute, fullscreen and the last game
 setup. Windowed mode
 on GNOME/X11 is always composited by mutter (only fullscreen or screen-sized
 windows are unredirected), which adds latency; the runner sets
-__GL_MaxFramesAllowed=1 to keep NVIDIA's frame queue short, fullscreen is
-remembered, and F12 toggles a frame timing overlay (BROOD_PERF_LOG=1 logs
+__GL_MaxFramesAllowed=1 to keep NVIDIA's frame queue short, the game starts
+full screen (lib/ui/ownership_screen.dart; in the browser on the first
+click), fullscreen is remembered, and F12 toggles a frame timing overlay (BROOD_PERF_LOG=1 logs
 it to stderr).
 
 Terrain is kept as palette indices and colored by shaders/terrain.frag
@@ -189,7 +190,9 @@ lists in lib/game/alliance_names.dart). The bridge also measures each
 player's army value, workers and mining rate per minute, and who is
 fighting whom (recent kills either way, or an army at the other's
 buildings); fighting groups are listed first with red borders. The panel can
-be docked left or right (remembered in settings).
+be docked left or right (remembered in settings), and moves to the other
+side by itself when the camera reaches the map's left or right edge, so it
+doesn't hide the base there.
 
 Score per player: mining (shared with allies while allied), Brood War's own
 production score (unit_score + building_score) and destroy score (credited
@@ -328,7 +331,8 @@ player's own files at startup (lib/ui/menu_art.dart, bw_bridge_load_pcx_rgba
 and bw_bridge_read_file): the title screen for three seconds at startup, the room of the
 chosen race behind the menu (glue\\PalRz/Rt/Rp\\Backgnd.pcx, the planet of
 glue\\Palmm for Random and saved games), the menus' green, and their button
-sounds (sound\\glue). Nothing from the game is bundled. The menu music was
+sounds (sound\\glue). The Linux, Android and web builds bundle the game
+files (docs/third_party_licensing.md). The menu music was
 on the CD, not in the archives, so there is none.
 
 Raised limits (engine/vendor/openbw on the local branch brood-limits, the
@@ -356,8 +360,22 @@ resources, their total, and the alliance score), counting up as a tab
 opens. BROOD_TEST_OUTCOME=victory:<seconds> (or defeat) ends a desktop
 game that way, to check it.
 
-Home server and multiplayer (tool/brood_server.dart, plain dart:io, run by
-launch-web.sh on port 9191 on every network interface): it serves the
+Home server and multiplayer (lib/net/home_server.dart, plain dart:io, run
+by tool/brood_server.dart from launch-web.sh on port 9191 on every network
+interface, and by the desktop and Android app when the player turns on
+sharing on the start screen: lib/net/lan_host.dart runs it in an isolate of
+its own on 9191 or the next free port, and the start screen shows the
+addresses others at home open, as links with a share button (the share
+sheet on Android and phone browsers, a copy on desktop; lib/ui/share_link.dart)
+and a QR code for phones. The app plays through that server too, so
+its games show up in the others' lobby. The browser version it serves ships
+with the app: build/web goes into the Linux bundle's data/web and the APK's
+assets/web, copied into the app's storage once per installed version). Pages
+from a home server find /home.json there and skip the question about the
+original game files, which the app asks only once. They also add the server's
+play time per map (/playstats.json, the play_stats.json of the app or of
+the desktop user running tool/brood_server.dart) to their own, so the
+start screen lists the same most played maps first. It serves the
 browser version, the player's own game files under gamedata/ (so pages
 load them from there instead of asking for a folder; they are kept in the
 browser too, and the page asks for persistent storage) and multiplayer on
@@ -368,7 +386,7 @@ client sends them to the server, which stamps each with a frame a few
 frames ahead of its clock and sends it to every player; everyone runs it
 on that frame (bw_bridge_apply_commands) and only runs up to the server's
 clock (its ticks). Every game started from a page of the server is listed
-in the start screen's Multiplayer tab (lib/ui/lobby_panel.dart); joining
+in the start screen's LAN party tab (lib/ui/lobby_panel.dart); joining
 replays the game's log (like loading a save, lib/net/multiplayer.dart
 catchUp) and takes over one of the computer players with a logged
 bw_bridge_set_controller, keeping its alliance; leaving hands it back to

@@ -3,9 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'game/game_data.dart';
+import 'game/settings.dart';
+import 'net/ws.dart';
 import 'platform/storage.dart';
 import 'ui/data_setup_screen.dart';
+import 'ui/ownership_screen.dart';
 import 'ui/start_screen.dart';
+import 'ui/web_fullscreen.dart';
+import 'ui/window_control.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,7 +26,20 @@ Future<void> main() async {
   // IndexedDB: load them before the first screen.
   await AppStorage.init();
   final hasData = await GameFiles.instance.init();
-  runApp(BroodApp(hasData: hasData));
+  final settings = Settings.load();
+  // Full screen from the start (remembered, so a game started later stays
+  // so): on desktop at once, in the browser on the first click or key.
+  if (kIsWeb) {
+    webFullscreenOnFirstInput();
+  } else if (defaultTargetPlatform != TargetPlatform.android) {
+    WindowControl.setFullscreen(true);
+  }
+  settings
+    ..fullscreen = true
+    ..save();
+  // Asked once; never of the pages a home server hands out.
+  final ask = !settings.ownsGameFiles && !(kIsWeb && await fromHomeServer());
+  runApp(BroodApp(hasData: hasData, askOwnership: ask));
 }
 
 /// Black and neutral greys throughout; the only colors are the game's own
@@ -77,15 +95,17 @@ ThemeData _theme() {
 
 class BroodApp extends StatelessWidget {
   final bool hasData;
-  const BroodApp({super.key, this.hasData = true});
+  final bool askOwnership;
+  const BroodApp({super.key, this.hasData = true, this.askOwnership = false});
 
   @override
   Widget build(BuildContext context) {
+    final first = hasData ? const StartScreen() : const DataSetupScreen();
     return MaterialApp(
       title: 'Brood',
       debugShowCheckedModeBanner: false,
       theme: _theme(),
-      home: hasData ? const StartScreen() : const DataSetupScreen(),
+      home: askOwnership ? OwnershipScreen(next: first) : first,
     );
   }
 }

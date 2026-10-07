@@ -38,6 +38,36 @@ android {
     }
 }
 
+// The game files go into the APK under assets/BROOD (MainActivity.kt copies
+// them into the app's storage at first start): the three MPQs and the melee
+// maps from BROOD_DATA, default ~/box/media/games/BROOD. The browser version
+// (build/web, from tool/build_web.sh, without its copy of the game files)
+// goes under assets/web, for sharing the game on the network
+// (lib/net/lan_host.dart).
+val broodData = System.getenv("BROOD_DATA") ?: "${System.getProperty("user.home")}/box/media/games/BROOD"
+val gameAssets = layout.buildDirectory.dir("generated/brood_game_files").get().asFile
+val webBuild = file("../../build/web")
+val copyGameFiles by tasks.registering(Sync::class) {
+    if (!file("$broodData/StarDat.mpq").exists()) {
+        logger.warn("No game files in $broodData: the APK will not include them.")
+    }
+    if (!file("$webBuild/index.html").exists()) {
+        logger.warn("No browser version in $webBuild (tool/build_web.sh): the APK can't share the game on the network.")
+    }
+    from(webBuild) {
+        exclude("gamedata/**")
+        into("web")
+    }
+    from(broodData) {
+        include("StarDat.mpq", "BrooDat.mpq", "Patch_rt.mpq", "maps/**/*.scm", "maps/**/*.scx")
+        exclude("maps/campaign/**", "maps/scenario/**", "maps/save/**")
+        into("BROOD")
+    }
+    into(gameAssets)
+}
+android.sourceSets["main"].assets.srcDir(gameAssets)
+tasks.named("preBuild") { dependsOn(copyGameFiles) }
+
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17

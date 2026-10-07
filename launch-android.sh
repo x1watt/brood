@@ -6,8 +6,9 @@
 # cross-compiled with the NDK for just the ABIs those devices need
 # (arm64-v8a phones, x86_64 emulators).
 #
-# The game files are not in the app: on first start it asks for the
-# StarCraft folder, or copy it over USB to
+# The game files from BROOD_DATA (default ~/box/media/games/BROOD) go into
+# the APK and are copied into the app's storage on first start. Without
+# them the app asks for the StarCraft folder, or copy it over USB to
 # Android/data/dev.x1watt.brood/files/BROOD.
 
 set -euo pipefail
@@ -44,6 +45,8 @@ done
 [ ${#abis[@]} -gt 0 ] || { echo "No supported device connected."; exit 1; }
 
 echo "Building for: ${abis[*]}"
+# The browser version the app carries, for sharing the game on the network.
+tool/build_web.sh
 ABIS="${abis[*]}" tool/build_android_bridge.sh
 run_build flutter build apk --release --target-platform "$(IFS=,; echo "${platforms[*]}")"
 

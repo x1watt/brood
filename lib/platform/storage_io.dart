@@ -20,8 +20,9 @@ class FileStorage extends AppStorage {
     return '$base/brood';
   }
 
-  // Tests point single files or the saves folder elsewhere.
-  File _file(String key) {
+  /// The file a key is kept in. Tests point single files or the saves
+  /// folder elsewhere.
+  static File fileOf(String key) {
     final env = Platform.environment;
     String? override(String name) => env[name]?.isNotEmpty == true ? env[name] : null;
     if (key == 'settings.json' && override('BROOD_SETTINGS_FILE') != null) return File(override('BROOD_SETTINGS_FILE')!);
@@ -33,7 +34,7 @@ class FileStorage extends AppStorage {
   @override
   String? read(String key) {
     try {
-      final f = _file(key);
+      final f = fileOf(key);
       return f.existsSync() ? f.readAsStringSync() : null;
     } catch (_) {
       return null;
@@ -42,7 +43,7 @@ class FileStorage extends AppStorage {
 
   @override
   void write(String key, String value) {
-    final f = _file(key);
+    final f = fileOf(key);
     f.parent.createSync(recursive: true);
     final tmp = File('${f.path}.tmp');
     tmp.writeAsStringSync(value);
@@ -51,7 +52,7 @@ class FileStorage extends AppStorage {
 
   @override
   Future<void> writeAsync(String key, String value) async {
-    final f = _file(key);
+    final f = fileOf(key);
     await f.parent.create(recursive: true);
     final tmp = File('${f.path}.tmp');
     await tmp.writeAsString(value, flush: true);
@@ -61,11 +62,11 @@ class FileStorage extends AppStorage {
   @override
   void delete(String key) {
     try {
-      final f = _file(key);
+      final f = fileOf(key);
       if (f.existsSync()) f.deleteSync();
       // Drop folders left empty (a deleted save session).
       var dir = f.parent;
-      final root = _file(key.startsWith('saves/') ? 'saves/x' : 'x').parent.path;
+      final root = fileOf(key.startsWith('saves/') ? 'saves/x' : 'x').parent.path;
       while (dir.path.length > root.length && dir.existsSync() && dir.listSync().isEmpty) {
         dir.deleteSync();
         dir = dir.parent;
@@ -78,7 +79,7 @@ class FileStorage extends AppStorage {
     // Keys map onto paths: list the folder holding the prefix.
     final slash = prefix.lastIndexOf('/');
     final folderKey = slash < 0 ? '' : prefix.substring(0, slash + 1);
-    final dir = folderKey.isEmpty ? Directory(_base()) : _file('${folderKey}x').parent;
+    final dir = folderKey.isEmpty ? Directory(_base()) : fileOf('${folderKey}x').parent;
     if (!dir.existsSync()) return const [];
     final out = <String>[];
     for (final e in dir.listSync(recursive: true).whereType<File>()) {
@@ -90,5 +91,5 @@ class FileStorage extends AppStorage {
   }
 
   @override
-  String describe(String key) => _file(key).path;
+  String describe(String key) => fileOf(key).path;
 }

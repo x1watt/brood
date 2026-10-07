@@ -1,9 +1,10 @@
 // lib/ui/data_setup_screen.dart
 //
-// First start in the browser or on Android: Brood needs the player's own
-// copy of StarCraft: Brood War (never bundled). The player picks the game
-// folder once; the files are kept by the browser (IndexedDB) or copied into
-// the app's own storage, and nothing is uploaded anywhere.
+// First start in the browser or on Android: the game files the build
+// carries are copied in (the APK's, or the page's gamedata/ folder), else the
+// player picks their game folder once. The files are kept by the browser
+// (IndexedDB) or copied into the app's own storage, and nothing is uploaded
+// anywhere.
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -36,11 +37,34 @@ class _DataSetupScreenState extends State<DataSetupScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (_testData.isNotEmpty) return _importFrom(_testData);
+      // The game files the app carries (Android).
+      if (await GameFiles.instance.hasBundled() && mounted) return _importBundled();
       // Opened from the home server (tool/brood_server.dart), which has the
       // game files: load them from there, nothing to choose.
       final base = await GameFiles.instance.serverFiles();
       if (base != null && mounted) await _importFrom(base);
     });
+  }
+
+  Future<void> _importBundled() async {
+    setState(() => _busy = true);
+    final error = await GameFiles.instance.importBundled((done, total) {
+      if (mounted) {
+        setState(() {
+          _done = done;
+          _total = total;
+        });
+      }
+    });
+    if (!mounted) return;
+    if (error == null) {
+      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const StartScreen()));
+    } else {
+      setState(() {
+        _busy = false;
+        _error = error;
+      });
+    }
   }
 
   Future<void> _importFrom(String base) async {

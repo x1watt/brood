@@ -1,8 +1,10 @@
 // lib/game/game_data.dart
 //
-// The player's own copy of the game (never bundled, see
-// docs/third_party_licensing.md): the three MPQ archives and the maps.
-//   - desktop: a folder on disk (game_files_io.dart),
+// The game's files: the three MPQ archives and the maps.
+//   - desktop: a folder on disk, or the copy bundled with the Linux build
+//     (game_files_io.dart),
+//   - Android: the app's storage, filled from the copy in the APK or from the
+//     player's folder (game_files_io.dart),
 //   - browser: files the player picked once, kept in IndexedDB and written
 //     into the engine's in-memory file system at start (game_files_web.dart).
 
@@ -48,6 +50,13 @@ abstract class GameFiles {
   /// [relativePath] is under the game data folder ("maps/Brood/My map.scm").
   /// Returns the path the engine opens it by.
   Future<String> saveMap(String relativePath, Uint8List bytes);
+
+  /// Android: whether the app carries the game files.
+  Future<bool> hasBundled() async => false;
+
+  /// Android: copies the game files the app carries into its storage.
+  /// Returns an error message, or null when the game data is ready.
+  Future<String?> importBundled(void Function(int done, int total) progress) async => 'Not available here.';
 
   /// Browser only: asks for the game folder (or the files) and imports it.
   /// Returns an error message, or null when the game data is ready.
