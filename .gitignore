@@ -52,6 +52,8 @@ app.*.map.json
 # docs/third_party_licensing.md.
 *.mpq
 *.MPQ
+*.zx
+*.zx.[0-9][0-9][0-9]
 *.scm
 *.scx
 *.smk
